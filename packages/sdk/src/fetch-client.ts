@@ -1410,6 +1410,12 @@ export type MosaicStroke = {
     mode: MosaicStrokeMode;
     /** Points along the stroke */
     points: MosaicPoint[];
+    /** Censor style plugin method (pluginName#methodName) that renders this stroke */
+    style?: string;
+    /** Settings passed to the censor style plugin method for this stroke */
+    styleOptions?: {
+        [key: string]: any;
+    };
 };
 export type MosaicParameters = {
     /** Default size of each mosaic block in original image pixels */

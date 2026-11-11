@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:isolate';
 import 'dart:math';
 import 'dart:typed_data';
@@ -27,10 +28,11 @@ Future<RenderedImage> renderAssetEdits(
   List<AssetEdit> edits, {
   RenderFormat format = RenderFormat.jpeg,
   int jpegQuality = 92,
+  CensorEffectBuilder? censorEffects,
 }) async {
   final original = await decodeEditableImage(bytes);
   final mosaic = edits.whereType<MosaicEdit>().firstOrNull;
-  final source = mosaic == null ? original : await _applyMosaic(original, mosaic.parameters);
+  final source = mosaic == null ? original : await _applyMosaic(original, mosaic.parameters, censorEffects);
   if (!identical(source, original)) {
     original.dispose();
   }
@@ -101,58 +103,84 @@ Future<ui.Image> _applyTransform(ui.Image source, List<AssetEdit> edits) async {
   }
 }
 
+typedef CensorEffectBuilder =
+    Future<ui.Image?> Function(
+      String? style,
+      Map<String, Object?> options,
+      ui.Image source,
+      int size,
+      int width,
+      int height,
+    );
+
+typedef _CensorGroup = (String?, int, String);
+
 int mosaicStrokeBlockSize(MosaicStroke stroke, int defaultBlockSize) =>
     stroke.blockSize.isPresent ? stroke.blockSize.value ?? defaultBlockSize : defaultBlockSize;
 
-Future<ui.Image> pixelateImage(ui.Image source, int blockSize, {int? width, int? height}) {
-  final targetWidth = width ?? source.width;
-  final targetHeight = height ?? source.height;
-  final blocksWide = max(1, (targetWidth / blockSize).ceil());
-  final blocksHigh = max(1, (targetHeight / blockSize).ceil());
-  return _drawToImage(blocksWide, blocksHigh, (canvas) {
+String? mosaicStrokeStyle(MosaicStroke stroke) => stroke.style.isPresent ? stroke.style.value : null;
+
+Map<String, Object?> mosaicStrokeStyleOptions(MosaicStroke stroke) =>
+    stroke.styleOptions.isPresent ? Map<String, Object?>.from(stroke.styleOptions.value ?? const {}) : const {};
+
+_CensorGroup _censorGroup(MosaicStroke stroke, int defaultBlockSize) => (
+  mosaicStrokeStyle(stroke),
+  mosaicStrokeBlockSize(stroke, defaultBlockSize),
+  jsonEncode(mosaicStrokeStyleOptions(stroke)),
+);
+
+Future<ui.Image> downsampleImage(ui.Image source, int cell, {required int width, required int height}) {
+  final columns = max(1, (width / cell).ceil());
+  final rows = max(1, (height / cell).ceil());
+  return _drawToImage(columns, rows, (canvas) {
     canvas.drawImageRect(
       source,
       Rect.fromLTWH(0, 0, source.width.toDouble(), source.height.toDouble()),
-      Rect.fromLTWH(0, 0, blocksWide.toDouble(), blocksHigh.toDouble()),
+      Rect.fromLTWH(0, 0, columns.toDouble(), rows.toDouble()),
       Paint()..filterQuality = FilterQuality.medium,
     );
   });
 }
 
-Future<ui.Image> _applyMosaic(ui.Image source, MosaicParameters parameters) async {
+Future<ui.Image> _applyMosaic(ui.Image source, MosaicParameters parameters, CensorEffectBuilder? censorEffects) async {
   final width = source.width;
   final height = source.height;
-  final blockSizes = parameters.strokes
-      .where((stroke) => stroke.mode == MosaicStrokeMode.paint)
-      .map((stroke) => mosaicStrokeBlockSize(stroke, parameters.blockSize))
-      .toSet();
-  final blocks = {for (final blockSize in blockSizes) blockSize: await pixelateImage(source, blockSize)};
+  final groups = <_CensorGroup>{
+    for (final stroke in parameters.strokes)
+      if (stroke.mode == MosaicStrokeMode.paint) _censorGroup(stroke, parameters.blockSize),
+  };
 
+  final effects = <_CensorGroup, ui.Image>{};
   try {
+    for (final group in groups) {
+      final options = Map<String, Object?>.from(jsonDecode(group.$3) as Map);
+      final effect = await censorEffects?.call(group.$1, options, source, group.$2, width, height);
+      if (effect != null) {
+        effects[group] = effect;
+      }
+    }
+
     return await _drawToImage(width, height, (canvas) {
       final bounds = Rect.fromLTWH(0, 0, width.toDouble(), height.toDouble());
       canvas.drawImage(source, Offset.zero, Paint());
-      for (final MapEntry(key: blockSize, value: image) in blocks.entries) {
+      for (final MapEntry(key: group, value: effect) in effects.entries) {
         canvas.saveLayer(bounds, Paint());
         for (final stroke in parameters.strokes) {
-          final visible =
-              stroke.mode == MosaicStrokeMode.paint && mosaicStrokeBlockSize(stroke, parameters.blockSize) == blockSize;
+          final visible = stroke.mode == MosaicStrokeMode.paint && _censorGroup(stroke, parameters.blockSize) == group;
           _drawMaskStroke(canvas, stroke, visible: visible);
         }
         canvas.drawImageRect(
-          image,
-          Rect.fromLTWH(0, 0, image.width.toDouble(), image.height.toDouble()),
-          Rect.fromLTWH(0, 0, (image.width * blockSize).toDouble(), (image.height * blockSize).toDouble()),
-          Paint()
-            ..filterQuality = FilterQuality.none
-            ..blendMode = BlendMode.srcIn,
+          effect,
+          Rect.fromLTWH(0, 0, effect.width.toDouble(), effect.height.toDouble()),
+          bounds,
+          Paint()..blendMode = BlendMode.srcIn,
         );
         canvas.restore();
       }
     });
   } finally {
-    for (final image in blocks.values) {
-      image.dispose();
+    for (final effect in effects.values) {
+      effect.dispose();
     }
   }
 }

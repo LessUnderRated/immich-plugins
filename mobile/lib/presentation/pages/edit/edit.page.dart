@@ -12,11 +12,14 @@ import 'package:immich_mobile/constants/aspect_ratios.dart';
 import 'package:immich_mobile/domain/models/asset_edit.model.dart';
 import 'package:immich_mobile/extensions/build_context_extensions.dart';
 import 'package:immich_mobile/generated/translations.g.dart';
+import 'package:immich_mobile/infrastructure/plugins/censor_styles.dart';
 import 'package:immich_mobile/presentation/pages/edit/editor.provider.dart';
+import 'package:immich_mobile/presentation/pages/plugins/schema_form.widget.dart';
+import 'package:immich_mobile/providers/device_plugins.provider.dart';
 import 'package:immich_mobile/providers/theme.provider.dart';
 import 'package:immich_mobile/theme/theme_data.dart';
-import 'package:immich_mobile/utils/asset_edit_renderer.utils.dart';
 import 'package:immich_mobile/utils/editor.utils.dart';
+import 'package:immich_mobile/utils/error_handler.dart';
 import 'package:immich_mobile/utils/mosaic.utils.dart';
 import 'package:immich_mobile/widgets/common/immich_toast.dart';
 import 'package:immich_ui/immich_ui.dart';
@@ -583,6 +586,7 @@ class _MosaicControls extends ConsumerWidget {
             ],
           ),
         ),
+        const _CensorStylePicker(),
         _SizeControl(
           icon: Icons.circle_outlined,
           tooltip: context.t.mosaic_brush_size,
@@ -606,6 +610,89 @@ class _MosaicControls extends ConsumerWidget {
           onChanged: editorNotifier.setMosaicBlockSize,
         ),
       ],
+    );
+  }
+}
+
+class _CensorStylePicker extends ConsumerWidget {
+  const _CensorStylePicker();
+
+  Future<void> _editOptions(BuildContext context, WidgetRef ref, CensorStyleOption style) {
+    return showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (_) => Consumer(
+        builder: (context, ref, _) {
+          final options = ref.watch(editorStateProvider.select((state) => state.mosaicStyleOptions));
+          return SafeArea(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(style.title, style: Theme.of(context).textTheme.titleMedium),
+                  if (style.description.isNotEmpty)
+                    Text(style.description, style: Theme.of(context).textTheme.bodySmall),
+                  SchemaForm(
+                    schema: style.schema,
+                    config: Map<String, dynamic>.from(options),
+                    onChanged: ref.read(editorStateProvider.notifier).setMosaicStyleOptions,
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final styles = ref.watch(censorStyleOptionsProvider).valueOrNull ?? const <CensorStyleOption>[];
+    final current = ref.watch(editorStateProvider.select((state) => state.mosaicStyle));
+    if (styles.isEmpty) {
+      return const SizedBox(
+        height: 36,
+        child: Center(
+          child: Text('Install a censor style plugin to use mosaic', style: TextStyle(color: Colors.white70)),
+        ),
+      );
+    }
+
+    final selected = styles.where((style) => style.key == current).firstOrNull ?? styles.first;
+    return SizedBox(
+      height: 36,
+      child: Row(
+        children: [
+          const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 8),
+            child: Icon(Icons.auto_awesome_mosaic_outlined, size: 16, color: Colors.white70),
+          ),
+          Expanded(
+            child: ListView(
+              scrollDirection: Axis.horizontal,
+              children: [
+                for (final style in styles)
+                  SizedBox(
+                    width: 84,
+                    child: _PresetButton(
+                      label: style.title,
+                      selected: style.key == selected.key,
+                      onPressed: () => ref.read(editorStateProvider.notifier).setMosaicStyle(style.key),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          _CompactIconButton(
+            icon: Icons.tune,
+            tooltip: 'Style settings',
+            onPressed: selected.hasOptions ? () => _editOptions(context, ref, selected) : null,
+          ),
+        ],
+      ),
     );
   }
 }
@@ -918,8 +1005,8 @@ class _MosaicCanvasState extends ConsumerState<_MosaicCanvas> {
   ImageStream? _imageStream;
   ImageStreamListener? _imageListener;
   ui.Image? _source;
-  final Map<int, ui.Image> _pixelated = {};
-  final Set<int> _pending = {};
+  final Map<String, ui.Image> _effects = {};
+  final Set<String> _pending = {};
 
   final List<Offset> _activePoints = [];
   final ValueNotifier<int> _repaint = ValueNotifier(0);
@@ -957,7 +1044,7 @@ class _MosaicCanvasState extends ConsumerState<_MosaicCanvas> {
       }
 
       _source?.dispose();
-      _clearPixelated();
+      _clearEffects();
       setState(() => _source = info.image);
     });
     stream.addListener(listener);
@@ -972,33 +1059,48 @@ class _MosaicCanvasState extends ConsumerState<_MosaicCanvas> {
     }
   }
 
-  void _clearPixelated() {
-    for (final image in _pixelated.values) {
+  void _clearEffects() {
+    for (final image in _effects.values) {
       image.dispose();
     }
-    _pixelated.clear();
+    _effects.clear();
     _pending.clear();
   }
 
-  void _ensurePixelated(Iterable<int> blockSizes, int width, int height) {
+  void _ensureEffects(Iterable<MosaicStrokeDraft> strokes, int width, int height) {
     final source = _source;
     if (source == null) {
       return;
     }
 
-    for (final blockSize in blockSizes) {
-      if (_pixelated.containsKey(blockSize) || !_pending.add(blockSize)) {
+    for (final stroke in strokes) {
+      final key = mosaicEffectKey(stroke, width, height);
+      if (stroke.erase || _effects.containsKey(key) || !_pending.add(key)) {
         continue;
       }
 
       unawaited(
-        pixelateImage(source, blockSize, width: width, height: height).then((image) {
-          if (!mounted || !identical(source, _source) || !_pending.remove(blockSize)) {
-            image.dispose();
-            return;
-          }
-          setState(() => _pixelated[blockSize] = image);
-        }),
+        ref
+            .read(censorStylesProvider)
+            .render(
+              stroke.style,
+              stroke.styleOptions,
+              source,
+              mosaicBlockPixels(stroke.blockSize, width, height),
+              width,
+              height,
+            )
+            .then((image) {
+              if (!mounted || !identical(source, _source) || !_pending.remove(key) || image == null) {
+                image?.dispose();
+                return;
+              }
+              setState(() => _effects[key] = image);
+            })
+            .catchError((Object error, StackTrace stack) {
+              _pending.remove(key);
+              handleError(error, stack: stack, description: 'Censor style failed');
+            }),
       );
     }
   }
@@ -1051,7 +1153,7 @@ class _MosaicCanvasState extends ConsumerState<_MosaicCanvas> {
     widget.pinches.removeListener(_cancelActiveStroke);
     _stopListening();
     _source?.dispose();
-    _clearPixelated();
+    _clearEffects();
     _repaint.dispose();
     super.dispose();
   }
@@ -1067,15 +1169,15 @@ class _MosaicCanvasState extends ConsumerState<_MosaicCanvas> {
       return const Center(child: CircularProgressIndicator());
     }
 
-    final activeBlockSize = mosaicBlockPixels(editorState.mosaicBlockSize, width, height);
-    _ensurePixelated(
-      {
-        activeBlockSize,
-        for (final stroke in editorState.mosaicStrokes) mosaicBlockPixels(stroke.blockSize, width, height),
-      },
-      width,
-      height,
+    final activeStroke = MosaicStrokeDraft(
+      points: const [],
+      brushSize: editorState.mosaicBrushSize,
+      blockSize: editorState.mosaicBlockSize,
+      erase: editorState.mosaicTool == MosaicTool.eraser,
+      style: editorState.mosaicStyle,
+      styleOptions: editorState.mosaicStyleOptions,
     );
+    _ensureEffects([activeStroke, ...editorState.mosaicStrokes], width, height);
 
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -1096,17 +1198,12 @@ class _MosaicCanvasState extends ConsumerState<_MosaicCanvas> {
                 size: size,
                 painter: _MosaicPainter(
                   source: source,
-                  pixelated: Map.unmodifiable(_pixelated),
+                  effects: Map.unmodifiable(_effects),
                   originalWidth: width,
                   originalHeight: height,
                   strokes: editorState.mosaicStrokes,
                   activePoints: _activePoints,
-                  activeStroke: MosaicStrokeDraft(
-                    points: const [],
-                    brushSize: editorState.mosaicBrushSize,
-                    blockSize: editorState.mosaicBlockSize,
-                    erase: editorState.mosaicTool == MosaicTool.eraser,
-                  ),
+                  activeStroke: activeStroke,
                   repaint: _repaint,
                 ),
               ),
@@ -1120,7 +1217,7 @@ class _MosaicCanvasState extends ConsumerState<_MosaicCanvas> {
 
 class _MosaicPainter extends CustomPainter {
   final ui.Image source;
-  final Map<int, ui.Image> pixelated;
+  final Map<String, ui.Image> effects;
   final int originalWidth;
   final int originalHeight;
   final List<MosaicStrokeDraft> strokes;
@@ -1129,7 +1226,7 @@ class _MosaicPainter extends CustomPainter {
 
   const _MosaicPainter({
     required this.source,
-    required this.pixelated,
+    required this.effects,
     required this.originalWidth,
     required this.originalHeight,
     required this.strokes,
@@ -1138,7 +1235,7 @@ class _MosaicPainter extends CustomPainter {
     required Listenable repaint,
   }) : super(repaint: repaint);
 
-  int _blockPixels(MosaicStrokeDraft stroke) => mosaicBlockPixels(stroke.blockSize, originalWidth, originalHeight);
+  String _key(MosaicStrokeDraft stroke) => mosaicEffectKey(stroke, originalWidth, originalHeight);
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -1154,28 +1251,27 @@ class _MosaicPainter extends CustomPainter {
       for (final stroke in strokes) (stroke.points, stroke),
       if (activePoints.isNotEmpty) (activePoints, activeStroke),
     ];
-    final scale = size.width / originalWidth;
 
-    for (final blockPixels in {
+    for (final key in {
       for (final (_, stroke) in drawn)
-        if (!stroke.erase) _blockPixels(stroke),
+        if (!stroke.erase) _key(stroke),
     }) {
-      final image = pixelated[blockPixels];
+      final image = effects[key];
       if (image == null) {
         continue;
       }
 
       canvas.saveLayer(bounds, Paint());
       for (final (points, stroke) in drawn) {
-        final visible = !stroke.erase && _blockPixels(stroke) == blockPixels;
+        final visible = !stroke.erase && _key(stroke) == key;
         _drawStroke(canvas, size, points, stroke.brushSize, !visible);
       }
       canvas.drawImageRect(
         image,
         Rect.fromLTWH(0, 0, image.width.toDouble(), image.height.toDouble()),
-        Rect.fromLTWH(0, 0, image.width * blockPixels * scale, image.height * blockPixels * scale),
+        bounds,
         Paint()
-          ..filterQuality = FilterQuality.none
+          ..filterQuality = FilterQuality.medium
           ..blendMode = BlendMode.srcIn,
       );
       canvas.restore();
@@ -1207,7 +1303,7 @@ class _MosaicPainter extends CustomPainter {
   @override
   bool shouldRepaint(_MosaicPainter oldDelegate) {
     return oldDelegate.source != source ||
-        !mapEquals(oldDelegate.pixelated, pixelated) ||
+        !mapEquals(oldDelegate.effects, effects) ||
         oldDelegate.strokes != strokes ||
         oldDelegate.activeStroke != activeStroke;
   }

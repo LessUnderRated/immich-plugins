@@ -21,7 +21,9 @@ const _inPlaceFormats = {'.jpg': RenderFormat.jpeg, '.jpeg': RenderFormat.jpeg, 
 class DeviceEditRepository {
   static const _channel = MethodChannel('immich/device_media');
 
-  const DeviceEditRepository();
+  final CensorEffectBuilder? censorEffects;
+
+  const DeviceEditRepository({this.censorEffects});
 
   Future<Directory> _editsDir() async {
     final directory = Directory(p.join((await getApplicationDocumentsDirectory()).path, 'edits'));
@@ -100,7 +102,7 @@ class DeviceEditRepository {
       if (original == null) {
         throw StateError('Original file not found');
       }
-      final rendered = await renderAssetEdits(original, edits);
+      final rendered = await renderAssetEdits(original, edits, censorEffects: censorEffects);
       return (outcome: DeviceEditOutcome.savedCopy, createdId: await _saveCopy(asset, rendered.bytes));
     }
 
@@ -109,12 +111,34 @@ class DeviceEditRepository {
       await backup.readAsBytes(),
       edits,
       format: _inPlaceFormats[p.extension(asset.name).toLowerCase()]!,
+      censorEffects: censorEffects,
     );
     await _overwrite(asset.id, rendered.bytes, exifSource: backup, width: rendered.width, height: rendered.height);
 
     final state = await _readState();
     state[asset.id] = edits.map(assetEditToJson).toList();
     await _writeState(state);
+    return (outcome: DeviceEditOutcome.editedInPlace, createdId: null);
+  }
+
+  Future<Uint8List?> readCurrent(String localId) async {
+    final entity = await AssetEntity.fromId(localId);
+    final file = await entity?.originFile;
+    if (file == null || !file.existsSync()) {
+      return null;
+    }
+    return file.readAsBytes();
+  }
+
+  bool replacesAsPng(LocalAsset asset) => _inPlaceFormats[p.extension(asset.name).toLowerCase()] == RenderFormat.png;
+
+  Future<DeviceEditResult> replaceImage(LocalAsset asset, Uint8List bytes) async {
+    if (!supportsInPlace(asset)) {
+      return (outcome: DeviceEditOutcome.savedCopy, createdId: await _saveCopy(asset, bytes));
+    }
+
+    final backup = await _ensureBackup(asset);
+    await _overwrite(asset.id, bytes, exifSource: backup);
     return (outcome: DeviceEditOutcome.editedInPlace, createdId: null);
   }
 

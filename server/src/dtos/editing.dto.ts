@@ -76,6 +76,15 @@ const MosaicStrokeSchema = z
       .max(1024)
       .optional()
       .describe('Mosaic block size for this stroke in original image pixels, defaults to the edit block size'),
+    style: z
+      .string()
+      .max(200)
+      .optional()
+      .describe('Censor style plugin method (pluginName#methodName) that renders this stroke'),
+    styleOptions: z
+      .record(z.string(), z.unknown())
+      .optional()
+      .describe('Settings passed to the censor style plugin method for this stroke'),
   })
   .meta({ id: 'MosaicStroke' });
 

@@ -37,6 +37,10 @@ class DevicePluginMethod {
   bool get isFilter => uiHints.contains('Filter');
 
   bool get isGalleryView => uiHints.contains('GalleryView') || types.contains('GalleryViewV1');
+
+  bool get isCensorStyle => uiHints.contains('CensorStyle') || types.contains('CensorStyleV1');
+
+  bool get isAssetAction => uiHints.contains('AssetAction') || types.contains('AssetActionV1');
 }
 
 class DevicePlugin {

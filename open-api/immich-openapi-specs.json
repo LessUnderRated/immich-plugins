@@ -25058,6 +25058,16 @@
             "maxItems": 10000,
             "minItems": 1,
             "type": "array"
+          },
+          "style": {
+            "description": "Censor style plugin method (pluginName#methodName) that renders this stroke",
+            "maxLength": 200,
+            "type": "string"
+          },
+          "styleOptions": {
+            "additionalProperties": {},
+            "description": "Settings passed to the censor style plugin method for this stroke",
+            "type": "object"
           }
         },
         "required": [

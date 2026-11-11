@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:math';
 import 'dart:ui';
 
@@ -28,12 +29,16 @@ class MosaicStrokeDraft {
   final double brushSize;
   final double blockSize;
   final bool erase;
+  final String? style;
+  final Map<String, Object?> styleOptions;
 
   const MosaicStrokeDraft({
     required this.points,
     required this.brushSize,
     required this.erase,
     this.blockSize = defaultMosaicBlockSize,
+    this.style,
+    this.styleOptions = const {},
   });
 
   @override
@@ -43,10 +48,19 @@ class MosaicStrokeDraft {
           other.brushSize == brushSize &&
           other.blockSize == blockSize &&
           other.erase == erase &&
+          other.style == style &&
+          const DeepCollectionEquality().equals(other.styleOptions, styleOptions) &&
           const ListEquality<Offset>().equals(other.points, points);
 
   @override
-  int get hashCode => Object.hash(brushSize, blockSize, erase, const ListEquality<Offset>().hash(points));
+  int get hashCode => Object.hash(
+    brushSize,
+    blockSize,
+    erase,
+    style,
+    const DeepCollectionEquality().hash(styleOptions),
+    const ListEquality<Offset>().hash(points),
+  );
 }
 
 int mosaicBlockPixels(double blockSize, int width, int height) {
@@ -72,6 +86,10 @@ MosaicParameters? mosaicToParameters(List<MosaicStrokeDraft> strokes, double blo
             mode: stroke.erase ? MosaicStrokeMode.erase : MosaicStrokeMode.paint,
             brushSize: max(stroke.brushSize * shortestSide, 1),
             blockSize: Optional.present(mosaicBlockPixels(stroke.blockSize, width, height)),
+            style: stroke.style == null ? const Optional.absent() : Optional.present(stroke.style),
+            styleOptions: Optional.present({
+              for (final MapEntry(:key, :value) in stroke.styleOptions.entries) key: ?value,
+            }),
             points: stroke.points
                 .take(maxMosaicStrokePoints)
                 .map((point) => MosaicPoint(x: point.dx * width, y: point.dy * height))
@@ -101,8 +119,15 @@ MosaicParameters? mosaicToParameters(List<MosaicStrokeDraft> strokes, double blo
               stroke.blockSize.isPresent ? stroke.blockSize.value ?? parameters.blockSize : parameters.blockSize,
             ),
             erase: stroke.mode == MosaicStrokeMode.erase,
+            style: stroke.style.isPresent ? stroke.style.value : null,
+            styleOptions: stroke.styleOptions.isPresent
+                ? Map<String, Object?>.from(stroke.styleOptions.value ?? const {})
+                : const {},
           ),
         )
         .toList(),
   );
 }
+
+String mosaicEffectKey(MosaicStrokeDraft stroke, int width, int height) =>
+    '${stroke.style}|${mosaicBlockPixels(stroke.blockSize, width, height)}|${jsonEncode(stroke.styleOptions)}';
