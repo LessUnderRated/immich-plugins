@@ -131,6 +131,16 @@ class EditorProvider extends Notifier<EditorState> {
     state = state.copyWith(mosaicBlockSize: blockSize);
   }
 
+  void setMosaicStyle(String style) {
+    if (style != state.mosaicStyle) {
+      state = state.copyWith(mosaicStyle: style, mosaicStyleOptions: const {});
+    }
+  }
+
+  void setMosaicStyleOptions(Map<String, Object?> options) {
+    state = state.copyWith(mosaicStyleOptions: options);
+  }
+
   void addMosaicStroke(List<Offset> points) {
     if (points.isEmpty || state.mosaicStrokes.length >= maxMosaicStrokes) {
       return;
@@ -141,6 +151,8 @@ class EditorProvider extends Notifier<EditorState> {
       brushSize: state.mosaicBrushSize,
       blockSize: state.mosaicBlockSize,
       erase: state.mosaicTool == MosaicTool.eraser,
+      style: state.mosaicStyle,
+      styleOptions: state.mosaicStyleOptions,
     );
     state = state.copyWith(
       mosaicStrokes: [...state.mosaicStrokes, stroke],
@@ -223,6 +235,8 @@ abstract class EditorState with _$EditorState {
     @Default(defaultMosaicBlockSize) double mosaicBlockSize,
     @Default(<MosaicStrokeDraft>[]) List<MosaicStrokeDraft> mosaicStrokes,
     @Default(<MosaicStrokeDraft>[]) List<MosaicStrokeDraft> mosaicRedoStrokes,
+    String? mosaicStyle,
+    @Default(<String, Object?>{}) Map<String, Object?> mosaicStyleOptions,
   }) = _EditorState;
 
   bool get hasEdits {

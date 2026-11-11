@@ -10,11 +10,11 @@ import 'package:immich_mobile/domain/models/asset_edit.model.dart';
 import 'package:immich_mobile/domain/models/exif.model.dart';
 import 'package:immich_mobile/domain/models/server_capability.model.dart';
 import 'package:immich_mobile/generated/translations.g.dart';
-import 'package:immich_mobile/infrastructure/repositories/device_edit.repository.dart';
 import 'package:immich_mobile/presentation/actions/action.dart';
 import 'package:immich_mobile/presentation/pages/edit/editor.provider.dart';
 import 'package:immich_mobile/presentation/widgets/images/image_provider.dart';
 import 'package:immich_mobile/providers/background_sync.provider.dart';
+import 'package:immich_mobile/providers/device_plugins.provider.dart';
 import 'package:immich_mobile/providers/infrastructure/asset.provider.dart';
 import 'package:immich_mobile/providers/infrastructure/db.provider.dart';
 import 'package:immich_mobile/providers/server_info.provider.dart';
@@ -23,7 +23,6 @@ import 'package:immich_mobile/routing/router.dart';
 import 'package:immich_mobile/utils/asset_edit_renderer.utils.dart';
 import 'package:immich_mobile/utils/error_handler.dart';
 
-const _deviceEditRepository = DeviceEditRepository();
 const _uneditableExtensions = ['.gif', '.svg'];
 
 final _stateProvider = Provider.family.autoDispose<RemoteAsset?, ActionSource>((ref, source) {
@@ -104,7 +103,8 @@ class EditAssetAction extends AssetActionBuilder {
     }
 
     try {
-      final bytes = await _deviceEditRepository.readOriginal(asset.id);
+      final repository = ref.read(deviceEditRepositoryProvider);
+      final bytes = await repository.readOriginal(asset.id);
       if (bytes == null || !context.mounted) {
         return;
       }
@@ -116,7 +116,7 @@ class EditAssetAction extends AssetActionBuilder {
         return;
       }
 
-      final existing = await _deviceEditRepository.getEdits(asset.id);
+      final existing = await repository.getEdits(asset.id);
       if (!context.mounted) {
         return;
       }
@@ -146,6 +146,6 @@ Future<void> applyEdits(WidgetRef ref, String remoteId, List<AssetEdit> edits) a
 
 Future<void> applyDeviceEdits(WidgetRef ref, LocalAsset asset, List<AssetEdit> edits) async {
   final backgroundSync = ref.read(backgroundSyncProvider);
-  await _deviceEditRepository.applyEdits(asset, edits);
+  await ref.read(deviceEditRepositoryProvider).applyEdits(asset, edits);
   unawaited(backgroundSync.syncLocal());
 }

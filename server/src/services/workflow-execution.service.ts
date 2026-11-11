@@ -135,7 +135,21 @@ export class WorkflowExecutionService extends BaseService {
       assetService.removeAssetEdits(authDto, id),
     );
 
+    const deviceOnly = this.wrap<unknown[]>(() => {
+      throw new BadRequestException('This host function is only available in the mobile app');
+    });
+
     const functions = {
+      listAssets: deviceOnly,
+      getAsset: deviceOnly,
+      readImage: deviceOnly,
+      writeImage: deviceOnly,
+      readFile: deviceOnly,
+      writeFile: deviceOnly,
+      listFiles: deviceOnly,
+      deleteFile: deviceOnly,
+      getStorage: deviceOnly,
+      setStorage: deviceOnly,
       searchAlbums,
       createAlbum,
       addAssetsToAlbum,
@@ -148,6 +162,16 @@ export class WorkflowExecutionService extends BaseService {
     };
 
     const stubs: typeof functions = {
+      listAssets: dummy,
+      getAsset: dummy,
+      readImage: dummy,
+      writeImage: dummy,
+      readFile: dummy,
+      writeFile: dummy,
+      listFiles: dummy,
+      deleteFile: dummy,
+      getStorage: dummy,
+      setStorage: dummy,
       searchAlbums: dummy,
       createAlbum: dummy,
       addAssetsToAlbum: dummy,

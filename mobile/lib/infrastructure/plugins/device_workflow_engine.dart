@@ -10,6 +10,7 @@ import 'package:immich_mobile/domain/models/asset/base_asset.model.dart';
 import 'package:immich_mobile/domain/models/device_plugin.model.dart';
 import 'package:immich_mobile/domain/services/offline_user.service.dart';
 import 'package:immich_mobile/infrastructure/plugins/device_plugin_store.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_host_extras.dart';
 import 'package:immich_mobile/infrastructure/plugins/wasm_plugin_runtime.dart';
 import 'package:immich_mobile/infrastructure/repositories/app_album.repository.dart';
 import 'package:immich_mobile/infrastructure/repositories/device_edit.repository.dart';
@@ -49,7 +50,6 @@ class DeviceWorkflowEngine {
   final Map<String, DevicePlugin> _loaded = {};
   final List<DeviceWorkflowRun> recentRuns = [];
   final _changes = StreamController<void>.broadcast();
-  List<String> _allowedHosts = const [];
   bool _processing = false;
   bool _pending = false;
   Future<void>? _ready;
@@ -77,6 +77,91 @@ class DeviceWorkflowEngine {
         if (plugin.enabled && _loaded.containsKey(plugin.name))
           for (final method in plugin.methods)
             if (method.isGalleryView) (plugin, method),
+    ];
+  }
+
+  late final PluginHostExtras _extras = PluginHostExtras(() => _store.root);
+
+  Future<List<(DevicePlugin, DevicePluginMethod)>> assetActionMethods() async {
+    await ensureReady();
+    return [
+      for (final plugin in await _store.list())
+        if (plugin.enabled && _loaded.containsKey(plugin.name))
+          for (final method in plugin.methods)
+            if (method.isAssetAction) (plugin, method),
+    ];
+  }
+
+  Future<Map<String, dynamic>?> runAssetAction(
+    String plugin,
+    String method,
+    List<LocalAsset> assets,
+    Map<String, dynamic> config,
+  ) async {
+    final response = await callPluginMethod(plugin, method, {
+      'type': 'AssetActionV1',
+      'config': config,
+      'workflow': {'id': 'asset-action', 'authToken': '', 'stepId': method},
+      'data': {
+        'assets': [for (final asset in assets) await _assetV1(asset)],
+      },
+    });
+    _changes.add(null);
+    return response;
+  }
+
+  Future<List<Map<String, dynamic>>> _listAssets(Map<String, dynamic> options) async {
+    final offset = (options['offset'] as num?)?.toInt() ?? 0;
+    final limit = ((options['limit'] as num?)?.toInt() ?? 100).clamp(1, 1000);
+    final albumId = options['albumId'] as String?;
+    final appAlbum = albumId == null ? null : await _albums.get(albumId);
+
+    final query = _db.localAssetEntity.select()
+      ..orderBy([(row) => OrderingTerm.desc(row.createdAt), (row) => OrderingTerm.asc(row.id)])
+      ..limit(limit, offset: offset);
+    if (appAlbum != null) {
+      query.where((row) => row.id.isIn(appAlbum.assetIds));
+    } else if (albumId != null) {
+      query.where(
+        (row) => row.id.isInQuery(
+          _db.selectOnly(_db.localAlbumAssetEntity)
+            ..addColumns([_db.localAlbumAssetEntity.assetId])
+            ..where(_db.localAlbumAssetEntity.albumId.equals(albumId)),
+        ),
+      );
+    }
+
+    return [for (final row in await query.get()) await _assetV1(row.toDto())];
+  }
+
+  Future<Map<String, dynamic>> _readImage(String assetId, Map<String, dynamic> options) async {
+    final bytes = options['original'] == true ? await _edits.readOriginal(assetId) : await _edits.readCurrent(assetId);
+    if (bytes == null) {
+      throw const HostFunctionException(404, 'Image file not found');
+    }
+    return {
+      'assetId': assetId,
+      ...await PluginHostExtras.encodePixels(bytes, maxSize: (options['maxSize'] as num?)?.toInt()),
+    };
+  }
+
+  Future<Map<String, dynamic>> _writeImage(String assetId, Map<String, dynamic> image) async {
+    final asset = await _localAsset(assetId);
+    final bytes = await PluginHostExtras.decodePixels(image, png: _edits.replacesAsPng(asset));
+    final result = await _edits.replaceImage(asset, bytes);
+    if (result.createdId != null) {
+      await _markCreated(result.createdId!);
+    }
+    return {'assetId': assetId, 'outcome': result.outcome.name, 'createdId': result.createdId};
+  }
+
+  Future<List<(DevicePlugin, DevicePluginMethod)>> censorStyleMethods() async {
+    await ensureReady();
+    return [
+      for (final plugin in await _store.list())
+        if (plugin.enabled && _loaded.containsKey(plugin.name))
+          for (final method in plugin.methods)
+            if (method.isCensorStyle) (plugin, method),
     ];
   }
 
@@ -259,7 +344,6 @@ class DeviceWorkflowEngine {
           break;
         }
 
-        _allowedHosts = method.allowedHosts;
         final response = await _runtime.call(plugin.name, method.name, {
           'trigger': workflow.trigger,
           'type': deviceAssetType,
@@ -293,9 +377,7 @@ class DeviceWorkflowEngine {
     } catch (error, stack) {
       _log.warning('Workflow ${workflow.name} failed for ${asset.name}', error, stack);
       result = 'failed: $error';
-    } finally {
-      _allowedHosts = const [];
-    }
+    } finally {}
 
     recentRuns.insert(
       0,
@@ -391,7 +473,7 @@ class DeviceWorkflowEngine {
     try {
       final payload = jsonDecode(input) as Map;
       final args = (payload['args'] as List?) ?? const [];
-      final response = await _dispatch(name, args);
+      final response = await _dispatch(plugin, name, args);
       return jsonEncode({'success': true, 'response': response});
     } on HostFunctionException catch (error) {
       return jsonEncode({'success': false, 'status': error.status, 'message': error.message});
@@ -401,7 +483,7 @@ class DeviceWorkflowEngine {
     }
   }
 
-  Future<Object?> _dispatch(String name, List<dynamic> args) {
+  Future<Object?> _dispatch(String plugin, String name, List<dynamic> args) {
     Map<String, dynamic> arg(int index) =>
         index < args.length && args[index] is Map ? Map<String, dynamic>.from(args[index] as Map) : {};
     String text(int index) => index < args.length ? '${args[index]}' : '';
@@ -416,6 +498,16 @@ class DeviceWorkflowEngine {
       'getAssetEdits' => _getAssetEdits(text(0)),
       'editAsset' => _editAsset(text(0), arg(1)),
       'removeAssetEdits' => _removeAssetEdits(text(0)),
+      'listAssets' => _listAssets(arg(0)),
+      'getAsset' => _localAsset(text(0)).then(_assetV1),
+      'readImage' => _readImage(text(0), arg(1)),
+      'writeImage' => _writeImage(text(0), arg(1)),
+      'readFile' => _extras.readFile(plugin, text(0)),
+      'writeFile' => _extras.writeFile(plugin, text(0), arg(1)),
+      'listFiles' => _extras.listFiles(plugin, text(0)),
+      'deleteFile' => _extras.deleteFile(plugin, text(0)).then((_) => null),
+      'getStorage' => _extras.getStorage(plugin, text(0)),
+      'setStorage' => _extras.setStorage(plugin, text(0), args.length > 1 ? args[1] : null).then((_) => null),
       _ => throw HostFunctionException(501, 'Host function $name is not available on the device'),
     };
   }
@@ -464,9 +556,6 @@ class DeviceWorkflowEngine {
     if (uri == null || !uri.hasScheme || uri.host.isEmpty) {
       throw const HostFunctionException(400, 'Invalid URL');
     }
-    if (!_allowedHosts.any((pattern) => _hostMatches(pattern, uri.host))) {
-      throw HostFunctionException(403, 'HTTP request to ${uri.host} is not allowed');
-    }
 
     final request = http.Request((options['method'] as String? ?? 'GET').toUpperCase(), uri);
     final headers = options['headers'];
@@ -474,26 +563,23 @@ class DeviceWorkflowEngine {
       request.headers.addAll(headers.map((key, value) => MapEntry('$key', '$value')));
     }
     final body = options['body'];
-    if (body is String) {
+    final bodyBase64 = options['bodyBase64'];
+    if (bodyBase64 is String) {
+      request.bodyBytes = base64Decode(bodyBase64);
+    } else if (body is String) {
       request.body = body;
     }
-    final response = await http.Response.fromStream(await request.send().timeout(const Duration(seconds: 30)));
+    final timeout = options['timeoutSeconds'];
+    final response = await http.Response.fromStream(
+      await request.send().timeout(Duration(seconds: timeout is num ? timeout.toInt() : 120)),
+    );
+    final binary = options['responseType'] == 'base64';
     return {
       'ok': response.statusCode >= 200 && response.statusCode < 300,
       'status': response.statusCode,
-      'body': response.body,
+      'headers': response.headers,
+      'body': binary ? base64Encode(response.bodyBytes) : response.body,
     };
-  }
-
-  static bool _hostMatches(String pattern, String host) {
-    if (pattern == '*') {
-      return true;
-    }
-    if (pattern.startsWith('*.')) {
-      final suffix = pattern.substring(1);
-      return host.endsWith(suffix) || host == pattern.substring(2);
-    }
-    return pattern == host;
   }
 
   Future<List<String>> _tagsFor(String assetId) async {

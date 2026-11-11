@@ -25060,8 +25060,14 @@
             "type": "array"
           },
           "style": {
-            "$ref": "#/components/schemas/MosaicStyle",
-            "description": "Censor style for this stroke, defaults to pixelate"
+            "description": "Censor style plugin method (pluginName#methodName) that renders this stroke",
+            "maxLength": 200,
+            "type": "string"
+          },
+          "styleOptions": {
+            "additionalProperties": {},
+            "description": "Settings passed to the censor style plugin method for this stroke",
+            "type": "object"
           }
         },
         "required": [
@@ -25076,16 +25082,6 @@
         "enum": [
           "paint",
           "erase"
-        ],
-        "type": "string"
-      },
-      "MosaicStyle": {
-        "description": "How a stroke censors the image",
-        "enum": [
-          "pixelate",
-          "blur",
-          "hexagon",
-          "stainedGlass"
         ],
         "type": "string"
       },

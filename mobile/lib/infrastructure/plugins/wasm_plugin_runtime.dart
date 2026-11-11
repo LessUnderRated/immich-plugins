@@ -15,6 +15,16 @@ const deviceHostFunctions = [
   'getAssetEdits',
   'editAsset',
   'removeAssetEdits',
+  'listAssets',
+  'getAsset',
+  'readImage',
+  'writeImage',
+  'readFile',
+  'writeFile',
+  'listFiles',
+  'deleteFile',
+  'getStorage',
+  'setStorage',
 ];
 
 class WasmPluginRuntime {
@@ -44,7 +54,7 @@ class WasmPluginRuntime {
     'key': plugin.name,
     'wasmPath': plugin.wasmPath,
     'hostFunctions': deviceHostFunctions,
-    'enableHostFunctions': plugin.usesHostFunctions,
+    'enableHostFunctions': true,
   });
 
   Future<void> unload(String name) => _channel.invokeMethod('unload', {'key': name});

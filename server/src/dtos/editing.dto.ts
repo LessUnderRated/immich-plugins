@@ -58,15 +58,6 @@ const MosaicStrokeModeSchema = z
   .describe('Whether the stroke adds mosaic or erases previously painted mosaic')
   .meta({ id: 'MosaicStrokeMode' });
 
-export enum MosaicStyle {
-  Pixelate = 'pixelate',
-  Blur = 'blur',
-  Hexagon = 'hexagon',
-  StainedGlass = 'stainedGlass',
-}
-
-const MosaicStyleSchema = z.enum(MosaicStyle).describe('How a stroke censors the image').meta({ id: 'MosaicStyle' });
-
 const MosaicPointSchema = z
   .object({
     x: z.number().describe('X coordinate in original image pixels').meta({ format: 'double' }),
@@ -85,7 +76,15 @@ const MosaicStrokeSchema = z
       .max(1024)
       .optional()
       .describe('Mosaic block size for this stroke in original image pixels, defaults to the edit block size'),
-    style: MosaicStyleSchema.optional().describe('Censor style for this stroke, defaults to pixelate'),
+    style: z
+      .string()
+      .max(200)
+      .optional()
+      .describe('Censor style plugin method (pluginName#methodName) that renders this stroke'),
+    styleOptions: z
+      .record(z.string(), z.unknown())
+      .optional()
+      .describe('Settings passed to the censor style plugin method for this stroke'),
   })
   .meta({ id: 'MosaicStroke' });
 
