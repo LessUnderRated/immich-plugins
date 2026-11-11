@@ -47,6 +47,9 @@ import 'package:immich_mobile/presentation/pages/dev/main_timeline.page.dart';
 import 'package:immich_mobile/presentation/pages/dev/media_stat.page.dart';
 import 'package:immich_mobile/presentation/pages/download_info.page.dart';
 import 'package:immich_mobile/presentation/pages/edit/edit.page.dart';
+import 'package:immich_mobile/presentation/pages/plugins/device_workflow_editor.page.dart';
+import 'package:immich_mobile/presentation/pages/plugins/plugins.page.dart';
+import 'package:immich_mobile/domain/models/device_plugin.model.dart';
 import 'package:immich_mobile/presentation/pages/favorite.page.dart';
 import 'package:immich_mobile/presentation/pages/feature_message/whats_new.page.dart';
 import 'package:immich_mobile/presentation/pages/library.page.dart';
@@ -184,6 +187,8 @@ class AppRouter extends RootStackRouter {
     AutoRoute(page: AlbumOptionsRoute.page, guards: [_authGuard, _duplicateGuard]),
     AutoRoute(page: MapRoute.page, guards: [_authGuard, _duplicateGuard]),
     AutoRoute(page: EditImageRoute.page),
+    AutoRoute(page: PluginsRoute.page, guards: [_duplicateGuard]),
+    AutoRoute(page: DeviceWorkflowEditorRoute.page),
     AutoRoute(page: ActivitiesRoute.page, guards: [_authGuard, _duplicateGuard]),
     AutoRoute(page: BackupAssetDetailRoute.page, guards: [_authGuard, _duplicateGuard]),
     AutoRoute(page: AssetTroubleshootRoute.page, guards: [_authGuard, _duplicateGuard]),

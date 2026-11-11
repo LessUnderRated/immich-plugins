@@ -87,6 +87,9 @@ flutter {
 
 dependencies {
   implementation libs.okhttp
+  implementation("org.extism.sdk:chicory-sdk-core:0.3.0") {
+    exclude group: "com.dylibso.chicory", module: "compiler"
+  }
   implementation libs.cronet.embedded
   implementation libs.media3.datasource.okhttp
   implementation libs.media3.datasource.cronet

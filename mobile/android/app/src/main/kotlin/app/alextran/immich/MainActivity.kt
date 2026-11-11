@@ -19,6 +19,7 @@ import app.alextran.immich.images.LocalImagesImpl
 import app.alextran.immich.images.RemoteImageApi
 import app.alextran.immich.images.RemoteImagesImpl
 import app.alextran.immich.passkey.PasskeyPlugin
+import app.alextran.immich.plugins.WasmPluginHost
 import app.alextran.immich.permission.PermissionApi
 import app.alextran.immich.permission.PermissionApiImpl
 import app.alextran.immich.sync.NativeSyncApi
@@ -33,6 +34,7 @@ class MainActivity : FlutterFragmentActivity() {
     super.configureFlutterEngine(flutterEngine)
     registerPlugins(this, flutterEngine)
     flutterEngine.plugins.add(PasskeyPlugin())
+    WasmPluginHost(flutterEngine.dartExecutor.binaryMessenger)
   }
 
   override fun onNewIntent(intent: Intent) {

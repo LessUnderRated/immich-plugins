@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:immich_mobile/generated/translations.g.dart';
 import 'package:immich_mobile/presentation/widgets/bottom_sheet/device_library_bottom_sheet.widget.dart';
 import 'package:immich_mobile/presentation/widgets/timeline/timeline.widget.dart';
+import 'package:immich_mobile/routing/router.dart';
 
 @RoutePage()
 class MainTimelinePage extends StatelessWidget {
@@ -11,7 +12,19 @@ class MainTimelinePage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Timeline(
-      appBar: SliverAppBar(floating: true, snap: true, centerTitle: true, title: Text(context.t.photos)),
+      appBar: SliverAppBar(
+        floating: true,
+        snap: true,
+        centerTitle: true,
+        title: Text(context.t.photos),
+        actions: [
+          IconButton(
+            tooltip: 'Plugins',
+            icon: const Icon(Icons.extension_outlined),
+            onPressed: () => context.pushRoute(const PluginsRoute()),
+          ),
+        ],
+      ),
       bottomSheet: const DeviceLibraryBottomSheet(),
     );
   }
