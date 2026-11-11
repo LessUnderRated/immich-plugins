@@ -11251,6 +11251,57 @@
           }
         ],
         "x-immich-permission": "plugin.read"
+      },
+      "post": {
+        "description": "Install or upgrade a plugin from a .zip package containing manifest.json and the compiled wasm file.",
+        "operationId": "installPlugin",
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/PluginUploadDto"
+              }
+            }
+          },
+          "description": "Plugin package",
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PluginResponseDto"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "cookie": []
+          },
+          {
+            "api_key": []
+          }
+        ],
+        "summary": "Install a plugin",
+        "tags": [
+          "Plugins"
+        ],
+        "x-immich-admin-only": true,
+        "x-immich-history": [
+          {
+            "state": "Added",
+            "version": "v3.0.0"
+          }
+        ],
+        "x-immich-permission": "plugin.create"
       }
     },
     "/plugins/methods": {
@@ -11423,6 +11474,50 @@
       }
     },
     "/plugins/{id}": {
+      "delete": {
+        "description": "Remove an installed plugin and every workflow step that uses it.",
+        "operationId": "uninstallPlugin",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "cookie": []
+          },
+          {
+            "api_key": []
+          }
+        ],
+        "summary": "Uninstall a plugin",
+        "tags": [
+          "Plugins"
+        ],
+        "x-immich-admin-only": true,
+        "x-immich-history": [
+          {
+            "state": "Added",
+            "version": "v3.0.0"
+          }
+        ],
+        "x-immich-permission": "plugin.delete"
+      },
       "get": {
         "description": "Retrieve information about a specific plugin by its ID.",
         "operationId": "getPlugin",
@@ -26486,6 +26581,16 @@
           "config",
           "method"
         ],
+        "type": "object"
+      },
+      "PluginUploadDto": {
+        "properties": {
+          "file": {
+            "description": "Plugin package (.zip with manifest.json and the wasm file)",
+            "format": "binary",
+            "type": "string"
+          }
+        },
         "type": "object"
       },
       "PublicConfigDto": {

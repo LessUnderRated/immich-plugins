@@ -77,6 +77,13 @@ const PluginMethodSearchSchema = z
   })
   .meta({ id: 'PluginMethodSearchDto' });
 
+const PluginUploadSchema = z
+  .object({
+    file: z.file().optional().describe('Plugin package (.zip with manifest.json and the wasm file)'),
+  })
+  .meta({ id: 'PluginUploadDto' });
+
+export class PluginUploadDto extends createZodDto(PluginUploadSchema) {}
 export class PluginSearchDto extends createZodDto(PluginSearchSchema) {}
 export class PluginResponseDto extends createZodDto(PluginResponseSchema) {}
 export class PluginMethodSearchDto extends createZodDto(PluginMethodSearchSchema) {}

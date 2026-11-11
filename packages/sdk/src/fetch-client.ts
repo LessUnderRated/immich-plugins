@@ -2216,6 +2216,10 @@ export type PluginResponseDto = {
     /** Plugin version */
     version: string;
 };
+export type PluginUploadDto = {
+    /** Plugin package (.zip with manifest.json and the wasm file) */
+    file?: Blob;
+};
 export type PluginTemplateStepResponseDto = {
     /** Step configuration */
     config: {
@@ -6568,6 +6572,21 @@ export function searchPlugins({ description, enabled, id, name, title, version }
     }));
 }
 /**
+ * Install a plugin
+ */
+export function installPlugin({ pluginUploadDto }: {
+    pluginUploadDto: PluginUploadDto;
+}, opts?: Oazapfts.RequestOpts) {
+    return oazapfts.ok(oazapfts.fetchJson<{
+        status: 201;
+        data: PluginResponseDto;
+    }>("/plugins", oazapfts.multipart({
+        ...opts,
+        method: "POST",
+        body: pluginUploadDto
+    })));
+}
+/**
  * Retrieve plugin methods
  */
 export function searchPluginMethods({ description, enabled, id, name, pluginName, pluginVersion, title, trigger, $type }: {
@@ -6607,6 +6626,17 @@ export function searchPluginTemplates(opts?: Oazapfts.RequestOpts) {
         data: PluginTemplateResponseDto[];
     }>("/plugins/templates", {
         ...opts
+    }));
+}
+/**
+ * Uninstall a plugin
+ */
+export function uninstallPlugin({ id }: {
+    id: string;
+}, opts?: Oazapfts.RequestOpts) {
+    return oazapfts.ok(oazapfts.fetchText(`/plugins/${encodeURIComponent(id)}`, {
+        ...opts,
+        method: "DELETE"
     }));
 }
 /**

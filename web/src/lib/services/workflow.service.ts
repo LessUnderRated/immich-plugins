@@ -1,3 +1,4 @@
+import PluginManagerModal from '#lib/modals/PluginManagerModal.svelte';
 import WorkflowDuplicateModal from '#lib/modals/WorkflowDuplicateModal.svelte';
 import WorkflowLogsModal from '#lib/modals/WorkflowLogsModal.svelte';
 import WorkflowTemplatePickerModal from '#lib/modals/WorkflowTemplatePickerModal.svelte';
@@ -20,6 +21,7 @@ import {
   mdiPencil,
   mdiPlay,
   mdiPlus,
+  mdiPuzzleOutline,
 } from '@mdi/js';
 import type { MessageFormatter } from 'svelte-i18n';
 import { goto } from '$app/navigation';
@@ -43,7 +45,13 @@ export const getWorkflowsActions = ($t: MessageFormatter) => {
     onAction: () => modalManager.show(WorkflowTemplatePickerModal, {}),
   };
 
-  return { Create, UseTemplate };
+  const ManagePlugins: ActionItem = {
+    title: $t('plugins'),
+    icon: mdiPuzzleOutline,
+    onAction: () => modalManager.show(PluginManagerModal, {}),
+  };
+
+  return { Create, UseTemplate, ManagePlugins };
 };
 
 export const getWorkflowActions = ($t: MessageFormatter, workflow: WorkflowResponseDto) => {

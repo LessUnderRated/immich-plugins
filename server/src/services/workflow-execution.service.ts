@@ -71,7 +71,16 @@ export class WorkflowExecutionService extends BaseService {
   @OnEvent({ name: 'AppBootstrap', priority: BootstrapEventPriority.PluginLoad, workers: [ImmichWorker.Microservices] })
   async onPluginLoad() {
     this.jwtSecret = this.cryptoRepository.randomBytesAsText(32);
+    await this.loadPlugins();
+  }
 
+  @OnEvent({ name: 'PluginUpdate', server: true, workers: [ImmichWorker.Microservices] })
+  async onPluginUpdate() {
+    this.logger.log('Plugins changed, reloading');
+    await this.loadPlugins();
+  }
+
+  private async loadPlugins() {
     const albumService = BaseService.create(AlbumService, this);
     const tagService = BaseService.create(TagService, this);
 
@@ -129,6 +138,12 @@ export class WorkflowExecutionService extends BaseService {
     };
 
     const plugins = await this.pluginRepository.getForLoad();
+    const keys = plugins.flatMap(({ id }) => [
+      this.getPluginKey({ id, hostFunctions: false }),
+      this.getPluginKey({ id, hostFunctions: true }),
+    ]);
+    await this.pluginRepository.unloadExcept(keys);
+
     for (const { id, name, version, wasmBytes, methods } of plugins) {
       const isMethod = methods.some(({ hostFunctions }) => !hostFunctions);
       if (isMethod) {

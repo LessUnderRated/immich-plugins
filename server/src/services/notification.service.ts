@@ -138,6 +138,11 @@ export class NotificationService extends BaseService {
     this.websocketRepository.serverSend('LibraryDelete');
   }
 
+  @OnEvent({ name: 'PluginUpdate' })
+  onPluginUpdate() {
+    this.websocketRepository.serverSend('PluginUpdate');
+  }
+
   @OnEvent({ name: 'ConfigValidate', priority: -100 })
   async onConfigValidate({ oldConfig, newConfig }: ArgOf<'ConfigValidate'>) {
     try {
