@@ -108,9 +108,14 @@ class TimelineRepository extends DatabaseAccessor<Drift> with $TimelineRepositor
           origin: TimelineOrigin.main,
         );
 
-  TimelineQuery _galleryView(GalleryViewSpec view, {required TimelineOrigin origin, String? albumId}) {
+  TimelineQuery _galleryView(
+    GalleryViewSpec view, {
+    required TimelineOrigin origin,
+    String? albumId,
+    List<String>? assetIds,
+  }) {
     final asset = _db.localAssetEntity;
-    final filter = _galleryViewFilter(view, albumId: albumId);
+    final filter = _galleryViewFilter(view, albumId: albumId, assetIds: assetIds);
     final countExp = asset.id.count();
 
     return (
@@ -132,7 +137,7 @@ class TimelineRepository extends DatabaseAccessor<Drift> with $TimelineRepositor
     );
   }
 
-  Expression<bool> _galleryViewFilter(GalleryViewSpec view, {String? albumId}) {
+  Expression<bool> _galleryViewFilter(GalleryViewSpec view, {String? albumId, List<String>? assetIds}) {
     final asset = _db.localAssetEntity;
     final albumAsset = _db.localAlbumAssetEntity;
     final isGif = asset.name.lower().like('%.gif');
@@ -145,18 +150,25 @@ class TimelineRepository extends DatabaseAccessor<Drift> with $TimelineRepositor
         (isVideo & Constant(view.videos)) |
         (isImage.not() & isVideo.not());
 
-    if (albumId != null) {
+    if (assetIds != null) {
+      filter &= asset.id.isIn(assetIds);
+    } else if (albumId != null) {
       filter &= asset.id.isInQuery(
         _db.selectOnly(albumAsset)
           ..addColumns([albumAsset.assetId])
           ..where(albumAsset.albumId.equals(albumId)),
       );
-    } else if (view.excludeAlbumIds.isNotEmpty) {
-      filter &= asset.id.isNotInQuery(
-        _db.selectOnly(albumAsset)
-          ..addColumns([albumAsset.assetId])
-          ..where(albumAsset.albumId.isIn(view.excludeAlbumIds)),
-      );
+    } else {
+      if (view.excludeAlbumIds.isNotEmpty) {
+        filter &= asset.id.isNotInQuery(
+          _db.selectOnly(albumAsset)
+            ..addColumns([albumAsset.assetId])
+            ..where(albumAsset.albumId.isIn(view.excludeAlbumIds)),
+        );
+      }
+      if (view.excludeAssetIds.isNotEmpty) {
+        filter &= asset.id.isNotIn(view.excludeAssetIds);
+      }
     }
 
     return filter;
@@ -205,23 +217,25 @@ class TimelineRepository extends DatabaseAccessor<Drift> with $TimelineRepositor
     return query.map((row) => row.toDto()).get();
   }
 
-  TimelineQuery appAlbum(List<String> assetIds) => (
-    bucketSource: () =>
-        (_db.selectOnly(_db.localAssetEntity)
-              ..addColumns([_db.localAssetEntity.id.count()])
-              ..where(_db.localAssetEntity.id.isIn(assetIds)))
-            .map((row) => row.read(_db.localAssetEntity.id.count()) ?? 0)
-            .watchSingle()
-            .map(_generateBuckets),
-    assetSource: (offset, count) =>
-        (_db.select(_db.localAssetEntity)
-              ..where((row) => row.id.isIn(assetIds))
-              ..orderBy([(row) => OrderingTerm.desc(row.createdAt), (row) => OrderingTerm.asc(row.id)])
-              ..limit(count, offset: offset))
-            .map((row) => row.toDto())
-            .get(),
-    origin: TimelineOrigin.localAlbum,
-  );
+  TimelineQuery appAlbum(List<String> assetIds, {GalleryViewSpec? view}) => view != null
+      ? _galleryView(view, origin: TimelineOrigin.localAlbum, assetIds: assetIds)
+      : (
+          bucketSource: () =>
+              (_db.selectOnly(_db.localAssetEntity)
+                    ..addColumns([_db.localAssetEntity.id.count()])
+                    ..where(_db.localAssetEntity.id.isIn(assetIds)))
+                  .map((row) => row.read(_db.localAssetEntity.id.count()) ?? 0)
+                  .watchSingle()
+                  .map(_generateBuckets),
+          assetSource: (offset, count) =>
+              (_db.select(_db.localAssetEntity)
+                    ..where((row) => row.id.isIn(assetIds))
+                    ..orderBy([(row) => OrderingTerm.desc(row.createdAt), (row) => OrderingTerm.asc(row.id)])
+                    ..limit(count, offset: offset))
+                  .map((row) => row.toDto())
+                  .get(),
+          origin: TimelineOrigin.localAlbum,
+        );
 
   TimelineQuery localAlbum(String albumId, GroupAssetsBy groupBy, {GalleryViewSpec? view}) => view != null
       ? _galleryView(view, origin: TimelineOrigin.localAlbum, albumId: albumId)

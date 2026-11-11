@@ -4,6 +4,7 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:immich_mobile/domain/models/device_plugin.model.dart';
 import 'package:immich_mobile/domain/models/gallery_view.model.dart';
 import 'package:immich_mobile/presentation/pages/plugins/schema_form.widget.dart';
+import 'package:immich_mobile/providers/app_album.provider.dart';
 import 'package:immich_mobile/providers/device_plugins.provider.dart';
 import 'package:immich_mobile/providers/gallery_view.provider.dart';
 import 'package:immich_mobile/routing/router.dart';
@@ -41,6 +42,11 @@ class _GalleryViewSheet extends ConsumerStatefulWidget {
 }
 
 class _GalleryViewSheetState extends ConsumerState<_GalleryViewSheet> {
+  Future<List<AlbumOption>> _albumOptions() async => [
+    for (final album in await ref.read(appAlbumRepositoryProvider).list()) (id: album.id, name: album.name),
+    ...await deviceFolderOptions(),
+  ];
+
   late final Future<List<(DevicePlugin, DevicePluginMethod)>> _methods = ref
       .read(deviceWorkflowEngineProvider)
       .galleryViewMethods();
@@ -155,6 +161,7 @@ class _GalleryViewSheetState extends ConsumerState<_GalleryViewSheet> {
                 key: ValueKey(_key(selected)),
                 schema: selected.$2.schema,
                 config: _config,
+                albumOptions: _albumOptions,
                 onChanged: (config) => setState(() => _config = config),
               ),
               const SizedBox(height: 16),

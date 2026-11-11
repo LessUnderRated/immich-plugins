@@ -3,8 +3,10 @@ import 'package:flutter/material.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:immich_mobile/domain/models/timeline.model.dart';
 import 'package:immich_mobile/presentation/widgets/bottom_sheet/device_library_bottom_sheet.widget.dart';
+import 'package:immich_mobile/presentation/widgets/gallery_view/gallery_view_button.widget.dart';
 import 'package:immich_mobile/presentation/widgets/timeline/timeline.widget.dart';
 import 'package:immich_mobile/providers/app_album.provider.dart';
+import 'package:immich_mobile/providers/gallery_view.provider.dart';
 import 'package:immich_mobile/providers/infrastructure/timeline.provider.dart';
 import 'package:immich_mobile/widgets/common/mesmerizing_sliver_app_bar.dart';
 
@@ -56,15 +58,16 @@ class AppAlbumPage extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final album = ref.watch(appAlbumProvider(albumId)).valueOrNull;
+    final view = ref.watch(galleryViewSpecProvider(albumId)).valueOrNull;
     if (album == null) {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
 
     return ProviderScope(
-      key: ValueKey(Object.hashAll(album.assetIds)),
+      key: ValueKey((Object.hashAll(album.assetIds), view)),
       overrides: [
         timelineServiceProvider.overrideWith((ref) {
-          final timelineService = ref.watch(timelineFactoryProvider).appAlbum(album.assetIds);
+          final timelineService = ref.watch(timelineFactoryProvider).appAlbum(album.assetIds, view: view);
           ref.onDispose(timelineService.dispose);
           return timelineService;
         }),
@@ -73,6 +76,7 @@ class AppAlbumPage extends ConsumerWidget {
         appBar: MesmerizingSliverAppBar(
           title: album.name,
           actions: [
+            GalleryViewButton(scope: album.id, color: Colors.white),
             PopupMenuButton<String>(
               iconColor: Colors.white,
               onSelected: (value) =>

@@ -108,6 +108,27 @@ void main() {
     expect(await ids(sut.localAlbum('screenshots', GroupAssetsBy.none, view: view)), ['gif', 'photo-small']);
   });
 
+  test('sorts and filters inside an app album', () async {
+    const assetIds = ['photo-small', 'gif', 'video'];
+    final query = sut.appAlbum(
+      assetIds,
+      view: const GalleryViewSpec(sortField: GalleryViewSortField.name, descending: false, gifs: false),
+    );
+    expect(await ids(query), ['photo-small', 'video']);
+    expect(await count(query), 2);
+  });
+
+  test('app albums keep newest first without a view', () async {
+    expect(await ids(sut.appAlbum(const ['photo-small', 'gif', 'video'])), ['video', 'gif', 'photo-small']);
+  });
+
+  test('hides the photos of excluded app albums from the main gallery', () async {
+    final view = const GalleryViewSpec(excludeAlbumIds: {'app-album'}).withExcludedAssets({'photo-big', 'video'});
+    final query = sut.deviceLibrary(GroupAssetsBy.none, view: view);
+    expect(await ids(query), ['gif', 'photo-small']);
+    expect(await count(query), 2);
+  });
+
   test('parses a plugin view spec', () {
     final spec = GalleryViewSpec.fromJson({
       'sort': {'field': 'duration', 'direction': 'asc'},

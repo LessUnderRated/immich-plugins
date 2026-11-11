@@ -5,6 +5,7 @@ import 'package:immich_mobile/domain/models/gallery_view.model.dart';
 import 'package:immich_mobile/domain/models/store.model.dart';
 import 'package:immich_mobile/entities/store.entity.dart';
 import 'package:immich_mobile/infrastructure/repositories/device_album.repository.dart';
+import 'package:immich_mobile/providers/app_album.provider.dart';
 import 'package:immich_mobile/providers/device_plugins.provider.dart';
 import 'package:logging/logging.dart';
 
@@ -52,7 +53,11 @@ final galleryViewSpecProvider = FutureProvider.family<GalleryViewSpec?, String>(
   }
 
   final engine = ref.watch(deviceWorkflowEngineProvider);
-  final albums = await const DeviceAlbumRepository().albums();
+  final appAlbums = await ref.watch(appAlbumsProvider.future);
+  final albums = [
+    for (final album in appAlbums) (id: album.id, name: album.name),
+    for (final album in await const DeviceAlbumRepository().albums()) (id: album.id, name: album.name),
+  ];
   final isMain = scope == mainGalleryViewScope;
   try {
     final response = await engine.callPluginMethod(selection.pluginName, selection.methodName, {
@@ -69,7 +74,19 @@ final galleryViewSpecProvider = FutureProvider.family<GalleryViewSpec?, String>(
       },
     });
     final view = response?['view'];
-    return view is Map ? GalleryViewSpec.fromJson(Map<String, dynamic>.from(view)) : null;
+    if (view is! Map) {
+      return null;
+    }
+
+    final spec = GalleryViewSpec.fromJson(Map<String, dynamic>.from(view));
+    if (!isMain) {
+      return spec;
+    }
+
+    return spec.withExcludedAssets({
+      for (final album in appAlbums)
+        if (spec.excludeAlbumIds.contains(album.id)) ...album.assetIds,
+    });
   } catch (error, stack) {
     _log.severe('Gallery view ${selection.key} failed', error, stack);
     return null;

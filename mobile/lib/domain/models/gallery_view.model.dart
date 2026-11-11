@@ -12,6 +12,7 @@ class GalleryViewSpec {
   final bool videos;
   final bool gifs;
   final Set<String> excludeAlbumIds;
+  final Set<String> excludeAssetIds;
 
   const GalleryViewSpec({
     this.sortField = GalleryViewSortField.createdAt,
@@ -20,7 +21,18 @@ class GalleryViewSpec {
     this.videos = true,
     this.gifs = true,
     this.excludeAlbumIds = const {},
+    this.excludeAssetIds = const {},
   });
+
+  GalleryViewSpec withExcludedAssets(Set<String> assetIds) => GalleryViewSpec(
+    sortField: sortField,
+    descending: descending,
+    photos: photos,
+    videos: videos,
+    gifs: gifs,
+    excludeAlbumIds: excludeAlbumIds,
+    excludeAssetIds: assetIds,
+  );
 
   factory GalleryViewSpec.fromJson(Map<String, dynamic> json) {
     final sort = json['sort'] is Map ? json['sort'] as Map : const {};
@@ -47,11 +59,19 @@ class GalleryViewSpec {
           other.photos == photos &&
           other.videos == videos &&
           other.gifs == gifs &&
-          const SetEquality<String>().equals(other.excludeAlbumIds, excludeAlbumIds);
+          const SetEquality<String>().equals(other.excludeAlbumIds, excludeAlbumIds) &&
+          const SetEquality<String>().equals(other.excludeAssetIds, excludeAssetIds);
 
   @override
-  int get hashCode =>
-      Object.hash(sortField, descending, photos, videos, gifs, const SetEquality<String>().hash(excludeAlbumIds));
+  int get hashCode => Object.hash(
+    sortField,
+    descending,
+    photos,
+    videos,
+    gifs,
+    const SetEquality<String>().hash(excludeAlbumIds),
+    const SetEquality<String>().hash(excludeAssetIds),
+  );
 }
 
 class GalleryViewSelection {
