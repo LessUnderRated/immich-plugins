@@ -5,6 +5,7 @@ import android.content.ClipData
 import android.content.ContentUris
 import android.content.Intent
 import android.provider.MediaStore
+import androidx.core.content.FileProvider
 import io.flutter.embedding.android.FlutterActivityLaunchConfigs
 import io.flutter.embedding.android.FlutterFragmentActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -59,6 +60,10 @@ class PickerActivity : FlutterFragmentActivity() {
 
   private fun deliver(items: List<Map<String, Any?>>) {
     val uris = items.map { item ->
+      val privateFile = item["file"] as String?
+      if (privateFile != null) {
+        return@map FileProvider.getUriForFile(this, "${packageName}.privatefiles", java.io.File(privateFile))
+      }
       val collection = if (item["video"] == true) {
         MediaStore.Video.Media.EXTERNAL_CONTENT_URI
       } else {
@@ -73,7 +78,7 @@ class PickerActivity : FlutterFragmentActivity() {
     }
 
     val data = Intent().apply {
-      setDataAndType(uris.first(), contentResolver.getType(uris.first()))
+      setDataAndType(uris.first(), (items.first()["mime"] as String?) ?: contentResolver.getType(uris.first()))
       clipData = ClipData.newUri(contentResolver, "media", uris.first()).also { clip ->
         uris.drop(1).forEach { clip.addItem(ClipData.Item(it)) }
       }

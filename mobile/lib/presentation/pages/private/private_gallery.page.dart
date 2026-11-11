@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'dart:io';
 
 import 'package:auto_route/auto_route.dart';
@@ -12,6 +14,11 @@ import 'package:immich_mobile/presentation/actions/share.action.dart';
 import 'package:immich_mobile/presentation/widgets/bottom_sheet/base_bottom_sheet.widget.dart';
 import 'package:immich_mobile/presentation/widgets/timeline/timeline.widget.dart';
 import 'package:immich_mobile/providers/infrastructure/timeline.provider.dart';
+import 'package:drift/drift.dart' hide Column;
+import 'package:immich_mobile/data/db/main/table/local/asset.dart';
+import 'package:immich_mobile/presentation/pages/private/private_files.page.dart';
+import 'package:immich_mobile/providers/background_sync.provider.dart';
+import 'package:immich_mobile/providers/infrastructure/db.provider.dart';
 import 'package:immich_mobile/providers/private_vault.provider.dart';
 import 'package:immich_mobile/routing/router.dart';
 import 'package:local_auth/local_auth.dart';
@@ -32,7 +39,7 @@ class _PrivateGalleryPageState extends ConsumerState<PrivateGalleryPage> {
   @override
   void initState() {
     super.initState();
-    _lifecycle = AppLifecycleListener(onHide: _lock);
+    _lifecycle = AppLifecycleListener(onHide: _lock, onResume: () => ref.invalidate(privateAccessProvider));
     WidgetsBinding.instance.addPostFrameCallback((_) => _unlock());
   }
 
@@ -85,6 +92,11 @@ class _PrivateGalleryPageState extends ConsumerState<PrivateGalleryPage> {
   Widget build(BuildContext context) {
     final unlocked = ref.watch(privateUnlockedProvider);
     if (unlocked) {
+      final access = ref.watch(privateAccessProvider).valueOrNull ?? false;
+      final legacyCount = ref.watch(privateItemsProvider).valueOrNull?.length ?? 0;
+      if (access) {
+        return _MigratingPrivateFiles(onLock: _lock, legacyCount: legacyCount);
+      }
       return _PrivateTimeline(onLock: _lock);
     }
     return Scaffold(
@@ -92,6 +104,41 @@ class _PrivateGalleryPageState extends ConsumerState<PrivateGalleryPage> {
       body: _LockedView(busy: _authenticating, message: _message, onUnlock: _unlock),
     );
   }
+}
+
+class _MigratingPrivateFiles extends ConsumerStatefulWidget {
+  final VoidCallback onLock;
+  final int legacyCount;
+
+  const _MigratingPrivateFiles({required this.onLock, required this.legacyCount});
+
+  @override
+  ConsumerState<_MigratingPrivateFiles> createState() => _MigratingPrivateFilesState();
+}
+
+class _MigratingPrivateFilesState extends ConsumerState<_MigratingPrivateFiles> {
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_migrate());
+  }
+
+  Future<void> _migrate() async {
+    final ids = ref.read(privateIdsProvider);
+    if (ids.isEmpty) {
+      return;
+    }
+    final db = ref.read(driftProvider);
+    final rows = await (db.localAssetEntity.select()..where((row) => row.id.isIn(ids))).get();
+    if (rows.isEmpty) {
+      return;
+    }
+    await ref.read(privateFilesRepositoryProvider).hide([for (final row in rows) row.toDto()]);
+    await ref.read(backgroundSyncProvider).syncLocal();
+  }
+
+  @override
+  Widget build(BuildContext context) => PrivateFilesView(onLock: widget.onLock, legacyCount: widget.legacyCount);
 }
 
 class _PrivateTimeline extends ConsumerWidget {
@@ -113,6 +160,8 @@ class _PrivateTimeline extends ConsumerWidget {
         }),
       ],
       child: Timeline(
+        topSliverWidget: const SliverToBoxAdapter(child: _FullHidingBanner()),
+        topSliverWidgetHeight: 96,
         appBar: SliverAppBar(
           floating: true,
           snap: true,
@@ -279,6 +328,30 @@ class _PrivateTile extends ConsumerWidget {
               ),
             ),
         ],
+      ),
+    );
+  }
+}
+
+class _FullHidingBanner extends ConsumerWidget {
+  const _FullHidingBanner();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
+      child: Card(
+        child: ListTile(
+          leading: const Icon(Icons.visibility_off_outlined),
+          title: const Text('Hide from other apps too'),
+          subtitle: const Text(
+            'Private photos are only hidden in this app. Allow "All files access" to hide them everywhere.',
+          ),
+          trailing: FilledButton.tonal(
+            onPressed: () => ref.read(privateFilesRepositoryProvider).requestAccess(),
+            child: const Text('Allow'),
+          ),
+        ),
       ),
     );
   }

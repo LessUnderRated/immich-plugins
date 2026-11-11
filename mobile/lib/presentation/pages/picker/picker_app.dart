@@ -1,9 +1,11 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:immich_mobile/infrastructure/repositories/private_album.repository.dart';
+import 'package:immich_mobile/infrastructure/repositories/private_files.repository.dart';
 import 'package:local_auth/local_auth.dart';
 import 'package:photo_manager/photo_manager.dart';
 
@@ -43,6 +45,8 @@ class _PickerSheetState extends State<_PickerSheet> {
   final Map<String, AssetEntity> _selected = {};
   final List<AssetEntity> _photos = [];
   List<AssetEntity> _private = const [];
+  List<PrivateFile> _privateFiles = const [];
+  final Map<String, PrivateFile> _selectedFiles = {};
 
   RequestType _type = RequestType.common;
   bool _multiple = false;
@@ -118,9 +122,19 @@ class _PickerSheetState extends State<_PickerSheet> {
         }
       }
       entities.sort((a, b) => b.createDateTime.compareTo(a.createDateTime));
+      final files = (await PrivateFilesRepository().list())
+          .where(
+            (file) => _type == RequestType.image
+                ? !file.isVideo
+                : _type == RequestType.video
+                ? file.isVideo
+                : true,
+          )
+          .toList();
       if (mounted) {
         setState(() {
           _private = entities;
+          _privateFiles = files;
           _privateUnlocked = true;
         });
       }
@@ -139,11 +153,25 @@ class _PickerSheetState extends State<_PickerSheet> {
 
   Future<void> _cancel() => _channel.invokeMethod('cancel');
 
-  Future<void> _finish(List<AssetEntity> assets) => _channel.invokeMethod('finish', {
-    'items': [
-      for (final asset in assets) {'id': asset.id, 'video': asset.type == AssetType.video},
-    ],
-  });
+  Future<void> _finish(List<AssetEntity> assets, [List<PrivateFile> files = const []]) =>
+      _channel.invokeMethod('finish', {
+        'items': [
+          for (final file in files) {'file': file.file, 'mime': file.mime, 'video': file.isVideo},
+          for (final asset in assets) {'id': asset.id, 'video': asset.type == AssetType.video},
+        ],
+      });
+
+  int get _selectedCount => _selected.length + _selectedFiles.length;
+
+  void _onTapFile(PrivateFile file) {
+    if (!_multiple) {
+      unawaited(_finish(const [], [file]));
+      return;
+    }
+    setState(() {
+      _selectedFiles.containsKey(file.file) ? _selectedFiles.remove(file.file) : _selectedFiles[file.file] = file;
+    });
+  }
 
   void _onTap(AssetEntity asset) {
     if (!_multiple) {
@@ -219,8 +247,10 @@ class _PickerSheetState extends State<_PickerSheet> {
                           const Spacer(),
                           if (_multiple)
                             FilledButton(
-                              onPressed: _selected.isEmpty ? null : () => _finish(_selected.values.toList()),
-                              child: Text(_selected.isEmpty ? 'Add' : 'Add (${_selected.length})'),
+                              onPressed: _selectedCount == 0
+                                  ? null
+                                  : () => _finish(_selected.values.toList(), _selectedFiles.values.toList()),
+                              child: Text(_selectedCount == 0 ? 'Add' : 'Add ($_selectedCount)'),
                             )
                           else
                             IconButton(icon: const Icon(Icons.close), onPressed: () => unawaited(_cancel())),
@@ -259,7 +289,8 @@ class _PickerSheetState extends State<_PickerSheet> {
     }
 
     final assets = _privateTab ? _private : _photos;
-    if (assets.isEmpty) {
+    final files = _privateTab ? _privateFiles : const <PrivateFile>[];
+    if (assets.isEmpty && files.isEmpty) {
       return Center(child: _loading ? const CircularProgressIndicator() : const Text('Nothing here'));
     }
 
@@ -277,9 +308,39 @@ class _PickerSheetState extends State<_PickerSheet> {
           mainAxisSpacing: 2,
           crossAxisSpacing: 2,
         ),
-        itemCount: assets.length,
+        itemCount: files.length + assets.length,
         itemBuilder: (context, index) {
-          final asset = assets[index];
+          if (index < files.length) {
+            final file = files[index];
+            final selected = _selectedFiles.containsKey(file.file);
+            return GestureDetector(
+              onTap: () => _onTapFile(file),
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  if (file.thumb != null)
+                    Image.file(File(file.thumb!), fit: BoxFit.cover)
+                  else
+                    Image.file(File(file.file), fit: BoxFit.cover, cacheWidth: 240),
+                  if (file.isVideo)
+                    const Positioned(
+                      right: 4,
+                      bottom: 4,
+                      child: Icon(Icons.play_circle_fill, color: Colors.white, size: 18),
+                    ),
+                  if (selected) ...[
+                    ColoredBox(color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.25)),
+                    Positioned(
+                      top: 4,
+                      right: 4,
+                      child: Icon(Icons.check_circle, color: Theme.of(context).colorScheme.primary),
+                    ),
+                  ],
+                ],
+              ),
+            );
+          }
+          final asset = assets[index - files.length];
           return _PickerTile(
             asset: asset,
             thumbnail: _thumb(asset),

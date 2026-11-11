@@ -1,8 +1,11 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:immich_mobile/constants/enums.dart';
 import 'package:immich_mobile/domain/models/asset/base_asset.model.dart';
 import 'package:immich_mobile/presentation/actions/action.dart';
+import 'package:immich_mobile/providers/background_sync.provider.dart';
 import 'package:immich_mobile/providers/private_vault.provider.dart';
 import 'package:immich_mobile/utils/error_handler.dart';
 
@@ -38,9 +41,20 @@ class MoveToPrivateAction extends AssetActionBuilder {
     final messenger = ScaffoldMessenger.maybeOf(context);
     final clearSelection = ref.read(clearSelectionProvider(source));
     final repository = ref.read(privateAlbumRepositoryProvider);
+    final backgroundSync = ref.read(backgroundSyncProvider);
     try {
       final ids = [for (final asset in assets) asset.id];
-      final changed = makePrivate ? await repository.add(ids) : await repository.remove(ids);
+      var changed = 0;
+      if (makePrivate) {
+        changed = await repository.add(ids);
+        final files = ref.read(privateFilesRepositoryProvider);
+        if (await files.hasAccess()) {
+          changed = (await files.hide(assets)).length;
+          unawaited(backgroundSync.syncLocal());
+        }
+      } else {
+        changed = await repository.remove(ids);
+      }
       clearSelection();
       final noun = changed == 1 ? 'item' : 'items';
       messenger?.showSnackBar(

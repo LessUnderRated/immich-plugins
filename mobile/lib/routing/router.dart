@@ -51,6 +51,8 @@ import 'package:immich_mobile/presentation/pages/plugins/device_workflow_editor.
 import 'package:immich_mobile/presentation/pages/plugins/plugins.page.dart';
 import 'package:immich_mobile/presentation/pages/app_album.page.dart';
 import 'package:immich_mobile/presentation/pages/private/private_gallery.page.dart';
+import 'package:immich_mobile/presentation/pages/private/private_files.page.dart';
+import 'package:immich_mobile/infrastructure/repositories/private_files.repository.dart';
 import 'package:immich_mobile/presentation/pages/private/private_viewer.page.dart';
 import 'package:immich_mobile/infrastructure/repositories/private_vault.repository.dart';
 import 'package:immich_mobile/domain/models/device_plugin.model.dart';
@@ -196,6 +198,7 @@ class AppRouter extends RootStackRouter {
     AutoRoute(page: DeviceWorkflowEditorRoute.page),
     AutoRoute(page: PrivateViewerRoute.page),
     AutoRoute(page: PrivateLegacyRoute.page),
+    AutoRoute(page: PrivateFileViewerRoute.page),
     AutoRoute(page: AppAlbumRoute.page, guards: [_duplicateGuard]),
     AutoRoute(page: ActivitiesRoute.page, guards: [_authGuard, _duplicateGuard]),
     AutoRoute(page: BackupAssetDetailRoute.page, guards: [_authGuard, _duplicateGuard]),

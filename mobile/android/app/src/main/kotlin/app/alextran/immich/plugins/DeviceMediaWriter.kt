@@ -25,6 +25,7 @@ class DeviceMediaWriter(private val activity: ComponentActivity, messenger: Bina
   private val mainHandler = Handler(Looper.getMainLooper())
   private val executor = Executors.newSingleThreadExecutor { runnable -> Thread(runnable, "device-media-writer") }
   private var pendingGrant: ((Boolean) -> Unit)? = null
+  private val privateFiles = PrivateFiles(activity)
   private val launcher = activity.registerForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) {
     val callback = pendingGrant
     pendingGrant = null
@@ -61,12 +62,46 @@ class DeviceMediaWriter(private val activity: ComponentActivity, messenger: Bina
         move(uris, relativePath, result, allowPrompt = true)
       }
 
+      "privateHasAccess" -> result.success(privateFiles.hasAccess())
+
+      "privateRequestAccess" -> {
+        privateFiles.requestAccess()
+        result.success(null)
+      }
+
+      "privateHide" -> {
+        val items = call.argument<List<Map<String, Any?>>>("items") ?: emptyList()
+        background(result) { privateFiles.hide(items) }
+      }
+
+      "privateUnhide" -> {
+        val file = call.argument<String>("file")!!
+        val originalPath = call.argument<String>("originalPath")!!
+        background(result) { privateFiles.unhide(file, originalPath) }
+      }
+
+      "privateDelete" -> {
+        val file = call.argument<String>("file")!!
+        background(result) { privateFiles.delete(file) }
+      }
+
       "exportToFiles" -> {
         val items = call.argument<List<Map<String, Any?>>>("items") ?: emptyList()
         exportToFiles(items, result)
       }
 
       else -> result.notImplemented()
+    }
+  }
+
+  private fun background(result: MethodChannel.Result, block: () -> Any?) {
+    executor.execute {
+      try {
+        val value = block()
+        mainHandler.post { result.success(if (value == Unit) null else value) }
+      } catch (error: Throwable) {
+        mainHandler.post { result.error("private_failed", error.message ?: error.toString(), null) }
+      }
     }
   }
 
