@@ -40,6 +40,21 @@ const levels = {
 
 const asExtismLogLevel = (logLevel: LogLevel) => levels[logLevel] || 'info';
 
+const MAX_STACK_LINES = 12;
+
+// Extism worker errors carry the whole worker source as a base64 `data:` URL in `originalStack` (~280 KB per
+// error), which floods logs and pushes useful lines out of rotation. Trim it to a short, URL-free stack.
+const trimWorkerStack = (error: unknown) => {
+  const target = error as { originalStack?: unknown } | null;
+  if (target && typeof target === 'object' && typeof target.originalStack === 'string') {
+    target.originalStack = target.originalStack
+      .replaceAll(/data:[^\s)]+/g, 'data:<omitted>')
+      .split('\n')
+      .slice(0, MAX_STACK_LINES)
+      .join('\n');
+  }
+};
+
 @Injectable()
 export class PluginRepository {
   private pluginMap: Map<string, { label: string; pool: Pool<ExtismPlugin> }> = new Map();
@@ -151,7 +166,8 @@ export class PluginRepository {
         .insertInto('plugin')
         .values(dto)
         .onConflict((oc) =>
-          oc.columns(['name', 'version']).doUpdateSet((eb) => ({
+          // `name` is unique on its own (plugin_name_uq), so conflicting on (name, version) made version bumps fail
+          oc.column('name').doUpdateSet((eb) => ({
             title: eb.ref('excluded.title'),
             description: eb.ref('excluded.description'),
             author: eb.ref('excluded.author'),
@@ -251,13 +267,18 @@ export class PluginRepository {
 
     try {
       const plugin = await pool.acquire();
+      let healthy = false;
       try {
         const result = await plugin.call(methodName, JSON.stringify(input), context);
+        healthy = true;
         return (result ? result.json() : result) as T;
       } finally {
-        await pool.release(plugin);
+        // A trapped instance (e.g. "memory access out of bounds") has undefined memory and would fail every
+        // later call, so destroy it and let the pool create a fresh one. See immich-app/immich#30625.
+        await (healthy ? pool.release(plugin) : pool.destroy(plugin));
       }
     } catch (error: Error | any) {
+      trimWorkerStack(error);
       throw new Error(`Plugin method call failed: ${label}#${methodName}`, { cause: error });
     }
   }

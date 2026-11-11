@@ -1,11 +1,29 @@
 import { wrapper } from '@immich/plugin-sdk';
-import { AssetVisibility } from '@immich/sdk';
+import { AssetEditAction, AssetTypeEnum, AssetVisibility, MirrorAxis, type AssetEditActionItemDto } from '@immich/sdk';
 import type { Manifest } from '../dist/index.d.ts';
 
 type MatchValueConfig = {
   pattern?: string;
   matchType?: 'contains' | 'exact' | 'regex' | 'startsWith' | 'missing' | 'present';
   caseSensitive?: boolean;
+};
+
+type ListMatching = 'all' | 'any' | 'none';
+
+const listMatching = <T>(matching: ListMatching, items: T[], isMatch: (item: T) => boolean) => {
+  switch (matching) {
+    case 'any': {
+      return items.some((item) => isMatch(item));
+    }
+
+    case 'all': {
+      return items.every((item) => isMatch(item));
+    }
+
+    case 'none': {
+      return !items.some((item) => isMatch(item));
+    }
+  }
 };
 
 const matchValueResult = (value: string | null, config: MatchValueConfig) => {
@@ -82,6 +100,55 @@ const methods = wrapper<Manifest>({
     }
 
     functions.addAssetsToAlbums({ albumIds: config.albumIds, assetIds: [assetId] });
+    return {};
+  },
+
+  assetEdit: ({ config, data, functions }) => {
+    const { asset } = data;
+    // the edit system only supports still images (no videos, live photos, gif/svg); skip instead of failing the run
+    const name = asset.originalFileName.toLowerCase();
+    if (
+      asset.type !== AssetTypeEnum.Image ||
+      asset.livePhotoVideoId ||
+      name.endsWith('.gif') ||
+      name.endsWith('.svg')
+    ) {
+      return {};
+    }
+
+    const rotate = config.rotate ?? 'keep';
+    const mirror = config.mirror ?? 'keep';
+    const current: AssetEditActionItemDto[] = config.reset
+      ? []
+      : functions.getAssetEdits(asset.id).edits.map(({ action, parameters }) => ({ action, parameters }));
+
+    const crop = current.filter((edit) => edit.action === AssetEditAction.Crop);
+    let rotation = current.filter((edit) => edit.action === AssetEditAction.Rotate);
+    let mirrors = current.filter((edit) => edit.action === AssetEditAction.Mirror);
+
+    if (rotate !== 'keep') {
+      const angle = Number(rotate);
+      rotation = angle === 0 ? [] : [{ action: AssetEditAction.Rotate, parameters: { angle } }];
+    }
+
+    if (mirror !== 'keep') {
+      const axes = mirror === 'both' ? ['horizontal', 'vertical'] : mirror === 'none' ? [] : [mirror];
+      mirrors = axes.map((axis) => ({ action: AssetEditAction.Mirror, parameters: { axis: axis as MirrorAxis } }));
+    }
+
+    // crop must be the first action
+    const edits = [...crop, ...rotation, ...mirrors];
+    if (edits.length === 0) {
+      if (current.length > 0 || config.reset) {
+        functions.removeAssetEdits(asset.id);
+      }
+      return {};
+    }
+
+    if (JSON.stringify(edits) !== JSON.stringify(current) || config.reset) {
+      functions.editAsset(asset.id, edits);
+    }
+
     return {};
   },
 
@@ -196,27 +263,26 @@ const methods = wrapper<Manifest>({
 
   assetOcrFilter: ({ config, data }) => {
     const entries = (data.asset.ocr ?? []).filter((ocr) => ocr.textScore >= (config.minScore ?? 0));
-    const texts = config.matchScope === 'full' ? [entries.map((ocr) => ocr.text).join(' ')] : entries.map((ocr) => ocr.text);
+    const texts =
+      config.matchScope === 'full' ? [entries.map((ocr) => ocr.text).join(' ')] : entries.map((ocr) => ocr.text);
     const matched = texts.some((t) => matchValueResult(t, config).workflow?.continue);
     return { workflow: { continue: matched } };
   },
 
   assetTagFilter: ({ config, data }) => {
-    const assetTags = data.asset.tags.map((tag) => tag.id);
+    const assetTagIds = new Set(data.asset.tags.map((tag) => tag.id));
+    const assetTagValues = data.asset.tags.map((tag) => tag.value);
+    const isTagStringMatch = (tagValue: string) =>
+      assetTagValues.some((value) => value === tagValue || value.startsWith(`${tagValue}/`));
 
-    for (const tag of config.tags) {
-      if (assetTags.includes(tag)) {
-        if (config.matching === 'any') {
-          return { workflow: { continue: true } };
-        } else if (config.matching === 'none') {
-          return { workflow: { continue: false } };
-        }
-      } else if (config.matching === 'all') {
-        return { workflow: { continue: false } };
-      }
+    const idsMatch = listMatching(config.matching, config.tags ?? [], (id) => assetTagIds.has(id));
+    const valuesMatch = listMatching(config.matching, config.tagValues ?? [], isTagStringMatch);
+
+    if (config.matching === 'any' && (idsMatch || valuesMatch)) {
+      return { workflow: { continue: true } };
     }
 
-    return { workflow: { continue: config.matching !== 'any' } };
+    return { workflow: { continue: idsMatch && valuesMatch } };
   },
 
   assetTypeFilter: ({ config, data }) => {
@@ -253,6 +319,7 @@ const methods = wrapper<Manifest>({
 const {
   assetAddTags,
   assetAddToAlbums,
+  assetEdit,
   assetArchive,
   assetFavorite,
   assetFileFilter,
@@ -274,6 +341,7 @@ const {
 export {
   assetAddTags,
   assetAddToAlbums,
+  assetEdit,
   assetArchive,
   assetFavorite,
   assetFileFilter,

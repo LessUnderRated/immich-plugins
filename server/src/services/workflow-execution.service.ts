@@ -6,12 +6,13 @@ import {
   WorkflowResponse,
   WorkflowTrigger,
 } from '@immich/plugin-sdk';
-import { HttpException, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, HttpException, UnauthorizedException } from '@nestjs/common';
 import { join } from 'node:path';
 import { DummyValue, OnEvent, OnJob } from 'src/decorators.js';
 import { AlbumsAddAssetsDto, CreateAlbumDto, GetAlbumsDto } from 'src/dtos/album.dto.js';
 import { BulkIdsDto } from 'src/dtos/asset-ids.response.dto.js';
 import { AuthDto } from 'src/dtos/auth.dto.js';
+import { AssetEditsCreateDto } from 'src/dtos/editing.dto.js';
 import { PluginManifestDto } from 'src/dtos/plugin-manifest.dto.js';
 import { TagBulkAssetsDto } from 'src/dtos/tag.dto.js';
 import {
@@ -110,6 +111,21 @@ export class WorkflowExecutionService extends BaseService {
       tagService.bulkTagAssets(authDto, ...args),
     );
 
+    // image editing (crop/rotate/mirror). These go through AssetService so plugins get the same validation,
+    // access checks and thumbnail regeneration as the REST endpoints (GET/PUT/DELETE /assets/:id/edits).
+    const assetService = BaseService.create(AssetService, this);
+    const getAssetEdits = this.wrap<[id: string]>((authDto, ctx, [id]) => assetService.getAssetEdits(authDto, id));
+    const editAsset = this.wrap<[id: string, dto: AssetEditsCreateDto]>((authDto, ctx, [id, dto]) => {
+      const result = AssetEditsCreateDto.schema.safeParse(dto);
+      if (!result.success) {
+        throw new BadRequestException(result.error.issues.map((issue) => issue.message).join('; '));
+      }
+      return assetService.editAsset(authDto, id, result.data as AssetEditsCreateDto);
+    });
+    const removeAssetEdits = this.wrap<[id: string]>((authDto, ctx, [id]) =>
+      assetService.removeAssetEdits(authDto, id),
+    );
+
     const functions = {
       searchAlbums,
       createAlbum,
@@ -117,6 +133,9 @@ export class WorkflowExecutionService extends BaseService {
       addAssetsToAlbums,
       httpRequest,
       bulkTagAssets,
+      getAssetEdits,
+      editAsset,
+      removeAssetEdits,
     };
 
     const stubs: typeof functions = {
@@ -126,6 +145,9 @@ export class WorkflowExecutionService extends BaseService {
       addAssetsToAlbums: dummy,
       httpRequest: dummy,
       bulkTagAssets: dummy,
+      getAssetEdits: dummy,
+      editAsset: dummy,
+      removeAssetEdits: dummy,
     };
 
     const plugins = await this.pluginRepository.getForLoad();
@@ -273,8 +295,8 @@ export class WorkflowExecutionService extends BaseService {
       }
 
       return manifest;
-    } catch {
-      this.logger.warn(`Failed to import plugin from ${folder}:`);
+    } catch (error: Error | any) {
+      this.logger.warn(`Failed to import plugin from ${folder}: ${error?.message ?? error}`);
     }
   }
 

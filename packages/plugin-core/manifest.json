@@ -1,6 +1,6 @@
 {
   "name": "immich-plugin-core",
-  "version": "2.0.1",
+  "version": "2.1.0",
   "title": "Immich Core Plugin",
   "description": "Core workflow capabilities for Immich",
   "author": "Immich Team",
@@ -370,17 +370,31 @@
             "type": "string",
             "array": true,
             "uiHint": {
+              "order": 1,
               "type": "TagId"
+            }
+          },
+          "tagValues": {
+            "title": "Tag names",
+            "description": "Assets with this tag value or any of its children",
+            "type": "string",
+            "array": true,
+            "uiHint": {
+              "order": 2,
+              "type": "TagValue"
             }
           },
           "matching": {
             "title": "Matching",
             "description": "Whether assets must have all, any, or none of the listed tags",
             "type": "string",
-            "enum": ["all", "any", "none"]
+            "enum": ["all", "any", "none"],
+            "uiHint": {
+              "order": 3
+            }
           }
         },
-        "required": ["tags", "matching"]
+        "required": ["matching"]
       },
       "uiHints": ["Filter"]
     },
@@ -587,6 +601,41 @@
           }
         },
         "required": ["albumIds"]
+      }
+    },
+    {
+      "name": "assetEdit",
+      "title": "Edit image",
+      "description": "Rotate, mirror, or reset edits on an image (non-destructive, same as the editor)",
+      "types": ["AssetV1"],
+      "hostFunctions": true,
+      "schema": {
+        "type": "object",
+        "properties": {
+          "reset": {
+            "type": "boolean",
+            "default": false,
+            "title": "Reset existing edits",
+            "description": "Discard existing edits (including crop) before applying the options below",
+            "uiHint": { "order": 1 }
+          },
+          "rotate": {
+            "type": "string",
+            "title": "Rotation",
+            "description": "Set the rotation (clockwise). 'keep' leaves the current rotation unchanged",
+            "enum": ["keep", "0", "90", "180", "270"],
+            "default": "keep",
+            "uiHint": { "order": 2 }
+          },
+          "mirror": {
+            "type": "string",
+            "title": "Mirror",
+            "description": "Set mirroring. 'keep' leaves the current mirroring unchanged",
+            "enum": ["keep", "none", "horizontal", "vertical", "both"],
+            "default": "keep",
+            "uiHint": { "order": 3 }
+          }
+        }
       }
     },
     {

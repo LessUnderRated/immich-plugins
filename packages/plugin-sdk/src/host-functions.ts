@@ -1,6 +1,8 @@
 import {
   getAllAlbums,
   type AlbumResponseDto,
+  type AssetEditActionItemDto,
+  type AssetEditsResponseDto,
   type BulkIdResponseDto,
   type BulkIdsDto,
   type CreateAlbumDto,
@@ -50,6 +52,9 @@ export const availableFunctions = [
   'addAssetsToAlbums',
   'httpRequest',
   'bulkTagAssets',
+  'getAssetEdits',
+  'editAsset',
+  'removeAssetEdits',
 ] as const;
 
 export const hostFunctions = (authToken: string) => {
@@ -105,5 +110,21 @@ export const hostFunctions = (authToken: string) => {
         authToken,
         [dto],
       ),
+    // image editing
+    /** Current non-destructive edits (crop, rotate, mirror) on an asset. */
+    getAssetEdits: (assetId: string) =>
+      call<[string], AssetEditsResponseDto>('getAssetEdits', authToken, [assetId]),
+    /**
+     * Replace ALL edits on an image asset and regenerate its thumbnails. Pass the full list you want applied
+     * (read the current list with getAssetEdits to keep existing ones). Crop must come first; each action once
+     * (mirror once per axis). Throws for videos, live photos, panoramas, GIF and SVG.
+     */
+    editAsset: (assetId: string, edits: AssetEditActionItemDto[]) =>
+      call<[string, { edits: AssetEditActionItemDto[] }], AssetEditsResponseDto>('editAsset', authToken, [
+        assetId,
+        { edits },
+      ]),
+    /** Remove all edits from an asset, restoring the original. */
+    removeAssetEdits: (assetId: string) => call<[string], void>('removeAssetEdits', authToken, [assetId]),
   } satisfies Record<(typeof availableFunctions)[number], unknown>;
 };
