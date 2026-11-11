@@ -2,13 +2,27 @@ import 'package:flutter/material.dart';
 import 'package:photo_manager/photo_manager.dart';
 
 typedef ConfigChanged = void Function(Map<String, dynamic> config);
+typedef AlbumOption = ({String id, String name});
+typedef AlbumOptionsLoader = Future<List<AlbumOption>> Function();
+
+Future<List<AlbumOption>> deviceFolderOptions() async => [
+  for (final path in await PhotoManager.getAssetPathList(type: RequestType.common, hasAll: false))
+    (id: path.id, name: path.name),
+];
 
 class SchemaForm extends StatelessWidget {
   final Map<String, dynamic> schema;
   final Map<String, dynamic> config;
   final ConfigChanged onChanged;
+  final AlbumOptionsLoader albumOptions;
 
-  const SchemaForm({super.key, required this.schema, required this.config, required this.onChanged});
+  const SchemaForm({
+    super.key,
+    required this.schema,
+    required this.config,
+    required this.onChanged,
+    this.albumOptions = deviceFolderOptions,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -28,6 +42,7 @@ class SchemaForm extends StatelessWidget {
             name: entry.key,
             property: Map<String, dynamic>.from(entry.value as Map),
             value: config[entry.key],
+            albumOptions: albumOptions,
             onChanged: (value) {
               final next = Map<String, dynamic>.from(config);
               value == null ? next.remove(entry.key) : next[entry.key] = value;
@@ -54,6 +69,7 @@ class _SchemaField extends StatelessWidget {
   final Map<String, dynamic> property;
   final Object? value;
   final ValueChanged<Object?> onChanged;
+  final AlbumOptionsLoader albumOptions;
 
   const _SchemaField({
     super.key,
@@ -61,6 +77,7 @@ class _SchemaField extends StatelessWidget {
     required this.property,
     required this.value,
     required this.onChanged,
+    required this.albumOptions,
   });
 
   String get _title => property['title'] as String? ?? name;
@@ -88,6 +105,7 @@ class _SchemaField extends StatelessWidget {
                 SchemaForm(
                   schema: property,
                   config: value is Map ? Map<String, dynamic>.from(value as Map) : {},
+                  albumOptions: albumOptions,
                   onChanged: (next) => onChanged(next.isEmpty ? null : next),
                 ),
               ],
@@ -110,6 +128,7 @@ class _SchemaField extends StatelessWidget {
     if (_hint == 'AlbumId') {
       return _AlbumPicker(
         title: _title,
+        albumOptions: albumOptions,
         description: _description,
         multiple: _isArray,
         value: value,
@@ -209,6 +228,7 @@ class _Labeled extends StatelessWidget {
 }
 
 class _AlbumPicker extends StatelessWidget {
+  final AlbumOptionsLoader albumOptions;
   final String title;
   final String? description;
   final bool multiple;
@@ -216,6 +236,7 @@ class _AlbumPicker extends StatelessWidget {
   final ValueChanged<Object?> onChanged;
 
   const _AlbumPicker({
+    required this.albumOptions,
     required this.title,
     required this.description,
     required this.multiple,
@@ -230,8 +251,8 @@ class _AlbumPicker extends StatelessWidget {
     return _Labeled(
       title: title,
       description: description,
-      child: FutureBuilder<List<AssetPathEntity>>(
-        future: PhotoManager.getAssetPathList(type: RequestType.common, hasAll: false),
+      child: FutureBuilder<List<AlbumOption>>(
+        future: albumOptions(),
         builder: (context, snapshot) {
           final albums = snapshot.data;
           if (albums == null) {

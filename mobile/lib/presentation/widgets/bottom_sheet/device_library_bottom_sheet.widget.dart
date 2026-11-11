@@ -9,12 +9,13 @@ import 'package:immich_mobile/presentation/widgets/bottom_sheet/base_bottom_shee
 
 class DeviceLibraryBottomSheet extends StatelessWidget {
   final LocalAlbum? album;
+  final String? appAlbumId;
 
-  const DeviceLibraryBottomSheet({super.key, this.album});
+  const DeviceLibraryBottomSheet({super.key, this.album, this.appAlbumId});
 
   @override
   Widget build(BuildContext context) {
-    final album = this.album;
+    final appAlbumId = this.appAlbumId;
     return BaseBottomSheet(
       initialChildSize: 0.18,
       minChildSize: 0.18,
@@ -24,14 +25,11 @@ class DeviceLibraryBottomSheet extends StatelessWidget {
       actions: <ActionColumnButton>[
         const .new(action: ShareAction(source: .timeline)),
         .new(
-          action: AddToDeviceAlbumAction(source: .timeline, currentAlbumId: album?.id),
+          action: AddToAppAlbumAction(source: .timeline, currentAlbumId: appAlbumId),
         ),
-        .new(
-          action: MoveToDeviceAlbumAction(source: .timeline, currentAlbumId: album?.id),
-        ),
-        if (album != null)
+        if (appAlbumId != null)
           .new(
-            action: RemoveFromDeviceAlbumAction(source: .timeline, albumName: album.name),
+            action: RemoveFromAppAlbumAction(source: .timeline, albumId: appAlbumId),
           ),
         const .new(action: DeviceFavoriteAction(source: .timeline)),
         const .new(action: MoveToPrivateAction(source: .timeline)),

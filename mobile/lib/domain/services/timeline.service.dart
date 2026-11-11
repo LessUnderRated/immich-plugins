@@ -57,7 +57,9 @@ class TimelineFactory {
       TimelineService(_timelineRepository.deviceLibrary(GroupAssetsBy.none, view: view));
 
   TimelineService localAlbum({required String albumId, GalleryViewSpec? view}) =>
-      TimelineService(_timelineRepository.localAlbum(albumId, view == null ? groupBy : GroupAssetsBy.none, view: view));
+      TimelineService(_timelineRepository.localAlbum(albumId, GroupAssetsBy.none, view: view));
+
+  TimelineService appAlbum(List<String> assetIds) => TimelineService(_timelineRepository.appAlbum(assetIds));
 
   TimelineService remoteAlbum({required String albumId}) =>
       TimelineService(_timelineRepository.remoteAlbum(albumId, groupBy));

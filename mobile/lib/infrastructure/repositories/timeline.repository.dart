@@ -205,6 +205,24 @@ class TimelineRepository extends DatabaseAccessor<Drift> with $TimelineRepositor
     return query.map((row) => row.toDto()).get();
   }
 
+  TimelineQuery appAlbum(List<String> assetIds) => (
+    bucketSource: () =>
+        (_db.selectOnly(_db.localAssetEntity)
+              ..addColumns([_db.localAssetEntity.id.count()])
+              ..where(_db.localAssetEntity.id.isIn(assetIds)))
+            .map((row) => row.read(_db.localAssetEntity.id.count()) ?? 0)
+            .watchSingle()
+            .map(_generateBuckets),
+    assetSource: (offset, count) =>
+        (_db.select(_db.localAssetEntity)
+              ..where((row) => row.id.isIn(assetIds))
+              ..orderBy([(row) => OrderingTerm.desc(row.createdAt), (row) => OrderingTerm.asc(row.id)])
+              ..limit(count, offset: offset))
+            .map((row) => row.toDto())
+            .get(),
+    origin: TimelineOrigin.localAlbum,
+  );
+
   TimelineQuery localAlbum(String albumId, GroupAssetsBy groupBy, {GalleryViewSpec? view}) => view != null
       ? _galleryView(view, origin: TimelineOrigin.localAlbum, albumId: albumId)
       : (

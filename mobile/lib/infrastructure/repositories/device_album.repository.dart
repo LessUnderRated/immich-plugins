@@ -2,7 +2,6 @@ import 'dart:io';
 
 import 'package:flutter/services.dart';
 import 'package:immich_mobile/domain/models/asset/base_asset.model.dart';
-import 'package:path/path.dart' as p;
 import 'package:photo_manager/photo_manager.dart' hide AssetType;
 
 class DeviceAlbum {
@@ -39,39 +38,6 @@ class DeviceAlbumRepository {
       return null;
     }
     return relative.endsWith('/') ? relative : '$relative/';
-  }
-
-  Future<int> copyTo(List<LocalAsset> assets, String relativePath) async {
-    var copied = 0;
-    for (final asset in assets) {
-      final entity = await AssetEntity.fromId(asset.id);
-      final file = await entity?.originFile;
-      if (entity == null || file == null || !file.existsSync()) {
-        continue;
-      }
-      final target = Platform.isAndroid ? relativePath : null;
-      if (asset.type == AssetType.video) {
-        await PhotoManager.editor.saveVideo(
-          file,
-          title: asset.name,
-          relativePath: target,
-          creationDate: asset.createdAt,
-          latitude: asset.latitude,
-          longitude: asset.longitude,
-        );
-      } else {
-        await PhotoManager.editor.saveImageWithPath(
-          file.path,
-          title: p.basenameWithoutExtension(asset.name),
-          relativePath: target,
-          creationDate: asset.createdAt,
-          latitude: asset.latitude,
-          longitude: asset.longitude,
-        );
-      }
-      copied++;
-    }
-    return copied;
   }
 
   Future<int> moveTo(List<LocalAsset> assets, String relativePath) async {

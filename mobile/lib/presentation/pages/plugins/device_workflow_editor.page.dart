@@ -5,6 +5,7 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:immich_mobile/data/db/main/table/local/asset.dart';
 import 'package:immich_mobile/domain/models/device_plugin.model.dart';
 import 'package:immich_mobile/presentation/pages/plugins/schema_form.widget.dart';
+import 'package:immich_mobile/providers/app_album.provider.dart';
 import 'package:immich_mobile/providers/device_plugins.provider.dart';
 import 'package:immich_mobile/providers/infrastructure/db.provider.dart';
 import 'package:uuid/uuid.dart';
@@ -20,6 +21,9 @@ class DeviceWorkflowEditorPage extends ConsumerStatefulWidget {
 }
 
 class _DeviceWorkflowEditorPageState extends ConsumerState<DeviceWorkflowEditorPage> {
+  late final AlbumOptionsLoader _appAlbums = () async => [
+    for (final album in await ref.read(appAlbumRepositoryProvider).list()) (id: album.id, name: album.name),
+  ];
   late DeviceWorkflow _workflow = widget.workflow;
   bool _testing = false;
 
@@ -163,6 +167,7 @@ class _DeviceWorkflowEditorPageState extends ConsumerState<DeviceWorkflowEditorP
               onChanged: (next) => _updateStep(index, next),
               onMoveUp: () => _move(index, -1),
               onMoveDown: () => _move(index, 1),
+              albumOptions: _appAlbums,
             ),
         ],
       ),
@@ -176,6 +181,7 @@ class _StepCard extends StatelessWidget {
   final ValueChanged<DeviceWorkflowStep?> onChanged;
   final VoidCallback onMoveUp;
   final VoidCallback onMoveDown;
+  final AlbumOptionsLoader albumOptions;
 
   const _StepCard({
     super.key,
@@ -184,6 +190,7 @@ class _StepCard extends StatelessWidget {
     required this.onChanged,
     required this.onMoveUp,
     required this.onMoveDown,
+    required this.albumOptions,
   });
 
   @override
@@ -221,6 +228,7 @@ class _StepCard extends StatelessWidget {
                   schema: method.schema,
                   config: step.config,
                   onChanged: (config) => onChanged(step.copyWith(config: config)),
+                  albumOptions: albumOptions,
                 ),
               ),
           ],
