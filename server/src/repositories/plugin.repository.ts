@@ -166,7 +166,6 @@ export class PluginRepository {
         .insertInto('plugin')
         .values(dto)
         .onConflict((oc) =>
-          // `name` is unique on its own (plugin_name_uq), so conflicting on (name, version) made version bumps fail
           oc.column('name').doUpdateSet((eb) => ({
             title: eb.ref('excluded.title'),
             description: eb.ref('excluded.description'),
@@ -219,6 +218,29 @@ export class PluginRepository {
     });
   }
 
+  async delete(id: string) {
+    await this.db.deleteFrom('plugin').where('id', '=', id).execute();
+  }
+
+  async unloadExcept(keys: string[]) {
+    for (const key of this.pluginMap.keys()) {
+      if (!keys.includes(key)) {
+        await this.unload(key);
+      }
+    }
+  }
+
+  private async unload(key: string) {
+    const item = this.pluginMap.get(key);
+    if (!item) {
+      return;
+    }
+
+    this.pluginMap.delete(key);
+    await item.pool.drain();
+    await item.pool.clear();
+  }
+
   async load({ key, label, wasmBytes }: PluginLoad, { runInWorker, functions }: PluginLoadOptions) {
     const data = new Uint8Array(wasmBytes.buffer, wasmBytes.byteOffset, wasmBytes.byteLength);
     const logger = LoggingRepository.create(`Plugin:${label}`);
@@ -251,7 +273,12 @@ export class PluginRepository {
 
     try {
       await pool.ready();
+      const previous = this.pluginMap.get(key);
       this.pluginMap.set(key, { pool, label });
+      if (previous) {
+        await previous.pool.drain();
+        await previous.pool.clear();
+      }
     } catch (error: Error | any) {
       throw new Error(`Unable to instantiate plugin: ${key}`, { cause: error });
     }

@@ -1396,12 +1396,31 @@ export type RotateParameters = {
 export type MirrorParameters = {
     axis: MirrorAxis;
 };
+export type MosaicPoint = {
+    /** X coordinate in original image pixels */
+    x: number;
+    /** Y coordinate in original image pixels */
+    y: number;
+};
+export type MosaicStroke = {
+    /** Brush diameter in original image pixels */
+    brushSize: number;
+    mode: MosaicStrokeMode;
+    /** Points along the stroke */
+    points: MosaicPoint[];
+};
+export type MosaicParameters = {
+    /** Size of each mosaic block in original image pixels */
+    blockSize: number;
+    /** Brush strokes, applied in order */
+    strokes: MosaicStroke[];
+};
 export type AssetEditActionItemResponseDto = {
     action: AssetEditAction;
     /** Asset edit ID */
     id: string;
-    /** List of edit actions to apply (crop, rotate, or mirror) */
-    parameters: CropParameters | RotateParameters | MirrorParameters;
+    /** List of edit actions to apply (crop, rotate, mirror, or mosaic) */
+    parameters: CropParameters | RotateParameters | MirrorParameters | MosaicParameters;
 };
 export type AssetEditsResponseDto = {
     /** Asset ID these edits belong to */
@@ -1411,11 +1430,11 @@ export type AssetEditsResponseDto = {
 };
 export type AssetEditActionItemDto = {
     action: AssetEditAction;
-    /** List of edit actions to apply (crop, rotate, or mirror) */
-    parameters: CropParameters | RotateParameters | MirrorParameters;
+    /** List of edit actions to apply (crop, rotate, mirror, or mosaic) */
+    parameters: CropParameters | RotateParameters | MirrorParameters | MosaicParameters;
 };
 export type AssetEditsCreateDto = {
-    /** List of edit actions to apply (crop, rotate, or mirror) */
+    /** List of edit actions to apply (crop, rotate, mirror, or mosaic) */
     edits: AssetEditActionItemDto[];
 };
 export type AssetMetadataResponseDto = {
@@ -2215,6 +2234,10 @@ export type PluginResponseDto = {
     updatedAt: string;
     /** Plugin version */
     version: string;
+};
+export type PluginUploadDto = {
+    /** Plugin package (.zip with manifest.json and the wasm file) */
+    file?: Blob;
 };
 export type PluginTemplateStepResponseDto = {
     /** Step configuration */
@@ -6568,6 +6591,21 @@ export function searchPlugins({ description, enabled, id, name, title, version }
     }));
 }
 /**
+ * Install a plugin
+ */
+export function installPlugin({ pluginUploadDto }: {
+    pluginUploadDto: PluginUploadDto;
+}, opts?: Oazapfts.RequestOpts) {
+    return oazapfts.ok(oazapfts.fetchJson<{
+        status: 201;
+        data: PluginResponseDto;
+    }>("/plugins", oazapfts.multipart({
+        ...opts,
+        method: "POST",
+        body: pluginUploadDto
+    })));
+}
+/**
  * Retrieve plugin methods
  */
 export function searchPluginMethods({ description, enabled, id, name, pluginName, pluginVersion, title, trigger, $type }: {
@@ -6607,6 +6645,17 @@ export function searchPluginTemplates(opts?: Oazapfts.RequestOpts) {
         data: PluginTemplateResponseDto[];
     }>("/plugins/templates", {
         ...opts
+    }));
+}
+/**
+ * Uninstall a plugin
+ */
+export function uninstallPlugin({ id }: {
+    id: string;
+}, opts?: Oazapfts.RequestOpts) {
+    return oazapfts.ok(oazapfts.fetchText(`/plugins/${encodeURIComponent(id)}`, {
+        ...opts,
+        method: "DELETE"
     }));
 }
 /**
@@ -8526,11 +8575,16 @@ export enum AssetTypeEnum {
 export enum AssetEditAction {
     Crop = "crop",
     Rotate = "rotate",
-    Mirror = "mirror"
+    Mirror = "mirror",
+    Mosaic = "mosaic"
 }
 export enum MirrorAxis {
     Horizontal = "horizontal",
     Vertical = "vertical"
+}
+export enum MosaicStrokeMode {
+    Paint = "paint",
+    Erase = "erase"
 }
 export enum AssetMediaSize {
     Original = "original",

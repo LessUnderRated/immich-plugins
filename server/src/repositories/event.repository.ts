@@ -75,6 +75,8 @@ type EventMap = {
   LibraryUpdate: [];
   LibraryDelete: [];
 
+  PluginUpdate: [];
+
   // queue events
   QueueStart: [QueueStartEvent];
 

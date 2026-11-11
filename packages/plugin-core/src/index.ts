@@ -136,8 +136,10 @@ const methods = wrapper<Manifest>({
       mirrors = axes.map((axis) => ({ action: AssetEditAction.Mirror, parameters: { axis: axis as MirrorAxis } }));
     }
 
+    const mosaics = current.filter((edit) => edit.action === AssetEditAction.Mosaic);
+
     // crop must be the first action
-    const edits = [...crop, ...rotation, ...mirrors];
+    const edits = [...crop, ...rotation, ...mirrors, ...mosaics];
     if (edits.length === 0) {
       if (current.length > 0 || config.reset) {
         functions.removeAssetEdits(asset.id);

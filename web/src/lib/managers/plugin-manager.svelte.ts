@@ -44,6 +44,11 @@ class PluginManager {
     return this.initialize();
   }
 
+  refresh() {
+    this.clearCache();
+    return this.initialize();
+  }
+
   getMethod(key: string) {
     return this.#methodMap.get(key);
   }

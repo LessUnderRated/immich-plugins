@@ -1,5 +1,17 @@
-import { Controller, Get, Param, Query } from '@nestjs/common';
-import { ApiTags } from '@nestjs/swagger';
+import {
+  Controller,
+  Delete,
+  Get,
+  HttpCode,
+  HttpStatus,
+  Param,
+  Post,
+  Query,
+  UploadedFile,
+  UseInterceptors,
+} from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { ApiBody, ApiConsumes, ApiTags } from '@nestjs/swagger';
 import { Endpoint, HistoryBuilder } from 'src/decorators.js';
 import {
   PluginMethodResponseDto,
@@ -7,6 +19,7 @@ import {
   PluginResponseDto,
   PluginSearchDto,
   PluginTemplateResponseDto,
+  PluginUploadDto,
 } from 'src/dtos/plugin.dto.js';
 import { Permission } from 'src/enum.js';
 import { Authenticated } from 'src/middleware/auth.guard.js';
@@ -60,5 +73,31 @@ export class PluginController {
   })
   getPlugin(@Param() { id }: UUIDParamDto): Promise<PluginResponseDto> {
     return this.service.get(id);
+  }
+
+  @Post()
+  @Authenticated({ permission: Permission.PluginCreate, admin: true })
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({ description: 'Plugin package', type: PluginUploadDto })
+  @Endpoint({
+    summary: 'Install a plugin',
+    description: 'Install or upgrade a plugin from a .zip package containing manifest.json and the compiled wasm file.',
+    history: HistoryBuilder.v3(),
+  })
+  @UseInterceptors(FileInterceptor('file'))
+  installPlugin(@UploadedFile() file: Express.Multer.File): Promise<PluginResponseDto> {
+    return this.service.install(file);
+  }
+
+  @Delete(':id')
+  @Authenticated({ permission: Permission.PluginDelete, admin: true })
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @Endpoint({
+    summary: 'Uninstall a plugin',
+    description: 'Remove an installed plugin and every workflow step that uses it.',
+    history: HistoryBuilder.v3(),
+  })
+  uninstallPlugin(@Param() { id }: UUIDParamDto): Promise<void> {
+    return this.service.uninstall(id);
   }
 }

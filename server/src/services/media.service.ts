@@ -316,8 +316,10 @@ export class MediaService extends BaseService {
     this.storageCore.ensureFolders(previewFile.path);
 
     // generate final images
-    const decoded = { data, info };
-    const baseOptions = { colorspace, processInvalidImages: false, edits: useEdits ? asset.edits : [] };
+    const mosaic = useEdits ? asset.edits.find((edit) => edit.action === AssetEditAction.Mosaic) : undefined;
+    const decoded = mosaic ? await this.mediaRepository.applyMosaic({ data, info }, mosaic.parameters) : { data, info };
+    const edits = useEdits ? asset.edits.filter((edit) => edit.action !== AssetEditAction.Mosaic) : [];
+    const baseOptions = { colorspace, processInvalidImages: false, edits };
     const thumbnailOptions = {
       ...image.thumbnail,
       ...baseOptions,

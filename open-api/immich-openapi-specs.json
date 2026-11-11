@@ -11251,6 +11251,57 @@
           }
         ],
         "x-immich-permission": "plugin.read"
+      },
+      "post": {
+        "description": "Install or upgrade a plugin from a .zip package containing manifest.json and the compiled wasm file.",
+        "operationId": "installPlugin",
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/PluginUploadDto"
+              }
+            }
+          },
+          "description": "Plugin package",
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PluginResponseDto"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "cookie": []
+          },
+          {
+            "api_key": []
+          }
+        ],
+        "summary": "Install a plugin",
+        "tags": [
+          "Plugins"
+        ],
+        "x-immich-admin-only": true,
+        "x-immich-history": [
+          {
+            "state": "Added",
+            "version": "v3.0.0"
+          }
+        ],
+        "x-immich-permission": "plugin.create"
       }
     },
     "/plugins/methods": {
@@ -11423,6 +11474,50 @@
       }
     },
     "/plugins/{id}": {
+      "delete": {
+        "description": "Remove an installed plugin and every workflow step that uses it.",
+        "operationId": "uninstallPlugin",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "cookie": []
+          },
+          {
+            "api_key": []
+          }
+        ],
+        "summary": "Uninstall a plugin",
+        "tags": [
+          "Plugins"
+        ],
+        "x-immich-admin-only": true,
+        "x-immich-history": [
+          {
+            "state": "Added",
+            "version": "v3.0.0"
+          }
+        ],
+        "x-immich-permission": "plugin.delete"
+      },
       "get": {
         "description": "Retrieve information about a specific plugin by its ID.",
         "operationId": "getPlugin",
@@ -20785,7 +20880,8 @@
         "enum": [
           "crop",
           "rotate",
-          "mirror"
+          "mirror",
+          "mosaic"
         ],
         "type": "string"
       },
@@ -20804,9 +20900,12 @@
               },
               {
                 "$ref": "#/components/schemas/MirrorParameters"
+              },
+              {
+                "$ref": "#/components/schemas/MosaicParameters"
               }
             ],
-            "description": "List of edit actions to apply (crop, rotate, or mirror)"
+            "description": "List of edit actions to apply (crop, rotate, mirror, or mosaic)"
           }
         },
         "required": [
@@ -20836,9 +20935,12 @@
               },
               {
                 "$ref": "#/components/schemas/MirrorParameters"
+              },
+              {
+                "$ref": "#/components/schemas/MosaicParameters"
               }
             ],
-            "description": "List of edit actions to apply (crop, rotate, or mirror)"
+            "description": "List of edit actions to apply (crop, rotate, mirror, or mosaic)"
           }
         },
         "required": [
@@ -20851,7 +20953,7 @@
       "AssetEditsCreateDto": {
         "properties": {
           "edits": {
-            "description": "List of edit actions to apply (crop, rotate, or mirror)",
+            "description": "List of edit actions to apply (crop, rotate, mirror, or mosaic)",
             "items": {
               "$ref": "#/components/schemas/AssetEditActionItemDto"
             },
@@ -24887,6 +24989,86 @@
         ],
         "type": "object"
       },
+      "MosaicParameters": {
+        "properties": {
+          "blockSize": {
+            "description": "Size of each mosaic block in original image pixels",
+            "maximum": 1024,
+            "minimum": 2,
+            "type": "integer"
+          },
+          "strokes": {
+            "description": "Brush strokes, applied in order",
+            "items": {
+              "$ref": "#/components/schemas/MosaicStroke"
+            },
+            "maxItems": 1000,
+            "minItems": 1,
+            "type": "array"
+          }
+        },
+        "required": [
+          "blockSize",
+          "strokes"
+        ],
+        "type": "object"
+      },
+      "MosaicPoint": {
+        "properties": {
+          "x": {
+            "description": "X coordinate in original image pixels",
+            "format": "double",
+            "type": "number"
+          },
+          "y": {
+            "description": "Y coordinate in original image pixels",
+            "format": "double",
+            "type": "number"
+          }
+        },
+        "required": [
+          "x",
+          "y"
+        ],
+        "type": "object"
+      },
+      "MosaicStroke": {
+        "properties": {
+          "brushSize": {
+            "description": "Brush diameter in original image pixels",
+            "exclusiveMinimum": true,
+            "format": "double",
+            "minimum": 0,
+            "type": "number"
+          },
+          "mode": {
+            "$ref": "#/components/schemas/MosaicStrokeMode"
+          },
+          "points": {
+            "description": "Points along the stroke",
+            "items": {
+              "$ref": "#/components/schemas/MosaicPoint"
+            },
+            "maxItems": 10000,
+            "minItems": 1,
+            "type": "array"
+          }
+        },
+        "required": [
+          "brushSize",
+          "mode",
+          "points"
+        ],
+        "type": "object"
+      },
+      "MosaicStrokeMode": {
+        "description": "Whether the stroke adds mosaic or erases previously painted mosaic",
+        "enum": [
+          "paint",
+          "erase"
+        ],
+        "type": "string"
+      },
       "NotificationCreateDto": {
         "properties": {
           "data": {
@@ -26486,6 +26668,16 @@
           "config",
           "method"
         ],
+        "type": "object"
+      },
+      "PluginUploadDto": {
+        "properties": {
+          "file": {
+            "description": "Plugin package (.zip with manifest.json and the wasm file)",
+            "format": "binary",
+            "type": "string"
+          }
+        },
         "type": "object"
       },
       "PublicConfigDto": {

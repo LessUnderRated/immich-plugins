@@ -47,10 +47,10 @@
     }
   };
 
-  const { Create, UseTemplate } = $derived(getWorkflowsActions($t));
+  const { Create, UseTemplate, ManagePlugins } = $derived(getWorkflowsActions($t));
 </script>
 
-<UserPageLayout title={data.meta.title} actions={[UseTemplate, Create]} scrollbar={false}>
+<UserPageLayout title={data.meta.title} actions={[ManagePlugins, UseTemplate, Create]} scrollbar={false}>
   <section class="flex place-content-center sm:mx-4">
     <Container center size="large" class="pb-28">
       {#if workflows.length === 0}

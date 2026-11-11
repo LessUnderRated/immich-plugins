@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:math';
+import 'dart:ui' as ui;
 
 import 'package:auto_route/auto_route.dart';
 import 'package:crop_image/crop_image.dart';
@@ -14,6 +15,7 @@ import 'package:immich_mobile/presentation/pages/edit/editor.provider.dart';
 import 'package:immich_mobile/providers/theme.provider.dart';
 import 'package:immich_mobile/theme/theme_data.dart';
 import 'package:immich_mobile/utils/editor.utils.dart';
+import 'package:immich_mobile/utils/mosaic.utils.dart';
 import 'package:immich_mobile/widgets/common/immich_toast.dart';
 import 'package:immich_ui/immich_ui.dart';
 import 'package:openapi/api.dart' show MirrorAxis, MirrorParameters, RotateParameters;
@@ -58,6 +60,16 @@ class _EditImagePageState extends ConsumerState<EditImagePage> with TickerProvid
       edits.add(RotateEdit(RotateParameters(angle: normalizedRotation)));
     }
 
+    final mosaicParameters = mosaicToParameters(
+      editorState.mosaicStrokes,
+      editorState.mosaicBlockSize,
+      editorState.originalWidth,
+      editorState.originalHeight,
+    );
+    if (mosaicParameters != null) {
+      edits.add(MosaicEdit(mosaicParameters));
+    }
+
     try {
       await widget.applyEdits(edits);
       if (!mounted) {
@@ -100,6 +112,7 @@ class _EditImagePageState extends ConsumerState<EditImagePage> with TickerProvid
   @override
   Widget build(BuildContext context) {
     final hasUnsavedEdits = ref.watch(editorStateProvider.select((state) => state.hasUnsavedEdits));
+    final mode = ref.watch(editorStateProvider.select((state) => state.mode));
 
     return PopScope(
       canPop: !hasUnsavedEdits,
@@ -126,7 +139,12 @@ class _EditImagePageState extends ConsumerState<EditImagePage> with TickerProvid
             bottom: false,
             child: Column(
               children: [
-                Expanded(child: _EditorPreview(image: widget.image)),
+                Expanded(
+                  child: switch (mode) {
+                    EditorMode.transform => _EditorPreview(image: widget.image),
+                    EditorMode.mosaic => _MosaicCanvas(image: widget.image),
+                  },
+                ),
                 AnimatedSize(
                   duration: const Duration(milliseconds: 250),
                   curve: Curves.easeInOut,
@@ -141,11 +159,15 @@ class _EditImagePageState extends ConsumerState<EditImagePage> with TickerProvid
                         topRight: Radius.circular(20),
                       ),
                     ),
-                    child: const Column(
+                    child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        _TransformControls(),
-                        Padding(
+                        const _EditorModeSelector(),
+                        switch (mode) {
+                          EditorMode.transform => const _TransformControls(),
+                          EditorMode.mosaic => const _MosaicControls(),
+                        },
+                        const Padding(
                           padding: EdgeInsets.only(bottom: 36, left: 24, right: 24),
                           child: Row(children: [Spacer(), _ResetEditsButton()]),
                         ),
@@ -447,5 +469,434 @@ class _EditorPreviewState extends ConsumerState<_EditorPreview> with TickerProvi
         );
       },
     );
+  }
+}
+
+class _EditorModeSelector extends ConsumerWidget {
+  const _EditorModeSelector();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final mode = ref.watch(editorStateProvider.select((state) => state.mode));
+
+    return Padding(
+      padding: const EdgeInsets.only(left: 20, right: 20, top: 16),
+      child: SegmentedButton<EditorMode>(
+        showSelectedIcon: false,
+        segments: [
+          ButtonSegment(value: EditorMode.transform, icon: const Icon(Icons.crop_rotate), label: Text(context.t.crop)),
+          ButtonSegment(value: EditorMode.mosaic, icon: const Icon(Icons.grid_on), label: Text(context.t.mosaic)),
+        ],
+        selected: {mode},
+        onSelectionChanged: (selection) => ref.read(editorStateProvider.notifier).setMode(selection.first),
+      ),
+    );
+  }
+}
+
+class _MosaicControls extends ConsumerWidget {
+  const _MosaicControls();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final editorState = ref.watch(editorStateProvider);
+    final editorNotifier = ref.watch(editorStateProvider.notifier);
+    final isBrush = editorState.mosaicTool == MosaicTool.brush;
+
+    return Padding(
+      padding: const EdgeInsets.only(left: 20, right: 20, top: 12, bottom: 12),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Row(
+            children: [
+              _MosaicToolButton(
+                icon: Icons.brush,
+                label: context.t.mosaic_brush,
+                isSelected: isBrush,
+                onPressed: () => editorNotifier.setMosaicTool(MosaicTool.brush),
+              ),
+              const SizedBox(width: 8),
+              _MosaicToolButton(
+                icon: Icons.auto_fix_normal,
+                label: context.t.mosaic_eraser,
+                isSelected: !isBrush,
+                onPressed: () => editorNotifier.setMosaicTool(MosaicTool.eraser),
+              ),
+              const Spacer(),
+              ImmichIconButton(
+                icon: Icons.undo,
+                variant: ImmichVariant.ghost,
+                color: ImmichColor.secondary,
+                disabled: editorState.mosaicStrokes.isEmpty,
+                onPressed: editorNotifier.undoMosaicStroke,
+              ),
+            ],
+          ),
+          _MosaicSlider(
+            label: context.t.mosaic_brush_size,
+            value: editorState.mosaicBrushSize,
+            min: minMosaicBrushSize,
+            max: maxMosaicBrushSize,
+            onChanged: editorNotifier.setMosaicBrushSize,
+          ),
+          _MosaicSlider(
+            label: context.t.mosaic_block_size,
+            value: editorState.mosaicBlockSize,
+            min: minMosaicBlockSize,
+            max: maxMosaicBlockSize,
+            onChanged: editorNotifier.setMosaicBlockSize,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _MosaicToolButton extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final bool isSelected;
+  final VoidCallback onPressed;
+
+  const _MosaicToolButton({required this.icon, required this.label, required this.isSelected, required this.onPressed});
+
+  @override
+  Widget build(BuildContext context) {
+    final color = isSelected ? context.primaryColor : context.themeData.iconTheme.color;
+
+    return TextButton.icon(
+      onPressed: onPressed,
+      icon: Icon(icon, color: color),
+      label: Text(label, style: TextStyle(color: color)),
+      style: TextButton.styleFrom(backgroundColor: isSelected ? context.primaryColor.withValues(alpha: 0.15) : null),
+    );
+  }
+}
+
+class _MosaicSlider extends StatelessWidget {
+  final String label;
+  final double value;
+  final double min;
+  final double max;
+  final ValueChanged<double> onChanged;
+
+  const _MosaicSlider({
+    required this.label,
+    required this.value,
+    required this.min,
+    required this.max,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        SizedBox(width: 96, child: Text(label, style: context.textTheme.bodyMedium)),
+        Expanded(
+          child: Slider(value: value.clamp(min, max), min: min, max: max, onChanged: onChanged),
+        ),
+      ],
+    );
+  }
+}
+
+class _MosaicCanvas extends ConsumerStatefulWidget {
+  final Image image;
+
+  const _MosaicCanvas({required this.image});
+
+  @override
+  ConsumerState<_MosaicCanvas> createState() => _MosaicCanvasState();
+}
+
+class _MosaicCanvasState extends ConsumerState<_MosaicCanvas> {
+  ImageStream? _imageStream;
+  ImageStreamListener? _imageListener;
+  ui.Image? _source;
+  ui.Image? _pixelated;
+  int _pixelatedBlockPixels = 0;
+  int _pixelationRequest = 0;
+
+  final List<Offset> _activePoints = [];
+  final ValueNotifier<int> _repaint = ValueNotifier(0);
+  int? _activePointer;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _resolveImage();
+  }
+
+  void _resolveImage() {
+    final stream = widget.image.image.resolve(createLocalImageConfiguration(context));
+    if (stream.key == _imageStream?.key) {
+      return;
+    }
+
+    _stopListening();
+    final listener = ImageStreamListener((info, _) {
+      if (!mounted) {
+        info.image.dispose();
+        return;
+      }
+
+      _source?.dispose();
+      setState(() {
+        _source = info.image;
+        _pixelatedBlockPixels = 0;
+      });
+      _schedulePixelation();
+    });
+    stream.addListener(listener);
+    _imageStream = stream;
+    _imageListener = listener;
+  }
+
+  void _stopListening() {
+    final listener = _imageListener;
+    if (listener != null) {
+      _imageStream?.removeListener(listener);
+    }
+  }
+
+  void _schedulePixelation() {
+    final source = _source;
+    final editorState = ref.read(editorStateProvider);
+    final width = editorState.originalWidth;
+    final height = editorState.originalHeight;
+    if (source == null || width <= 0 || height <= 0) {
+      return;
+    }
+
+    final blockPixels = mosaicBlockPixels(editorState.mosaicBlockSize, width, height);
+    if (blockPixels == _pixelatedBlockPixels && _pixelated != null) {
+      return;
+    }
+
+    final request = ++_pixelationRequest;
+    unawaited(
+      _pixelate(source, blockPixels, width, height).then((image) {
+        if (!mounted || request != _pixelationRequest) {
+          image.dispose();
+          return;
+        }
+
+        _pixelated?.dispose();
+        setState(() {
+          _pixelated = image;
+          _pixelatedBlockPixels = blockPixels;
+        });
+      }),
+    );
+  }
+
+  Future<ui.Image> _pixelate(ui.Image source, int blockPixels, int width, int height) async {
+    final blocksWide = (width / blockPixels).ceil();
+    final blocksHigh = (height / blockPixels).ceil();
+    final recorder = ui.PictureRecorder();
+    Canvas(recorder).drawImageRect(
+      source,
+      Rect.fromLTWH(0, 0, source.width.toDouble(), source.height.toDouble()),
+      Rect.fromLTWH(0, 0, blocksWide.toDouble(), blocksHigh.toDouble()),
+      Paint()..filterQuality = FilterQuality.medium,
+    );
+    final picture = recorder.endRecording();
+    try {
+      return await picture.toImage(blocksWide, blocksHigh);
+    } finally {
+      picture.dispose();
+    }
+  }
+
+  Offset _normalize(Offset position, Size size) {
+    return Offset((position.dx / size.width).clamp(0.0, 1.0), (position.dy / size.height).clamp(0.0, 1.0));
+  }
+
+  void _onPointerDown(PointerDownEvent event, Size size) {
+    if (_activePointer != null) {
+      return;
+    }
+
+    _activePointer = event.pointer;
+    _activePoints
+      ..clear()
+      ..add(_normalize(event.localPosition, size));
+    _repaint.value++;
+  }
+
+  void _onPointerMove(PointerMoveEvent event, Size size) {
+    if (event.pointer != _activePointer || _activePoints.length >= maxMosaicStrokePoints) {
+      return;
+    }
+
+    final point = _normalize(event.localPosition, size);
+    if ((point - _activePoints.last).distance < minMosaicPointDistance) {
+      return;
+    }
+
+    _activePoints.add(point);
+    _repaint.value++;
+  }
+
+  void _onPointerEnd(PointerEvent event) {
+    if (event.pointer != _activePointer) {
+      return;
+    }
+
+    _activePointer = null;
+    if (event is PointerUpEvent) {
+      ref.read(editorStateProvider.notifier).addMosaicStroke(List.of(_activePoints));
+    }
+    _activePoints.clear();
+    _repaint.value++;
+  }
+
+  @override
+  void dispose() {
+    _stopListening();
+    _source?.dispose();
+    _pixelated?.dispose();
+    _repaint.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final editorState = ref.watch(editorStateProvider);
+    ref.listen(editorStateProvider.select((state) => state.mosaicBlockSize), (_, _) => _schedulePixelation());
+
+    final source = _source;
+    final width = editorState.originalWidth;
+    final height = editorState.originalHeight;
+    if (source == null || width <= 0 || height <= 0) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final available = Size(constraints.maxWidth * 0.9, constraints.maxHeight * 0.95);
+        final scale = min(available.width / width, available.height / height);
+        final size = Size(width * scale, height * scale);
+
+        return Center(
+          child: SizedBox.fromSize(
+            size: size,
+            child: Listener(
+              behavior: HitTestBehavior.opaque,
+              onPointerDown: (event) => _onPointerDown(event, size),
+              onPointerMove: (event) => _onPointerMove(event, size),
+              onPointerUp: _onPointerEnd,
+              onPointerCancel: _onPointerEnd,
+              child: CustomPaint(
+                size: size,
+                painter: _MosaicPainter(
+                  source: source,
+                  pixelated: _pixelated,
+                  blockPixels: _pixelatedBlockPixels,
+                  originalSize: Size(width.toDouble(), height.toDouble()),
+                  strokes: editorState.mosaicStrokes,
+                  activePoints: _activePoints,
+                  activeBrushSize: editorState.mosaicBrushSize,
+                  activeErase: editorState.mosaicTool == MosaicTool.eraser,
+                  repaint: _repaint,
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _MosaicPainter extends CustomPainter {
+  final ui.Image source;
+  final ui.Image? pixelated;
+  final int blockPixels;
+  final Size originalSize;
+  final List<MosaicStrokeDraft> strokes;
+  final List<Offset> activePoints;
+  final double activeBrushSize;
+  final bool activeErase;
+
+  const _MosaicPainter({
+    required this.source,
+    required this.pixelated,
+    required this.blockPixels,
+    required this.originalSize,
+    required this.strokes,
+    required this.activePoints,
+    required this.activeBrushSize,
+    required this.activeErase,
+    required Listenable repaint,
+  }) : super(repaint: repaint);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final bounds = Offset.zero & size;
+    canvas.drawImageRect(
+      source,
+      Rect.fromLTWH(0, 0, source.width.toDouble(), source.height.toDouble()),
+      bounds,
+      Paint()..filterQuality = FilterQuality.medium,
+    );
+
+    final pixelated = this.pixelated;
+    if (pixelated == null) {
+      return;
+    }
+
+    canvas.saveLayer(bounds, Paint());
+    for (final stroke in strokes) {
+      _drawStroke(canvas, size, stroke.points, stroke.brushSize, stroke.erase);
+    }
+    if (activePoints.isNotEmpty) {
+      _drawStroke(canvas, size, activePoints, activeBrushSize, activeErase);
+    }
+
+    final scale = size.width / originalSize.width;
+    canvas.drawImageRect(
+      pixelated,
+      Rect.fromLTWH(0, 0, pixelated.width.toDouble(), pixelated.height.toDouble()),
+      Rect.fromLTWH(0, 0, pixelated.width * blockPixels * scale, pixelated.height * blockPixels * scale),
+      Paint()
+        ..filterQuality = FilterQuality.none
+        ..blendMode = BlendMode.srcIn,
+    );
+    canvas.restore();
+  }
+
+  void _drawStroke(Canvas canvas, Size size, List<Offset> points, double brushSize, bool erase) {
+    final width = brushSize * min(size.width, size.height);
+    final paint = Paint()
+      ..color = Colors.white
+      ..blendMode = erase ? BlendMode.clear : BlendMode.srcOver
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round
+      ..strokeWidth = width;
+
+    final scaled = points.map((point) => Offset(point.dx * size.width, point.dy * size.height)).toList();
+    if (scaled.length == 1) {
+      canvas.drawCircle(scaled.first, width / 2, paint..style = PaintingStyle.fill);
+      return;
+    }
+
+    final path = Path()..moveTo(scaled.first.dx, scaled.first.dy);
+    for (final point in scaled.skip(1)) {
+      path.lineTo(point.dx, point.dy);
+    }
+    canvas.drawPath(path, paint..style = PaintingStyle.stroke);
+  }
+
+  @override
+  bool shouldRepaint(_MosaicPainter oldDelegate) {
+    return oldDelegate.source != source ||
+        oldDelegate.pixelated != pixelated ||
+        oldDelegate.blockPixels != blockPixels ||
+        oldDelegate.strokes != strokes ||
+        oldDelegate.activeBrushSize != activeBrushSize ||
+        oldDelegate.activeErase != activeErase;
   }
 }

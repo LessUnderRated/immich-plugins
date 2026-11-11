@@ -1,6 +1,6 @@
-import "package:openapi/api.dart" show CropParameters, MirrorParameters, RotateParameters;
+import "package:openapi/api.dart" show CropParameters, MirrorParameters, MosaicParameters, RotateParameters;
 
-enum AssetEditAction { rotate, crop, mirror, other }
+enum AssetEditAction { rotate, crop, mirror, other, mosaic }
 
 sealed class AssetEdit {
   const AssetEdit();
@@ -22,4 +22,10 @@ class MirrorEdit extends AssetEdit {
   final MirrorParameters parameters;
 
   const MirrorEdit(this.parameters);
+}
+
+class MosaicEdit extends AssetEdit {
+  final MosaicParameters parameters;
+
+  const MosaicEdit(this.parameters);
 }

@@ -22,6 +22,7 @@ export const serverEvents = [
   'LibraryCreate',
   'LibraryUpdate',
   'LibraryDelete',
+  'PluginUpdate',
   'HlsSegmentRequest',
   'HlsSegmentResult',
   'HlsHeartbeat',

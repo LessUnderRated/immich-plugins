@@ -2,7 +2,7 @@ import { mkdtempDisposableSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import sharp from 'sharp';
-import { AssetEditAction, MirrorAxis } from 'src/dtos/editing.dto.js';
+import { AssetEditAction, MirrorAxis, MosaicStrokeMode } from 'src/dtos/editing.dto.js';
 import { Colorspace, ImageFormat } from 'src/enum.js';
 import { LoggingRepository } from 'src/repositories/logging.repository.js';
 import { MediaRepository } from 'src/repositories/media.repository.js';
@@ -66,6 +66,86 @@ describe(MediaRepository.name, () => {
   beforeEach(() => {
     // eslint-disable-next-line no-sparse-arrays
     sut = new MediaRepository(automock(LoggingRepository, { args: [, { getEnv: () => ({}) }], strict: false }));
+  });
+
+  describe('applyMosaic', () => {
+    const width = 64;
+    const height = 32;
+    const channels = 3;
+
+    const buildGradient = () => {
+      const data = Buffer.alloc(width * height * channels);
+      for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+          const offset = (y * width + x) * channels;
+          data[offset] = x * 4;
+          data[offset + 1] = y * 8;
+          data[offset + 2] = 128;
+        }
+      }
+      return { data, info: { width, height, channels } as const };
+    };
+
+    const pixel = (data: Buffer, x: number, y: number) => {
+      const offset = (y * width + x) * channels;
+      return [...data.subarray(offset, offset + channels)];
+    };
+
+    const leftHalf = {
+      mode: MosaicStrokeMode.Paint,
+      brushSize: 64,
+      points: [
+        { x: 0, y: 16 },
+        { x: 16, y: 16 },
+      ],
+    };
+
+    it('should turn painted pixels into uniform blocks', async () => {
+      const image = buildGradient();
+      const result = await sut.applyMosaic(image, { blockSize: 8, strokes: [leftHalf] });
+
+      expect(result.info).toEqual(image.info);
+      expect(pixel(result.data, 1, 1)).toEqual(pixel(result.data, 6, 6));
+      expect(pixel(result.data, 9, 9)).toEqual(pixel(result.data, 14, 14));
+      expect(pixel(result.data, 1, 1)).not.toEqual(pixel(result.data, 9, 9));
+      expect(pixel(result.data, 1, 1)).not.toEqual(pixel(image.data, 1, 1));
+    });
+
+    it('should leave unpainted pixels untouched', async () => {
+      const image = buildGradient();
+      const result = await sut.applyMosaic(image, { blockSize: 8, strokes: [leftHalf] });
+
+      for (const [x, y] of [
+        [60, 2],
+        [63, 31],
+        [50, 16],
+      ]) {
+        expect(pixel(result.data, x, y)).toEqual(pixel(image.data, x, y));
+      }
+    });
+
+    it('should restore pixels covered by an erase stroke', async () => {
+      const image = buildGradient();
+      const result = await sut.applyMosaic(image, {
+        blockSize: 8,
+        strokes: [leftHalf, { mode: MosaicStrokeMode.Erase, brushSize: 8, points: [{ x: 4, y: 4 }] }],
+      });
+
+      expect(pixel(result.data, 4, 4)).toEqual(pixel(image.data, 4, 4));
+      expect(pixel(result.data, 4, 28)).not.toEqual(pixel(image.data, 4, 28));
+    });
+
+    it('should handle images that are not a multiple of the block size', async () => {
+      const image = buildGradient();
+      const result = await sut.applyMosaic(image, {
+        blockSize: 24,
+        strokes: [{ mode: MosaicStrokeMode.Paint, brushSize: 200, points: [{ x: 32, y: 16 }] }],
+      });
+
+      expect(result.data.length).toBe(image.data.length);
+      expect(pixel(result.data, 0, 0)).toEqual(pixel(result.data, 23, 23));
+      expect(pixel(result.data, 48, 24)).toEqual(pixel(result.data, 63, 31));
+    });
   });
 
   describe('edit (single actions)', () => {
