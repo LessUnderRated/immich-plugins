@@ -11,14 +11,13 @@ import 'package:immich_mobile/domain/models/device_plugin.model.dart';
 import 'package:immich_mobile/domain/services/offline_user.service.dart';
 import 'package:immich_mobile/infrastructure/plugins/device_plugin_store.dart';
 import 'package:immich_mobile/infrastructure/plugins/wasm_plugin_runtime.dart';
+import 'package:immich_mobile/infrastructure/repositories/app_album.repository.dart';
 import 'package:immich_mobile/infrastructure/repositories/device_edit.repository.dart';
 import 'package:logging/logging.dart';
 import 'package:photo_manager/photo_manager.dart' hide AssetType;
 
 const _engineStateFile = 'engine.json';
 const _batchSize = 200;
-const _folderAlbumPrefix = 'folder:';
-const _videoTypeInt = 2;
 
 class HostFunctionException implements Exception {
   final int status;
@@ -44,6 +43,7 @@ class DeviceWorkflowEngine {
   final DevicePluginStore _store;
   final WasmPluginRuntime _runtime;
   final DeviceEditRepository _edits;
+  final AppAlbumRepository _albums;
   final _log = Logger('DeviceWorkflowEngine');
 
   final Map<String, DevicePlugin> _loaded = {};
@@ -54,7 +54,7 @@ class DeviceWorkflowEngine {
   bool _pending = false;
   Future<void>? _ready;
 
-  DeviceWorkflowEngine(this._db, this._store, this._runtime, this._edits) {
+  DeviceWorkflowEngine(this._db, this._store, this._runtime, this._edits, this._albums) {
     _runtime.hostHandler = _handleHostCall;
   }
 
@@ -422,26 +422,18 @@ class DeviceWorkflowEngine {
 
   static List<String> _strings(Object? value) => value is List ? value.map((item) => '$item').toList() : const [];
 
-  Future<List<Map<String, dynamic>>> _searchAlbums() async {
-    final paths = await PhotoManager.getAssetPathList(type: RequestType.common, hasAll: false);
-    return [
-      for (final path in paths)
-        {'id': path.id, 'albumName': path.name, 'assetCount': await path.assetCountAsync, 'shared': false},
-    ];
-  }
+  Future<List<Map<String, dynamic>>> _searchAlbums() async => [
+    for (final album in await _albums.list())
+      {'id': album.id, 'albumName': album.name, 'assetCount': album.assetIds.length, 'shared': false},
+  ];
 
   Future<Map<String, dynamic>> _createAlbum(Map<String, dynamic> dto) async {
     final name = (dto['albumName'] as String? ?? '').trim();
-    if (name.isEmpty || name.contains('/') || name.contains('\\')) {
+    if (name.isEmpty) {
       throw const HostFunctionException(400, 'Album name is invalid');
     }
-    final existing = (await _searchAlbums()).where((album) => album['albumName'] == name).firstOrNull;
-    final id = existing?['id'] as String? ?? '$_folderAlbumPrefix$name';
-    final assetIds = _strings(dto['assetIds']);
-    if (assetIds.isNotEmpty) {
-      await _addToAlbum(id, assetIds);
-    }
-    return {'id': id, 'albumName': name, 'assetCount': assetIds.length, 'shared': false};
+    final album = await _albums.create(name, assetIds: _strings(dto['assetIds']));
+    return {'id': album.id, 'albumName': album.name, 'assetCount': album.assetIds.length, 'shared': false};
   }
 
   Future<List<Map<String, dynamic>>> _addToAlbums(List<String> albumIds, List<String> assetIds) async {
@@ -453,45 +445,18 @@ class DeviceWorkflowEngine {
   }
 
   Future<List<Map<String, dynamic>>> _addToAlbum(String albumId, List<String> assetIds) async {
-    final folderName = albumId.startsWith(_folderAlbumPrefix) ? albumId.substring(_folderAlbumPrefix.length) : null;
-    final path = folderName == null ? await AssetPathEntity.fromId(albumId, type: RequestType.common) : null;
-    final results = <Map<String, dynamic>>[];
-    for (final assetId in assetIds) {
-      try {
-        final entity = await AssetEntity.fromId(assetId);
-        if (entity == null) {
-          results.add({'id': assetId, 'success': false, 'error': 'not_found'});
-          continue;
-        }
-        if (path != null) {
-          final inAlbum = await path.getAssetListRange(start: 0, end: await path.assetCountAsync);
-          if (inAlbum.any((asset) => asset.id == assetId)) {
-            results.add({'id': assetId, 'success': false, 'error': 'duplicate'});
-            continue;
-          }
-        }
-        final copy = path != null
-            ? await PhotoManager.editor.copyAssetToPath(asset: entity, pathEntity: path)
-            : await _copyToFolder(entity, folderName!);
-        await _markCreated(copy.id);
-        results.add({'id': assetId, 'success': true});
-      } catch (error) {
-        results.add({'id': assetId, 'success': false, 'error': 'unknown'});
-        _log.warning('Unable to add $assetId to album $albumId', error);
-      }
+    final album = await _albums.get(albumId);
+    if (album == null) {
+      throw HostFunctionException(404, 'Album $albumId not found');
     }
-    return results;
-  }
-
-  Future<AssetEntity> _copyToFolder(AssetEntity entity, String folderName) async {
-    final file = await entity.originFile;
-    if (file == null) {
-      throw const HostFunctionException(404, 'Original file not found');
-    }
-    final relativePath = Platform.isAndroid ? 'Pictures/$folderName' : null;
-    return entity.typeInt == _videoTypeInt
-        ? PhotoManager.editor.saveVideo(file, title: entity.title ?? 'video', relativePath: relativePath)
-        : PhotoManager.editor.saveImageWithPath(file.path, title: entity.title, relativePath: relativePath);
+    final existing = album.assetIds.toSet();
+    await _albums.addAssets(albumId, assetIds);
+    return [
+      for (final assetId in assetIds)
+        existing.contains(assetId)
+            ? {'id': assetId, 'success': false, 'error': 'duplicate'}
+            : {'id': assetId, 'success': true},
+    ];
   }
 
   Future<Map<String, dynamic>> _httpRequest(String url, Map<String, dynamic> options) async {

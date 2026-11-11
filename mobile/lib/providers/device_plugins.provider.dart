@@ -4,6 +4,7 @@ import 'package:immich_mobile/infrastructure/plugins/device_plugin_store.dart';
 import 'package:immich_mobile/infrastructure/plugins/device_workflow_engine.dart';
 import 'package:immich_mobile/infrastructure/plugins/wasm_plugin_runtime.dart';
 import 'package:immich_mobile/infrastructure/repositories/device_edit.repository.dart';
+import 'package:immich_mobile/providers/app_album.provider.dart';
 import 'package:immich_mobile/providers/infrastructure/db.provider.dart';
 
 final deviceWorkflowEngineProvider = Provider<DeviceWorkflowEngine>((ref) {
@@ -13,6 +14,7 @@ final deviceWorkflowEngineProvider = Provider<DeviceWorkflowEngine>((ref) {
     DevicePluginStore(),
     WasmPluginRuntime(),
     const DeviceEditRepository(),
+    ref.watch(appAlbumRepositoryProvider),
   );
 });
 

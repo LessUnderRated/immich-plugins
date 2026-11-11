@@ -33,9 +33,9 @@ class LocalTimelinePage extends ConsumerWidget {
           title: album.name,
           actions: [GalleryViewButton(scope: album.id, color: Colors.white)],
         ),
-        groupBy: view == null ? null : GroupAssetsBy.none,
+        groupBy: GroupAssetsBy.none,
         bottomSheet: DeviceLibraryBottomSheet(album: album),
-        showStorageIndicator: true,
+        showStorageIndicator: false,
       ),
     );
   }
