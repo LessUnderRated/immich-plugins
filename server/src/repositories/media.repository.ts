@@ -15,6 +15,7 @@ import {
   MosaicParameters,
   MosaicStroke,
   MosaicStrokeMode,
+  MosaicStyle,
 } from 'src/dtos/editing.dto.js';
 import {
   AacProfile,
@@ -43,8 +44,9 @@ import type {
   VideoInfo,
   VideoPacketInfo,
 } from 'src/types.js';
+import { averagingCell, hexagonCells, stainedGlassCells } from 'src/utils/censor.js';
 import { handlePromiseError } from 'src/utils/misc.js';
-import { blendWithMask, buildMosaicMaskSvg, paintedBlockSizes, strokeBlockSize } from 'src/utils/mosaic.js';
+import { CensorEffect, blendWithMask, buildMosaicMaskSvg, paintedEffects, strokeEffect } from 'src/utils/mosaic.js';
 import { createAffineMatrix } from 'src/utils/transform.js';
 
 const probe = (input: string, options: string[]): Promise<FfprobeData> =>
@@ -191,21 +193,54 @@ export class MediaRepository {
     const { width, height, channels } = image.info;
     let data = image.data;
 
-    for (const blockSize of paintedBlockSizes(strokes, defaultBlockSize)) {
-      const isVisible = (stroke: MosaicStroke) =>
-        stroke.mode === MosaicStrokeMode.Paint && strokeBlockSize(stroke, defaultBlockSize) === blockSize;
-      const [pixelated, mask] = await Promise.all([
-        this.pixelate(image, blockSize),
+    for (const effect of paintedEffects(strokes, defaultBlockSize)) {
+      const isVisible = (stroke: MosaicStroke) => {
+        if (stroke.mode !== MosaicStrokeMode.Paint) {
+          return false;
+        }
+        const { style, size } = strokeEffect(stroke, defaultBlockSize);
+        return style === effect.style && size === effect.size;
+      };
+      const [censored, mask] = await Promise.all([
+        this.censor(image, effect),
         sharp(Buffer.from(buildMosaicMaskSvg(strokes, { width, height }, isVisible)))
           .resize(width, height, { fit: 'fill' })
           .extractChannel(0)
           .raw()
           .toBuffer(),
       ]);
-      data = blendWithMask(data, pixelated, mask, channels);
+      data = blendWithMask(data, censored, mask, channels);
     }
 
     return { data, info: image.info };
+  }
+
+  private async censor(image: Bitmap, { style, size }: CensorEffect): Promise<Buffer> {
+    const { width, height, channels } = image.info;
+    switch (style) {
+      case MosaicStyle.Pixelate: {
+        return this.pixelate(image, size);
+      }
+      case MosaicStyle.Blur: {
+        return this.raw(image)
+          .blur(Math.max(0.3, size / 2))
+          .raw()
+          .toBuffer();
+      }
+      case MosaicStyle.Hexagon:
+      case MosaicStyle.StainedGlass: {
+        const cell = averagingCell(size);
+        const averaged = await this.raw(image)
+          .resize(Math.max(1, Math.ceil(width / cell)), Math.max(1, Math.ceil(height / cell)), { fit: 'fill' })
+          .raw()
+          .toBuffer({ resolveWithObject: true });
+        const source = { data: image.data, width, height, channels };
+        const averagedImage = { data: averaged.data, ...averaged.info };
+        return style === MosaicStyle.Hexagon
+          ? hexagonCells(source, averagedImage, size)
+          : stainedGlassCells(source, averagedImage, size);
+      }
+    }
   }
 
   private async pixelate(image: Bitmap, blockSize: number) {

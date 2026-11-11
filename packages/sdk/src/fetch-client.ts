@@ -1410,6 +1410,8 @@ export type MosaicStroke = {
     mode: MosaicStrokeMode;
     /** Points along the stroke */
     points: MosaicPoint[];
+    /** Censor style for this stroke, defaults to pixelate */
+    style?: MosaicStyle;
 };
 export type MosaicParameters = {
     /** Default size of each mosaic block in original image pixels */
@@ -8587,6 +8589,12 @@ export enum MirrorAxis {
 export enum MosaicStrokeMode {
     Paint = "paint",
     Erase = "erase"
+}
+export enum MosaicStyle {
+    Pixelate = "pixelate",
+    Blur = "blur",
+    Hexagon = "hexagon",
+    StainedGlass = "stainedGlass"
 }
 export enum AssetMediaSize {
     Original = "original",

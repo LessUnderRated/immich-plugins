@@ -2,7 +2,7 @@ import { mkdtempDisposableSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import sharp from 'sharp';
-import { AssetEditAction, MirrorAxis, MosaicStrokeMode } from 'src/dtos/editing.dto.js';
+import { AssetEditAction, MirrorAxis, MosaicStrokeMode, MosaicStyle } from 'src/dtos/editing.dto.js';
 import { Colorspace, ImageFormat } from 'src/enum.js';
 import { LoggingRepository } from 'src/repositories/logging.repository.js';
 import { MediaRepository } from 'src/repositories/media.repository.js';
@@ -174,6 +174,74 @@ describe(MediaRepository.name, () => {
       const onlyFine = await sut.applyMosaic(image, { blockSize: 8, strokes: [fine] });
 
       expect(result.data.equals(onlyFine.data)).toBe(true);
+    });
+
+    it.each([MosaicStyle.Blur, MosaicStyle.Hexagon, MosaicStyle.StainedGlass])(
+      'should censor only the painted area with %s',
+      async (style) => {
+        const image = buildGradient();
+        for (let offset = 2; offset < image.data.length; offset += channels) {
+          const index = (offset - 2) / channels;
+          image.data[offset] = ((index % width) ^ Math.floor(index / width)) & 2 ? 255 : 0;
+        }
+        const result = await sut.applyMosaic(image, {
+          blockSize: 8,
+          strokes: [{ mode: MosaicStrokeMode.Paint, brushSize: 24, style, points: [{ x: 12, y: 16 }] }],
+        });
+
+        expect(result.data.length).toBe(image.data.length);
+        expect(pixel(result.data, 60, 16)).toEqual(pixel(image.data, 60, 16));
+        let changed = 0;
+        for (let x = 4; x < 20; x++) {
+          if (pixel(result.data, x, 16).join(',') !== pixel(image.data, x, 16).join(',')) {
+            changed++;
+          }
+        }
+        expect(changed).toBeGreaterThan(8);
+      },
+    );
+
+    it('should fill hexagon cells with a single color', async () => {
+      const image = buildGradient();
+      const result = await sut.applyMosaic(image, {
+        blockSize: 8,
+        strokes: [
+          {
+            mode: MosaicStrokeMode.Paint,
+            brushSize: 200,
+            blockSize: 16,
+            style: MosaicStyle.Hexagon,
+            points: [{ x: 32, y: 16 }],
+          },
+        ],
+      });
+
+      expect(pixel(result.data, 0, 0)).toEqual(pixel(result.data, 2, 1));
+      expect(pixel(result.data, 0, 0)).not.toEqual(pixel(result.data, 14, 0));
+    });
+
+    it('should fill stained glass cells without borders', async () => {
+      const image = buildGradient();
+      const result = await sut.applyMosaic(image, {
+        blockSize: 8,
+        strokes: [
+          {
+            mode: MosaicStrokeMode.Paint,
+            brushSize: 200,
+            blockSize: 12,
+            style: MosaicStyle.StainedGlass,
+            points: [{ x: 32, y: 16 }],
+          },
+        ],
+      });
+
+      const colors = new Set<string>();
+      for (let offset = 0; offset < result.data.length; offset += 3) {
+        expect([...result.data.subarray(offset, offset + 3)]).not.toEqual([35, 35, 35]);
+        colors.add(result.data.subarray(offset, offset + 3).join(','));
+      }
+      expect(colors.size).toBeGreaterThan(4);
+      expect(colors.size).toBeLessThan(64);
     });
 
     it('should handle images that are not a multiple of the block size', async () => {
