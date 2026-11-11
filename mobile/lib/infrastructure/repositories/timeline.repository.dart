@@ -7,7 +7,6 @@ import 'package:immich_mobile/data/db/main/table/remote/asset.dart';
 import 'package:immich_mobile/data/db/main/table/remote/asset.drift.dart';
 import 'package:immich_mobile/domain/models/album/album.model.dart';
 import 'package:immich_mobile/domain/models/asset/base_asset.model.dart';
-import 'package:immich_mobile/domain/models/gallery_view.model.dart';
 import 'package:immich_mobile/domain/models/map.model.dart';
 import 'package:immich_mobile/domain/models/timeline.model.dart';
 import 'package:immich_mobile/domain/services/timeline.service.dart';
@@ -99,80 +98,11 @@ class TimelineRepository extends DatabaseAccessor<Drift> with $TimelineRepositor
         .get();
   }
 
-  TimelineQuery deviceLibrary(GroupAssetsBy groupBy, {GalleryViewOptions view = const GalleryViewOptions()}) =>
-      view.isDefault
-      ? (
-          bucketSource: () => _watchDeviceLibraryBucket(groupBy: groupBy),
-          assetSource: (offset, count) => _getDeviceLibraryAssets(offset: offset, count: count),
-          origin: TimelineOrigin.main,
-        )
-      : _galleryView(view, origin: TimelineOrigin.main);
-
-  TimelineQuery _galleryView(GalleryViewOptions view, {required TimelineOrigin origin, String? albumId}) {
-    final asset = _db.localAssetEntity;
-    final filter = _galleryViewFilter(view, albumId: albumId);
-    final countExp = asset.id.count();
-
-    return (
-      bucketSource: () => (_db.selectOnly(asset)
-            ..addColumns([countExp])
-            ..where(filter))
-          .map((row) => row.read(countExp) ?? 0)
-          .watchSingle()
-          .map(_generateBuckets),
-      assetSource: (offset, count) => (_db.select(asset)
-            ..where((_) => filter)
-            ..orderBy(_galleryViewOrder(view.sort))
-            ..limit(count, offset: offset))
-          .map((row) => row.toDto())
-          .get(),
-      origin: origin,
-    );
-  }
-
-  Expression<bool> _galleryViewFilter(GalleryViewOptions view, {String? albumId}) {
-    final asset = _db.localAssetEntity;
-    final albumAsset = _db.localAlbumAssetEntity;
-    final isGif = asset.name.lower().like('%.gif');
-    final isImage = asset.type.equalsValue(AssetType.image);
-    final isVideo = asset.type.equalsValue(AssetType.video);
-
-    var filter = (isImage & isGif.not() & Constant(view.showPhotos)) |
-        (isImage & isGif & Constant(view.showGifs)) |
-        (isVideo & Constant(view.showVideos)) |
-        (isImage.not() & isVideo.not());
-
-    if (albumId != null) {
-      filter &= asset.id.isInQuery(
-        _db.selectOnly(albumAsset)
-          ..addColumns([albumAsset.assetId])
-          ..where(albumAsset.albumId.equals(albumId)),
-      );
-    } else if (view.hiddenAlbumIds.isNotEmpty) {
-      filter &= asset.id.isNotInQuery(
-        _db.selectOnly(albumAsset)
-          ..addColumns([albumAsset.assetId])
-          ..where(albumAsset.albumId.isIn(view.hiddenAlbumIds)),
-      );
-    }
-
-    return filter;
-  }
-
-  List<OrderClauseGenerator<$LocalAssetEntityTable>> _galleryViewOrder(GallerySort sort) {
-    final pixels = ($LocalAssetEntityTable row) => row.width.coalesce(0) * row.height.coalesce(0);
-    final OrderClauseGenerator<$LocalAssetEntityTable> primary = switch (sort) {
-      GallerySort.newest => (row) => OrderingTerm.desc(row.createdAt),
-      GallerySort.oldest => (row) => OrderingTerm.asc(row.createdAt),
-      GallerySort.recentlyModified => (row) => OrderingTerm.desc(row.updatedAt),
-      GallerySort.leastRecentlyModified => (row) => OrderingTerm.asc(row.updatedAt),
-      GallerySort.nameAscending => (row) => OrderingTerm.asc(row.name.collate(Collate.noCase)),
-      GallerySort.nameDescending => (row) => OrderingTerm.desc(row.name.collate(Collate.noCase)),
-      GallerySort.largest => (row) => OrderingTerm.desc(pixels(row)),
-      GallerySort.smallest => (row) => OrderingTerm.asc(pixels(row)),
-    };
-    return [primary, (row) => OrderingTerm.desc(row.createdAt), (row) => OrderingTerm.asc(row.id)];
-  }
+  TimelineQuery deviceLibrary(GroupAssetsBy groupBy) => (
+    bucketSource: () => _watchDeviceLibraryBucket(groupBy: groupBy),
+    assetSource: (offset, count) => _getDeviceLibraryAssets(offset: offset, count: count),
+    origin: TimelineOrigin.main,
+  );
 
   Stream<List<Bucket>> _watchDeviceLibraryBucket({GroupAssetsBy groupBy = GroupAssetsBy.day}) {
     if (groupBy == GroupAssetsBy.none) {
@@ -202,17 +132,11 @@ class TimelineRepository extends DatabaseAccessor<Drift> with $TimelineRepositor
     return query.map((row) => row.toDto()).get();
   }
 
-  TimelineQuery localAlbum(
-    String albumId,
-    GroupAssetsBy groupBy, {
-    GalleryViewOptions view = const GalleryViewOptions(),
-  }) => view.isDefault
-      ? (
-          bucketSource: () => _watchLocalAlbumBucket(albumId, groupBy: groupBy),
-          assetSource: (offset, count) => _getLocalAlbumBucketAssets(albumId, offset: offset, count: count),
-          origin: TimelineOrigin.localAlbum,
-        )
-      : _galleryView(view, origin: TimelineOrigin.localAlbum, albumId: albumId);
+  TimelineQuery localAlbum(String albumId, GroupAssetsBy groupBy) => (
+    bucketSource: () => _watchLocalAlbumBucket(albumId, groupBy: groupBy),
+    assetSource: (offset, count) => _getLocalAlbumBucketAssets(albumId, offset: offset, count: count),
+    origin: TimelineOrigin.localAlbum,
+  );
 
   Stream<List<Bucket>> _watchLocalAlbumBucket(String albumId, {GroupAssetsBy groupBy = GroupAssetsBy.day}) {
     if (groupBy == GroupAssetsBy.none) {
