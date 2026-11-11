@@ -100,22 +100,24 @@ class TimelineRepository extends DatabaseAccessor<Drift> with $TimelineRepositor
         .get();
   }
 
-  TimelineQuery deviceLibrary(GroupAssetsBy groupBy, {GalleryViewSpec? view}) => view != null
-      ? _galleryView(view, origin: TimelineOrigin.main)
-      : (
-          bucketSource: () => _watchDeviceLibraryBucket(groupBy: groupBy),
-          assetSource: (offset, count) => _getDeviceLibraryAssets(offset: offset, count: count),
-          origin: TimelineOrigin.main,
-        );
+  TimelineQuery deviceLibrary(GroupAssetsBy groupBy, {GalleryViewSpec? view, Set<String> hiddenIds = const {}}) =>
+      _galleryView(view ?? const GalleryViewSpec(), origin: TimelineOrigin.main, hiddenIds: hiddenIds);
+
+  TimelineQuery privateAlbum(Set<String> assetIds) =>
+      _galleryView(const GalleryViewSpec(), origin: TimelineOrigin.localAlbum, assetIds: assetIds.toList());
 
   TimelineQuery _galleryView(
     GalleryViewSpec view, {
     required TimelineOrigin origin,
     String? albumId,
     List<String>? assetIds,
+    Set<String> hiddenIds = const {},
   }) {
     final asset = _db.localAssetEntity;
-    final filter = _galleryViewFilter(view, albumId: albumId, assetIds: assetIds);
+    var filter = _galleryViewFilter(view, albumId: albumId, assetIds: assetIds);
+    if (hiddenIds.isNotEmpty) {
+      filter &= asset.id.isNotIn(hiddenIds);
+    }
     final countExp = asset.id.count();
 
     return (
@@ -189,121 +191,25 @@ class TimelineRepository extends DatabaseAccessor<Drift> with $TimelineRepositor
     return [primary, (row) => OrderingTerm.desc(row.createdAt), (row) => OrderingTerm.asc(row.id)];
   }
 
-  Stream<List<Bucket>> _watchDeviceLibraryBucket({GroupAssetsBy groupBy = GroupAssetsBy.day}) {
-    if (groupBy == GroupAssetsBy.none) {
-      return _db.localAssetEntity.count().map(_generateBuckets).watchSingle();
-    }
+  TimelineQuery appAlbum(List<String> assetIds, {GalleryViewSpec? view, Set<String> hiddenIds = const {}}) =>
+      _galleryView(
+        view ?? const GalleryViewSpec(),
+        origin: TimelineOrigin.localAlbum,
+        assetIds: assetIds,
+        hiddenIds: hiddenIds,
+      );
 
-    final assetCountExp = _db.localAssetEntity.id.count();
-    final dateExp = _db.localAssetEntity.createdAt.dateFmt(groupBy, toLocal: true);
-
-    final query = _db.localAssetEntity.selectOnly()
-      ..addColumns([assetCountExp, dateExp])
-      ..groupBy([dateExp])
-      ..orderBy([OrderingTerm.desc(dateExp)]);
-
-    return query.map((row) {
-      final timeline = row.read(dateExp)!.truncateDate(groupBy);
-      final assetCount = row.read(assetCountExp)!;
-      return TimeBucket(date: timeline, assetCount: assetCount);
-    }).watch();
-  }
-
-  Future<List<BaseAsset>> _getDeviceLibraryAssets({required int offset, required int count}) {
-    final query = _db.localAssetEntity.select()
-      ..orderBy([(row) => OrderingTerm.desc(row.createdAt)])
-      ..limit(count, offset: offset);
-
-    return query.map((row) => row.toDto()).get();
-  }
-
-  TimelineQuery appAlbum(List<String> assetIds, {GalleryViewSpec? view}) => view != null
-      ? _galleryView(view, origin: TimelineOrigin.localAlbum, assetIds: assetIds)
-      : (
-          bucketSource: () =>
-              (_db.selectOnly(_db.localAssetEntity)
-                    ..addColumns([_db.localAssetEntity.id.count()])
-                    ..where(_db.localAssetEntity.id.isIn(assetIds)))
-                  .map((row) => row.read(_db.localAssetEntity.id.count()) ?? 0)
-                  .watchSingle()
-                  .map(_generateBuckets),
-          assetSource: (offset, count) =>
-              (_db.select(_db.localAssetEntity)
-                    ..where((row) => row.id.isIn(assetIds))
-                    ..orderBy([(row) => OrderingTerm.desc(row.createdAt), (row) => OrderingTerm.asc(row.id)])
-                    ..limit(count, offset: offset))
-                  .map((row) => row.toDto())
-                  .get(),
-          origin: TimelineOrigin.localAlbum,
-        );
-
-  TimelineQuery localAlbum(String albumId, GroupAssetsBy groupBy, {GalleryViewSpec? view}) => view != null
-      ? _galleryView(view, origin: TimelineOrigin.localAlbum, albumId: albumId)
-      : (
-          bucketSource: () => _watchLocalAlbumBucket(albumId, groupBy: groupBy),
-          assetSource: (offset, count) => _getLocalAlbumBucketAssets(albumId, offset: offset, count: count),
-          origin: TimelineOrigin.localAlbum,
-        );
-
-  Stream<List<Bucket>> _watchLocalAlbumBucket(String albumId, {GroupAssetsBy groupBy = GroupAssetsBy.day}) {
-    if (groupBy == GroupAssetsBy.none) {
-      return _db.localAlbumAssetEntity
-          .count(where: (row) => row.albumId.equals(albumId))
-          .map(_generateBuckets)
-          .watchSingle();
-    }
-
-    final assetCountExp = _db.localAssetEntity.id.count();
-    final dateExp = _db.localAssetEntity.createdAt.dateFmt(groupBy, toLocal: true);
-
-    final query =
-        _db.localAssetEntity.selectOnly().join([
-            innerJoin(
-              _db.localAlbumAssetEntity,
-              _db.localAlbumAssetEntity.assetId.equalsExp(_db.localAssetEntity.id),
-              useColumns: false,
-            ),
-          ])
-          ..addColumns([assetCountExp, dateExp])
-          ..where(_db.localAlbumAssetEntity.albumId.equals(albumId))
-          ..groupBy([dateExp])
-          ..orderBy([OrderingTerm.desc(dateExp)]);
-
-    return query.map((row) {
-      final timeline = row.read(dateExp)!.truncateDate(groupBy);
-      final assetCount = row.read(assetCountExp)!;
-      return TimeBucket(date: timeline, assetCount: assetCount);
-    }).watch();
-  }
-
-  Future<List<BaseAsset>> _getLocalAlbumBucketAssets(String albumId, {required int offset, required int count}) {
-    final query =
-        _db.localAssetEntity.select().join([
-            innerJoin(
-              _db.localAlbumAssetEntity,
-              _db.localAlbumAssetEntity.assetId.equalsExp(_db.localAssetEntity.id),
-              useColumns: false,
-            ),
-            leftOuterJoin(
-              _db.remoteAssetEntity,
-              _db.localAssetEntity.checksum.equalsExp(_db.remoteAssetEntity.checksum) &
-                  _db.remoteAssetEntity.ownerId.isInQuery(
-                    _db.selectOnly(_db.authUserEntity)
-                      ..addColumns([_db.authUserEntity.id])
-                      ..limit(1),
-                  ),
-              useColumns: false,
-            ),
-          ])
-          ..addColumns([_db.remoteAssetEntity.id])
-          ..where(_db.localAlbumAssetEntity.albumId.equals(albumId))
-          ..orderBy([OrderingTerm.desc(_db.localAssetEntity.createdAt)])
-          ..limit(count, offset: offset);
-
-    return query
-        .map((row) => row.readTable(_db.localAssetEntity).toDto(remoteId: row.read(_db.remoteAssetEntity.id)))
-        .get();
-  }
+  TimelineQuery localAlbum(
+    String albumId,
+    GroupAssetsBy groupBy, {
+    GalleryViewSpec? view,
+    Set<String> hiddenIds = const {},
+  }) => _galleryView(
+    view ?? const GalleryViewSpec(),
+    origin: TimelineOrigin.localAlbum,
+    albumId: albumId,
+    hiddenIds: hiddenIds,
+  );
 
   TimelineQuery remoteAlbum(String albumId, GroupAssetsBy groupBy) => (
     bucketSource: () => _watchRemoteAlbumBucket(albumId, groupBy: groupBy),

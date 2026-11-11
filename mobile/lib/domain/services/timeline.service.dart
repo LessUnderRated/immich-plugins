@@ -53,14 +53,16 @@ class TimelineFactory {
 
   TimelineService main(List<String> timelineUsers) => TimelineService(_timelineRepository.main(timelineUsers, groupBy));
 
-  TimelineService deviceLibrary({GalleryViewSpec? view}) =>
-      TimelineService(_timelineRepository.deviceLibrary(GroupAssetsBy.none, view: view));
+  TimelineService deviceLibrary({GalleryViewSpec? view, Set<String> hiddenIds = const {}}) =>
+      TimelineService(_timelineRepository.deviceLibrary(GroupAssetsBy.none, view: view, hiddenIds: hiddenIds));
 
-  TimelineService localAlbum({required String albumId, GalleryViewSpec? view}) =>
-      TimelineService(_timelineRepository.localAlbum(albumId, GroupAssetsBy.none, view: view));
+  TimelineService privateAlbum(Set<String> assetIds) => TimelineService(_timelineRepository.privateAlbum(assetIds));
 
-  TimelineService appAlbum(List<String> assetIds, {GalleryViewSpec? view}) =>
-      TimelineService(_timelineRepository.appAlbum(assetIds, view: view));
+  TimelineService localAlbum({required String albumId, GalleryViewSpec? view, Set<String> hiddenIds = const {}}) =>
+      TimelineService(_timelineRepository.localAlbum(albumId, GroupAssetsBy.none, view: view, hiddenIds: hiddenIds));
+
+  TimelineService appAlbum(List<String> assetIds, {GalleryViewSpec? view, Set<String> hiddenIds = const {}}) =>
+      TimelineService(_timelineRepository.appAlbum(assetIds, view: view, hiddenIds: hiddenIds));
 
   TimelineService remoteAlbum({required String albumId}) =>
       TimelineService(_timelineRepository.remoteAlbum(albumId, groupBy));

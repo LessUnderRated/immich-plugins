@@ -7,6 +7,7 @@ import 'package:immich_mobile/presentation/widgets/bottom_sheet/device_library_b
 import 'package:immich_mobile/presentation/widgets/gallery_view/gallery_view_button.widget.dart';
 import 'package:immich_mobile/presentation/widgets/timeline/timeline.widget.dart';
 import 'package:immich_mobile/providers/gallery_view.provider.dart';
+import 'package:immich_mobile/providers/private_vault.provider.dart';
 import 'package:immich_mobile/providers/infrastructure/timeline.provider.dart';
 import 'package:immich_mobile/widgets/common/mesmerizing_sliver_app_bar.dart';
 
@@ -19,11 +20,14 @@ class LocalTimelinePage extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final view = ref.watch(galleryViewSpecProvider(album.id)).valueOrNull;
+    final hiddenIds = ref.watch(privateIdsProvider);
     return ProviderScope(
-      key: ValueKey(view),
+      key: ValueKey((view, hiddenIds.length, Object.hashAllUnordered(hiddenIds))),
       overrides: [
         timelineServiceProvider.overrideWith((ref) {
-          final timelineService = ref.watch(timelineFactoryProvider).localAlbum(albumId: album.id, view: view);
+          final timelineService = ref
+              .watch(timelineFactoryProvider)
+              .localAlbum(albumId: album.id, view: view, hiddenIds: hiddenIds);
           ref.onDispose(timelineService.dispose);
           return timelineService;
         }),

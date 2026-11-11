@@ -79,12 +79,12 @@ class MultiSelectNotifier extends Notifier<MultiSelectState> {
     state = state.copyWith(selectedAssets: next);
   }
 
-  Future<void> selectAll() async {
-    final total = _timelineService.totalAssets;
+  Future<void> selectAll(TimelineService visibleTimeline) async {
+    final total = visibleTimeline.totalAssets;
     if (total == 0) {
       return;
     }
-    final assets = await _timelineService.loadAssets(0, total);
+    final assets = await visibleTimeline.loadAssets(0, total);
     state = state.copyWith(selectedAssets: {...state.selectedAssets, ...assets});
   }
 

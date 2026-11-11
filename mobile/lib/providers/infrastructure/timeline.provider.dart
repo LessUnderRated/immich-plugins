@@ -6,6 +6,7 @@ import 'package:immich_mobile/presentation/widgets/timeline/timeline.state.dart'
 import 'package:immich_mobile/providers/infrastructure/db.provider.dart';
 import 'package:immich_mobile/providers/infrastructure/settings.provider.dart';
 import 'package:immich_mobile/providers/gallery_view.provider.dart';
+import 'package:immich_mobile/providers/private_vault.provider.dart';
 import 'package:immich_mobile/providers/user.provider.dart';
 
 final timelineArgsProvider = Provider.autoDispose<TimelineArgs>(
@@ -15,7 +16,8 @@ final timelineArgsProvider = Provider.autoDispose<TimelineArgs>(
 final timelineServiceProvider = Provider<TimelineService>(
   (ref) {
     final view = ref.watch(galleryViewSpecProvider(mainGalleryViewScope)).valueOrNull;
-    final timelineService = ref.watch(timelineFactoryProvider).deviceLibrary(view: view);
+    final hiddenIds = ref.watch(privateIdsProvider);
+    final timelineService = ref.watch(timelineFactoryProvider).deviceLibrary(view: view, hiddenIds: hiddenIds);
     ref.onDispose(timelineService.dispose);
     return timelineService;
   },

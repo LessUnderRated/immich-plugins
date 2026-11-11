@@ -1,11 +1,8 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:immich_mobile/constants/enums.dart';
 import 'package:immich_mobile/domain/models/asset/base_asset.model.dart';
 import 'package:immich_mobile/presentation/actions/action.dart';
-import 'package:immich_mobile/providers/background_sync.provider.dart';
 import 'package:immich_mobile/providers/private_vault.provider.dart';
 import 'package:immich_mobile/utils/error_handler.dart';
 
@@ -23,59 +20,31 @@ class MoveToPrivateAction extends AssetActionBuilder {
     if (assets == null) {
       return null;
     }
-    return .new(icon: Icons.lock_outline, label: 'Private', onAction: () => _move(context, ref, assets));
+    final privateIds = ref.watch(privateIdsProvider);
+    final allPrivate = assets.every((asset) => privateIds.contains(asset.id));
+    return .new(
+      icon: allPrivate ? Icons.lock_open_outlined : Icons.lock_outline,
+      label: allPrivate ? 'Unhide' : 'Private',
+      onAction: () => _toggle(context, ref, assets, makePrivate: !allPrivate),
+    );
   }
 
-  Future<void> _move(BuildContext context, WidgetRef ref, List<LocalAsset> assets) async {
+  Future<void> _toggle(BuildContext context, WidgetRef ref, List<LocalAsset> assets, {required bool makePrivate}) async {
     final messenger = ScaffoldMessenger.maybeOf(context);
     final clearSelection = ref.read(clearSelectionProvider(source));
-    final backgroundSync = ref.read(backgroundSyncProvider);
-    final progress = ValueNotifier<(int, int)>((0, assets.length));
-    final navigator = Navigator.of(context, rootNavigator: true);
-    var dialogOpen = true;
-    unawaited(
-      showDialog<void>(
-        context: context,
-        barrierDismissible: false,
-        builder: (_) => AlertDialog(
-          title: const Text('Moving to Private'),
-          content: ValueListenableBuilder<(int, int)>(
-            valueListenable: progress,
-            builder: (_, value, _) => Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                LinearProgressIndicator(value: value.$2 == 0 ? null : value.$1 / value.$2),
-                const SizedBox(height: 8),
-                Text('${value.$1} of ${value.$2}'),
-              ],
-            ),
-          ),
-        ),
-      ).whenComplete(() => dialogOpen = false),
-    );
-    void closeDialog() {
-      if (dialogOpen) {
-        navigator.pop();
-      }
-    }
-
+    final repository = ref.read(privateAlbumRepositoryProvider);
     try {
-      final moved = await ref
-          .read(privateVaultRepositoryProvider)
-          .hide(assets, onProgress: (done, total) => progress.value = (done, total));
-      closeDialog();
-      ref.invalidate(privateItemsProvider);
+      final ids = [for (final asset in assets) asset.id];
+      final changed = makePrivate ? await repository.add(ids) : await repository.remove(ids);
       clearSelection();
-      await backgroundSync.syncLocal();
+      final noun = changed == 1 ? 'item' : 'items';
       messenger?.showSnackBar(
-        SnackBar(content: Text(moved == 0 ? 'Nothing was moved' : 'Moved $moved to the private gallery')),
+        SnackBar(
+          content: Text(makePrivate ? 'Moved $changed $noun to Private' : 'Moved $changed $noun back to the gallery'),
+        ),
       );
     } catch (error, stack) {
-      closeDialog();
-      handleError(error, stack: stack, description: 'Failed to move items to the private gallery');
-    } finally {
-      progress.dispose();
+      handleError(error, stack: stack, description: 'Failed to update the private album');
     }
   }
 }

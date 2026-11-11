@@ -195,6 +195,7 @@ class AppRouter extends RootStackRouter {
     AutoRoute(page: PluginsRoute.page, guards: [_duplicateGuard]),
     AutoRoute(page: DeviceWorkflowEditorRoute.page),
     AutoRoute(page: PrivateViewerRoute.page),
+    AutoRoute(page: PrivateLegacyRoute.page),
     AutoRoute(page: AppAlbumRoute.page, guards: [_duplicateGuard]),
     AutoRoute(page: ActivitiesRoute.page, guards: [_authGuard, _duplicateGuard]),
     AutoRoute(page: BackupAssetDetailRoute.page, guards: [_authGuard, _duplicateGuard]),

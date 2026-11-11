@@ -141,4 +141,12 @@ void main() {
     expect(spec.videos, isTrue);
     expect(spec.excludeAlbumIds, {'a', 'b'});
   });
+
+  test('private photos are hidden everywhere except the private album', () async {
+    const hidden = {'gif', 'video'};
+    expect(await ids(sut.deviceLibrary(GroupAssetsBy.none, hiddenIds: hidden)), ['photo-big', 'photo-small']);
+    expect(await count(sut.deviceLibrary(GroupAssetsBy.none, hiddenIds: hidden)), 2);
+    expect(await ids(sut.localAlbum('screenshots', GroupAssetsBy.none, hiddenIds: hidden)), ['photo-small']);
+    expect(await ids(sut.privateAlbum(hidden)), ['video', 'gif']);
+  });
 }

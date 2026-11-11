@@ -12,7 +12,8 @@ class MultiSelectStatusButton extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final selectCount = ref.watch(multiSelectProvider.select((s) => s.selectedAssets.length));
-    final total = ref.watch(timelineServiceProvider).totalAssets;
+    final timeline = ref.watch(timelineServiceProvider);
+    final total = timeline.totalAssets;
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -27,7 +28,7 @@ class MultiSelectStatusButton extends ConsumerWidget {
         if (selectCount < total) ...[
           const SizedBox(width: 8),
           FilledButton.tonalIcon(
-            onPressed: () => unawaited(ref.read(multiSelectProvider.notifier).selectAll()),
+            onPressed: () => unawaited(ref.read(multiSelectProvider.notifier).selectAll(timeline)),
             icon: const Icon(Icons.select_all_rounded),
             label: const Text('Select all'),
           ),

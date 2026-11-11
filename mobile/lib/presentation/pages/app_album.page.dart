@@ -7,6 +7,7 @@ import 'package:immich_mobile/presentation/widgets/gallery_view/gallery_view_but
 import 'package:immich_mobile/presentation/widgets/timeline/timeline.widget.dart';
 import 'package:immich_mobile/providers/app_album.provider.dart';
 import 'package:immich_mobile/providers/gallery_view.provider.dart';
+import 'package:immich_mobile/providers/private_vault.provider.dart';
 import 'package:immich_mobile/providers/infrastructure/timeline.provider.dart';
 import 'package:immich_mobile/widgets/common/mesmerizing_sliver_app_bar.dart';
 
@@ -59,15 +60,18 @@ class AppAlbumPage extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final album = ref.watch(appAlbumProvider(albumId)).valueOrNull;
     final view = ref.watch(galleryViewSpecProvider(albumId)).valueOrNull;
+    final hiddenIds = ref.watch(privateIdsProvider);
     if (album == null) {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
 
     return ProviderScope(
-      key: ValueKey((Object.hashAll(album.assetIds), view)),
+      key: ValueKey((Object.hashAll(album.assetIds), view, Object.hashAllUnordered(hiddenIds))),
       overrides: [
         timelineServiceProvider.overrideWith((ref) {
-          final timelineService = ref.watch(timelineFactoryProvider).appAlbum(album.assetIds, view: view);
+          final timelineService = ref
+              .watch(timelineFactoryProvider)
+              .appAlbum(album.assetIds, view: view, hiddenIds: hiddenIds);
           ref.onDispose(timelineService.dispose);
           return timelineService;
         }),

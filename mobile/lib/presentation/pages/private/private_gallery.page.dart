@@ -3,7 +3,15 @@ import 'dart:io';
 import 'package:auto_route/auto_route.dart';
 import 'package:flutter/material.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
+import 'package:immich_mobile/domain/models/timeline.model.dart';
 import 'package:immich_mobile/infrastructure/repositories/private_vault.repository.dart';
+import 'package:immich_mobile/presentation/actions/action.widget.dart';
+import 'package:immich_mobile/presentation/actions/delete.action.dart';
+import 'package:immich_mobile/presentation/actions/move_to_private.action.dart';
+import 'package:immich_mobile/presentation/actions/share.action.dart';
+import 'package:immich_mobile/presentation/widgets/bottom_sheet/base_bottom_sheet.widget.dart';
+import 'package:immich_mobile/presentation/widgets/timeline/timeline.widget.dart';
+import 'package:immich_mobile/providers/infrastructure/timeline.provider.dart';
 import 'package:immich_mobile/providers/private_vault.provider.dart';
 import 'package:immich_mobile/routing/router.dart';
 import 'package:local_auth/local_auth.dart';
@@ -76,13 +84,85 @@ class _PrivateGalleryPageState extends ConsumerState<PrivateGalleryPage> {
   @override
   Widget build(BuildContext context) {
     final unlocked = ref.watch(privateUnlockedProvider);
+    if (unlocked) {
+      return _PrivateTimeline(onLock: _lock);
+    }
     return Scaffold(
-      appBar: AppBar(
-        centerTitle: true,
-        title: const Text('Private'),
-        actions: [if (unlocked) IconButton(tooltip: 'Lock', icon: const Icon(Icons.lock_outline), onPressed: _lock)],
+      appBar: AppBar(centerTitle: true, title: const Text('Private')),
+      body: _LockedView(busy: _authenticating, message: _message, onUnlock: _unlock),
+    );
+  }
+}
+
+class _PrivateTimeline extends ConsumerWidget {
+  final VoidCallback onLock;
+
+  const _PrivateTimeline({required this.onLock});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final ids = ref.watch(privateIdsProvider);
+    final legacyCount = ref.watch(privateItemsProvider).valueOrNull?.length ?? 0;
+    return ProviderScope(
+      key: ValueKey(Object.hashAllUnordered(ids)),
+      overrides: [
+        timelineServiceProvider.overrideWith((ref) {
+          final timelineService = ref.watch(timelineFactoryProvider).privateAlbum(ids);
+          ref.onDispose(timelineService.dispose);
+          return timelineService;
+        }),
+      ],
+      child: Timeline(
+        appBar: SliverAppBar(
+          floating: true,
+          snap: true,
+          centerTitle: true,
+          title: const Text('Private'),
+          actions: [
+            if (legacyCount > 0)
+              TextButton(
+                onPressed: () => context.pushRoute(const PrivateLegacyRoute()),
+                child: Text('Older items ($legacyCount)'),
+              ),
+            IconButton(tooltip: 'Lock', icon: const Icon(Icons.lock_outline), onPressed: onLock),
+          ],
+        ),
+        groupBy: GroupAssetsBy.none,
+        bottomSheet: const _PrivateBottomSheet(),
       ),
-      body: unlocked ? const _PrivateGrid() : _LockedView(busy: _authenticating, message: _message, onUnlock: _unlock),
+    );
+  }
+}
+
+class _PrivateBottomSheet extends StatelessWidget {
+  const _PrivateBottomSheet();
+
+  @override
+  Widget build(BuildContext context) {
+    return const BaseBottomSheet(
+      initialChildSize: 0.18,
+      minChildSize: 0.18,
+      maxChildSize: 0.18,
+      shouldCloseOnMinExtent: false,
+      resizeOnScroll: false,
+      actions: <ActionColumnButton>[
+        .new(action: ShareAction(source: .timeline)),
+        .new(action: MoveToPrivateAction(source: .timeline)),
+        .new(action: DeleteAction(source: .timeline)),
+      ],
+    );
+  }
+}
+
+@RoutePage()
+class PrivateLegacyPage extends StatelessWidget {
+  const PrivateLegacyPage({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Older private items')),
+      body: const _PrivateGrid(),
     );
   }
 }
@@ -137,7 +217,7 @@ class _PrivateGrid extends ConsumerWidget {
             child: Padding(
               padding: EdgeInsets.all(32),
               child: Text(
-                'Nothing here yet. Select photos in Photos, or open one, and choose "Private" to move it here.',
+                'Items moved here by older versions of the app appear here. Open one to move it back to the gallery.',
                 textAlign: TextAlign.center,
               ),
             ),

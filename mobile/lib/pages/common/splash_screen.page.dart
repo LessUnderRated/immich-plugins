@@ -14,6 +14,7 @@ import 'package:immich_mobile/generated/translations.g.dart';
 import 'package:immich_mobile/providers/background_sync.provider.dart';
 import 'package:immich_mobile/providers/device_plugins.provider.dart';
 import 'package:immich_mobile/providers/gallery_permission.provider.dart';
+import 'package:immich_mobile/providers/private_vault.provider.dart';
 import 'package:immich_mobile/routing/router.dart';
 import 'package:immich_mobile/services/immich_logger.service.dart';
 import 'package:immich_mobile/theme/color_scheme.dart';
@@ -299,6 +300,7 @@ class SplashScreenPageState extends ConsumerState<SplashScreenPage> {
   Future<void> resumeSession() async {
     try {
       await ensureOfflineUser();
+      await ref.read(privateAlbumRepositoryProvider).ids();
       await ref.read(galleryPermissionNotifier.notifier).requestGalleryPermission();
       final engine = ref.read(deviceWorkflowEngineProvider);
       unawaited(
