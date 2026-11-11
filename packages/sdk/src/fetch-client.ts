@@ -1396,12 +1396,31 @@ export type RotateParameters = {
 export type MirrorParameters = {
     axis: MirrorAxis;
 };
+export type MosaicPoint = {
+    /** X coordinate in original image pixels */
+    x: number;
+    /** Y coordinate in original image pixels */
+    y: number;
+};
+export type MosaicStroke = {
+    /** Brush diameter in original image pixels */
+    brushSize: number;
+    mode: MosaicStrokeMode;
+    /** Points along the stroke */
+    points: MosaicPoint[];
+};
+export type MosaicParameters = {
+    /** Size of each mosaic block in original image pixels */
+    blockSize: number;
+    /** Brush strokes, applied in order */
+    strokes: MosaicStroke[];
+};
 export type AssetEditActionItemResponseDto = {
     action: AssetEditAction;
     /** Asset edit ID */
     id: string;
-    /** List of edit actions to apply (crop, rotate, or mirror) */
-    parameters: CropParameters | RotateParameters | MirrorParameters;
+    /** List of edit actions to apply (crop, rotate, mirror, or mosaic) */
+    parameters: CropParameters | RotateParameters | MirrorParameters | MosaicParameters;
 };
 export type AssetEditsResponseDto = {
     /** Asset ID these edits belong to */
@@ -1411,11 +1430,11 @@ export type AssetEditsResponseDto = {
 };
 export type AssetEditActionItemDto = {
     action: AssetEditAction;
-    /** List of edit actions to apply (crop, rotate, or mirror) */
-    parameters: CropParameters | RotateParameters | MirrorParameters;
+    /** List of edit actions to apply (crop, rotate, mirror, or mosaic) */
+    parameters: CropParameters | RotateParameters | MirrorParameters | MosaicParameters;
 };
 export type AssetEditsCreateDto = {
-    /** List of edit actions to apply (crop, rotate, or mirror) */
+    /** List of edit actions to apply (crop, rotate, mirror, or mosaic) */
     edits: AssetEditActionItemDto[];
 };
 export type AssetMetadataResponseDto = {
@@ -8556,11 +8575,16 @@ export enum AssetTypeEnum {
 export enum AssetEditAction {
     Crop = "crop",
     Rotate = "rotate",
-    Mirror = "mirror"
+    Mirror = "mirror",
+    Mosaic = "mosaic"
 }
 export enum MirrorAxis {
     Horizontal = "horizontal",
     Vertical = "vertical"
+}
+export enum MosaicStrokeMode {
+    Paint = "paint",
+    Erase = "erase"
 }
 export enum AssetMediaSize {
     Original = "original",

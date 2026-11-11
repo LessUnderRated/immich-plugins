@@ -6,6 +6,7 @@ import 'package:immich_mobile/constants/aspect_ratios.dart';
 import 'package:immich_mobile/domain/models/asset_edit.model.dart';
 import 'package:immich_mobile/domain/models/exif.model.dart';
 import 'package:immich_mobile/utils/editor.utils.dart';
+import 'package:immich_mobile/utils/mosaic.utils.dart';
 
 part 'editor.provider.freezed.dart';
 
@@ -33,7 +34,11 @@ class EditorProvider extends Notifier<EditorState> {
         ? convertCropParametersToRect(existingCrop.parameters, originalWidth, originalHeight)
         : const Rect.fromLTRB(0, 0, 1, 1);
 
-    final transform = normalizeTransformEdits(edits);
+    final transform = normalizeTransformEdits(edits.where((edit) => edit is! MosaicEdit).toList());
+    final existingMosaic = edits.whereType<MosaicEdit>().firstOrNull;
+    final mosaic = existingMosaic != null && originalWidth != null && originalHeight != null
+        ? mosaicFromParameters(existingMosaic.parameters, originalWidth, originalHeight)
+        : null;
 
     state = state.copyWith(
       originalWidth: originalWidth ?? state.originalWidth,
@@ -41,6 +46,8 @@ class EditorProvider extends Notifier<EditorState> {
       crop: crop,
       flipHorizontal: transform.mirrorHorizontal,
       flipVertical: transform.mirrorVertical,
+      mosaicStrokes: mosaic?.strokes ?? const [],
+      mosaicBlockSize: mosaic?.blockSize ?? state.mosaicBlockSize,
     );
 
     _animateRotation(transform.rotation, duration: Duration.zero);
@@ -102,6 +109,50 @@ class EditorProvider extends Notifier<EditorState> {
       flipVertical: false,
       crop: const Rect.fromLTRB(0, 0, 1, 1),
       aspectRatio: CropAspectRatio.free,
+      mosaicStrokes: const [],
+      hasUnsavedEdits: true,
+    );
+  }
+
+  void setMode(EditorMode mode) {
+    state = state.copyWith(mode: mode);
+  }
+
+  void setMosaicTool(MosaicTool tool) {
+    state = state.copyWith(mosaicTool: tool);
+  }
+
+  void setMosaicBrushSize(double brushSize) {
+    state = state.copyWith(mosaicBrushSize: brushSize);
+  }
+
+  void setMosaicBlockSize(double blockSize) {
+    state = state.copyWith(
+      mosaicBlockSize: blockSize,
+      hasUnsavedEdits: state.mosaicStrokes.isNotEmpty || state.hasUnsavedEdits,
+    );
+  }
+
+  void addMosaicStroke(List<Offset> points) {
+    if (points.isEmpty) {
+      return;
+    }
+
+    final stroke = MosaicStrokeDraft(
+      points: List.unmodifiable(points),
+      brushSize: state.mosaicBrushSize,
+      erase: state.mosaicTool == MosaicTool.eraser,
+    );
+    state = state.copyWith(mosaicStrokes: [...state.mosaicStrokes, stroke], hasUnsavedEdits: true);
+  }
+
+  void undoMosaicStroke() {
+    if (state.mosaicStrokes.isEmpty) {
+      return;
+    }
+
+    state = state.copyWith(
+      mosaicStrokes: state.mosaicStrokes.sublist(0, state.mosaicStrokes.length - 1),
       hasUnsavedEdits: true,
     );
   }
@@ -150,9 +201,18 @@ abstract class EditorState with _$EditorState {
     @Default(0) int originalHeight,
     @Default(Duration.zero) Duration animationDuration,
     @Default(false) bool hasUnsavedEdits,
+    @Default(EditorMode.transform) EditorMode mode,
+    @Default(MosaicTool.brush) MosaicTool mosaicTool,
+    @Default(defaultMosaicBrushSize) double mosaicBrushSize,
+    @Default(defaultMosaicBlockSize) double mosaicBlockSize,
+    @Default(<MosaicStrokeDraft>[]) List<MosaicStrokeDraft> mosaicStrokes,
   }) = _EditorState;
 
   bool get hasEdits {
-    return rotationAngle != 0 || flipHorizontal || flipVertical || crop != const Rect.fromLTRB(0, 0, 1, 1);
+    return rotationAngle != 0 ||
+        flipHorizontal ||
+        flipVertical ||
+        crop != const Rect.fromLTRB(0, 0, 1, 1) ||
+        mosaicStrokes.isNotEmpty;
   }
 }

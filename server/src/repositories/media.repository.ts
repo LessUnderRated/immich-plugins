@@ -9,7 +9,7 @@ import { Writable } from 'node:stream';
 import sharp, { Sharp } from 'sharp';
 import { ORIENTATION_TO_SHARP_ROTATION } from 'src/constants.js';
 import { Exif } from 'src/database.js';
-import { AssetEditActionItem } from 'src/dtos/editing.dto.js';
+import { AssetEditAction, AssetEditActionItem, MosaicParameters } from 'src/dtos/editing.dto.js';
 import {
   AacProfile,
   Av1Profile,
@@ -38,6 +38,7 @@ import type {
   VideoPacketInfo,
 } from 'src/types.js';
 import { handlePromiseError } from 'src/utils/misc.js';
+import { blendWithMask, buildMosaicMaskSvg } from 'src/utils/mosaic.js';
 import { createAffineMatrix } from 'src/utils/transform.js';
 
 const probe = (input: string, options: string[]): Promise<FfprobeData> =>
@@ -166,7 +167,9 @@ export class MediaRepository {
       });
     }
 
-    const affineEditOperations = edits.filter((edit) => edit.action !== 'crop');
+    const affineEditOperations = edits.filter(
+      (edit) => edit.action === AssetEditAction.Rotate || edit.action === AssetEditAction.Mirror,
+    );
     if (affineEditOperations.length > 0) {
       const { a, b, c, d } = createAffineMatrix(affineEditOperations);
       pipeline = pipeline.affine([
@@ -176,6 +179,32 @@ export class MediaRepository {
     }
 
     return pipeline;
+  }
+
+  async applyMosaic(image: Bitmap, { blockSize, strokes }: MosaicParameters): Promise<Bitmap> {
+    const { width, height, channels } = image.info;
+    const blocksWide = Math.max(1, Math.ceil(width / blockSize));
+    const blocksHigh = Math.max(1, Math.ceil(height / blockSize));
+
+    const blocks = await this.raw(image)
+      .resize(blocksWide, blocksHigh, { fit: 'fill' })
+      .raw()
+      .toBuffer({ resolveWithObject: true });
+
+    const [pixelated, mask] = await Promise.all([
+      this.raw(blocks)
+        .resize(blocksWide * blockSize, blocksHigh * blockSize, { fit: 'fill', kernel: 'nearest' })
+        .extract({ left: 0, top: 0, width, height })
+        .raw()
+        .toBuffer(),
+      sharp(Buffer.from(buildMosaicMaskSvg(strokes, { width, height })))
+        .resize(width, height, { fit: 'fill' })
+        .extractChannel(0)
+        .raw()
+        .toBuffer(),
+    ]);
+
+    return { data: blendWithMask(image.data, pixelated, mask, channels), info: image.info };
   }
 
   async generateThumbnail(image: Bitmap, options: GenerateThumbnailOptions, output: string): Promise<void> {

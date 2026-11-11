@@ -133,6 +133,10 @@ extension on AssetEdit {
         action: AssetEditAction.mirror,
         parameters: parameters.toJson(),
       ),
+      MosaicEdit(:final parameters) => AssetEditActionItemDto(
+        action: AssetEditAction.mosaic,
+        parameters: parameters.toJson(),
+      ),
     };
   }
 }

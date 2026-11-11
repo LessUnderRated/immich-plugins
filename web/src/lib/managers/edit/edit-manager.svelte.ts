@@ -3,7 +3,13 @@ import { transformManager } from '#lib/managers/edit/transform-manager.svelte.ts
 import { eventManager } from '#lib/managers/event-manager.svelte.ts';
 import { waitForWebsocketEvent } from '#lib/stores/websocket.ts';
 import { getFormatter } from '#lib/utils/i18n.ts';
-import { editAsset, removeAssetEdits, type AssetEditsCreateDto, type AssetResponseDto } from '@immich/sdk';
+import {
+  AssetEditAction,
+  editAsset,
+  removeAssetEdits,
+  type AssetEditsCreateDto,
+  type AssetResponseDto,
+} from '@immich/sdk';
 import { ConfirmModal, modalManager, toastManager } from '@immich/ui';
 import { mdiCropRotate } from '@mdi/js';
 import type { Component } from 'svelte';
@@ -42,6 +48,7 @@ export class EditManager {
   ];
 
   currentAsset = $state<AssetResponseDto | null>(null);
+  preservedEdits: EditActions = [];
   selectedTool = $state<EditTool | null>(null);
 
   // used to disable multiple confirm dialogs and mouse events while one is open
@@ -86,6 +93,7 @@ export class EditManager {
 
   async activateTool(toolType: EditToolType, asset: AssetResponseDto, edits: AssetEditsCreateDto) {
     this.hasAppliedEdits = false;
+    this.preservedEdits = edits.edits.filter((edit) => edit.action === AssetEditAction.Mosaic);
     if (this.selectedTool?.type === toolType) {
       return;
     }
@@ -106,6 +114,7 @@ export class EditManager {
     }
     this.currentAsset = null;
     this.selectedTool = null;
+    this.preservedEdits = [];
   }
 
   async resetAllChanges() {
@@ -117,7 +126,7 @@ export class EditManager {
   async applyEdits(): Promise<boolean> {
     this.isApplyingEdits = true;
 
-    const edits = this.tools.flatMap((tool) => tool.manager.edits);
+    const edits = [...this.tools.flatMap((tool) => tool.manager.edits), ...this.preservedEdits];
     if (!this.currentAsset) {
       return false;
     }

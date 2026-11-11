@@ -20880,7 +20880,8 @@
         "enum": [
           "crop",
           "rotate",
-          "mirror"
+          "mirror",
+          "mosaic"
         ],
         "type": "string"
       },
@@ -20899,9 +20900,12 @@
               },
               {
                 "$ref": "#/components/schemas/MirrorParameters"
+              },
+              {
+                "$ref": "#/components/schemas/MosaicParameters"
               }
             ],
-            "description": "List of edit actions to apply (crop, rotate, or mirror)"
+            "description": "List of edit actions to apply (crop, rotate, mirror, or mosaic)"
           }
         },
         "required": [
@@ -20931,9 +20935,12 @@
               },
               {
                 "$ref": "#/components/schemas/MirrorParameters"
+              },
+              {
+                "$ref": "#/components/schemas/MosaicParameters"
               }
             ],
-            "description": "List of edit actions to apply (crop, rotate, or mirror)"
+            "description": "List of edit actions to apply (crop, rotate, mirror, or mosaic)"
           }
         },
         "required": [
@@ -20946,7 +20953,7 @@
       "AssetEditsCreateDto": {
         "properties": {
           "edits": {
-            "description": "List of edit actions to apply (crop, rotate, or mirror)",
+            "description": "List of edit actions to apply (crop, rotate, mirror, or mosaic)",
             "items": {
               "$ref": "#/components/schemas/AssetEditActionItemDto"
             },
@@ -24981,6 +24988,86 @@
           "axis"
         ],
         "type": "object"
+      },
+      "MosaicParameters": {
+        "properties": {
+          "blockSize": {
+            "description": "Size of each mosaic block in original image pixels",
+            "maximum": 1024,
+            "minimum": 2,
+            "type": "integer"
+          },
+          "strokes": {
+            "description": "Brush strokes, applied in order",
+            "items": {
+              "$ref": "#/components/schemas/MosaicStroke"
+            },
+            "maxItems": 1000,
+            "minItems": 1,
+            "type": "array"
+          }
+        },
+        "required": [
+          "blockSize",
+          "strokes"
+        ],
+        "type": "object"
+      },
+      "MosaicPoint": {
+        "properties": {
+          "x": {
+            "description": "X coordinate in original image pixels",
+            "format": "double",
+            "type": "number"
+          },
+          "y": {
+            "description": "Y coordinate in original image pixels",
+            "format": "double",
+            "type": "number"
+          }
+        },
+        "required": [
+          "x",
+          "y"
+        ],
+        "type": "object"
+      },
+      "MosaicStroke": {
+        "properties": {
+          "brushSize": {
+            "description": "Brush diameter in original image pixels",
+            "exclusiveMinimum": true,
+            "format": "double",
+            "minimum": 0,
+            "type": "number"
+          },
+          "mode": {
+            "$ref": "#/components/schemas/MosaicStrokeMode"
+          },
+          "points": {
+            "description": "Points along the stroke",
+            "items": {
+              "$ref": "#/components/schemas/MosaicPoint"
+            },
+            "maxItems": 10000,
+            "minItems": 1,
+            "type": "array"
+          }
+        },
+        "required": [
+          "brushSize",
+          "mode",
+          "points"
+        ],
+        "type": "object"
+      },
+      "MosaicStrokeMode": {
+        "description": "Whether the stroke adds mosaic or erases previously painted mosaic",
+        "enum": [
+          "paint",
+          "erase"
+        ],
+        "type": "string"
       },
       "NotificationCreateDto": {
         "properties": {
