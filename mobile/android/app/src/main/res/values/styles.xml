@@ -20,4 +20,12 @@
   <style name="NormalTheme" parent="@android:style/Theme.Light.NoTitleBar">
     <item name="android:windowBackground">?android:colorBackground</item>
   </style>
+  <!-- Bottom-sheet image picker opened by other apps: transparent so the caller stays visible -->
+  <style name="PickerTheme" parent="@style/Theme.AppCompat.DayNight.NoActionBar">
+    <item name="android:windowIsTranslucent">true</item>
+    <item name="android:windowBackground">@android:color/transparent</item>
+    <item name="android:windowNoTitle">true</item>
+    <item name="android:backgroundDimEnabled">true</item>
+    <item name="android:windowAnimationStyle">@android:style/Animation.InputMethod</item>
+  </style>
 </resources>
