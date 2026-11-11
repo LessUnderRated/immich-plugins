@@ -10,9 +10,10 @@ import 'package:immich_mobile/providers/infrastructure/timeline.provider.dart';
 import 'package:immich_mobile/providers/timeline/multiselect.provider.dart';
 
 class MesmerizingSliverAppBar extends ConsumerStatefulWidget {
-  const MesmerizingSliverAppBar({super.key, required this.title});
+  const MesmerizingSliverAppBar({super.key, required this.title, this.actions = const []});
 
   final String title;
+  final List<Widget> actions;
   @override
   ConsumerState<MesmerizingSliverAppBar> createState() => _MesmerizingSliverAppBarState();
 }
@@ -63,6 +64,7 @@ class _MesmerizingSliverAppBarState extends ConsumerState<MesmerizingSliverAppBa
           },
         ),
       ),
+      actions: [for (final action in widget.actions) hideWhenSelecting(action)],
       flexibleSpace: Builder(
         builder: (context) {
           final settings = context.dependOnInheritedWidgetOfExactType<FlexibleSpaceBarSettings>();

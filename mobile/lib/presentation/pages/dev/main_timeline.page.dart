@@ -1,8 +1,10 @@
 import 'package:auto_route/auto_route.dart';
 import 'package:flutter/material.dart';
+import 'package:immich_mobile/domain/models/gallery_view.model.dart';
 import 'package:immich_mobile/domain/models/timeline.model.dart';
 import 'package:immich_mobile/generated/translations.g.dart';
 import 'package:immich_mobile/presentation/widgets/bottom_sheet/device_library_bottom_sheet.widget.dart';
+import 'package:immich_mobile/presentation/widgets/gallery_view/gallery_view_button.widget.dart';
 import 'package:immich_mobile/presentation/widgets/timeline/timeline.widget.dart';
 import 'package:immich_mobile/routing/router.dart';
 
@@ -19,6 +21,7 @@ class MainTimelinePage extends StatelessWidget {
         centerTitle: true,
         title: Text(context.t.photos),
         actions: [
+          const GalleryViewButton(scope: mainGalleryViewScope),
           IconButton(
             tooltip: 'Plugins',
             icon: const Icon(Icons.extension_outlined),

@@ -1,9 +1,11 @@
 import 'package:collection/collection.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
+import 'package:immich_mobile/domain/models/gallery_view.model.dart';
 import 'package:immich_mobile/domain/services/timeline.service.dart';
 import 'package:immich_mobile/presentation/widgets/timeline/timeline.state.dart';
 import 'package:immich_mobile/providers/infrastructure/db.provider.dart';
 import 'package:immich_mobile/providers/infrastructure/settings.provider.dart';
+import 'package:immich_mobile/providers/gallery_view.provider.dart';
 import 'package:immich_mobile/providers/user.provider.dart';
 
 final timelineArgsProvider = Provider.autoDispose<TimelineArgs>(
@@ -12,7 +14,8 @@ final timelineArgsProvider = Provider.autoDispose<TimelineArgs>(
 
 final timelineServiceProvider = Provider<TimelineService>(
   (ref) {
-    final timelineService = ref.watch(timelineFactoryProvider).deviceLibrary();
+    final view = ref.watch(galleryViewSpecProvider(mainGalleryViewScope)).valueOrNull;
+    final timelineService = ref.watch(timelineFactoryProvider).deviceLibrary(view: view);
     ref.onDispose(timelineService.dispose);
     return timelineService;
   },

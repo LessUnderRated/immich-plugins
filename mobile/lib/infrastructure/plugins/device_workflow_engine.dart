@@ -70,6 +70,24 @@ class DeviceWorkflowEngine {
 
   Future<List<DevicePlugin>> plugins() => _store.list();
 
+  Future<List<(DevicePlugin, DevicePluginMethod)>> galleryViewMethods() async {
+    await ensureReady();
+    return [
+      for (final plugin in await _store.list())
+        if (plugin.enabled && _loaded.containsKey(plugin.name))
+          for (final method in plugin.methods)
+            if (method.isGalleryView) (plugin, method),
+    ];
+  }
+
+  Future<Map<String, dynamic>?> callPluginMethod(String plugin, String method, Map<String, dynamic> input) async {
+    await ensureReady();
+    if (!_loaded.containsKey(plugin)) {
+      throw StateError('Plugin $plugin is not installed or is disabled');
+    }
+    return _runtime.call(plugin, method, input);
+  }
+
   Future<void> reload() async {
     final plugins = await _store.list();
     for (final name in _loaded.keys.toList()) {

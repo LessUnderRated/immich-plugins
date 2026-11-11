@@ -1,30 +1,39 @@
 import 'package:auto_route/auto_route.dart';
-import 'package:flutter/widgets.dart';
+import 'package:flutter/material.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:immich_mobile/domain/models/album/local_album.model.dart';
+import 'package:immich_mobile/domain/models/timeline.model.dart';
 import 'package:immich_mobile/presentation/widgets/bottom_sheet/device_library_bottom_sheet.widget.dart';
+import 'package:immich_mobile/presentation/widgets/gallery_view/gallery_view_button.widget.dart';
 import 'package:immich_mobile/presentation/widgets/timeline/timeline.widget.dart';
+import 'package:immich_mobile/providers/gallery_view.provider.dart';
 import 'package:immich_mobile/providers/infrastructure/timeline.provider.dart';
 import 'package:immich_mobile/widgets/common/mesmerizing_sliver_app_bar.dart';
 
 @RoutePage()
-class LocalTimelinePage extends StatelessWidget {
+class LocalTimelinePage extends ConsumerWidget {
   final LocalAlbum album;
 
   const LocalTimelinePage({super.key, required this.album});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final view = ref.watch(galleryViewSpecProvider(album.id)).valueOrNull;
     return ProviderScope(
+      key: ValueKey(view),
       overrides: [
         timelineServiceProvider.overrideWith((ref) {
-          final timelineService = ref.watch(timelineFactoryProvider).localAlbum(albumId: album.id);
+          final timelineService = ref.watch(timelineFactoryProvider).localAlbum(albumId: album.id, view: view);
           ref.onDispose(timelineService.dispose);
           return timelineService;
         }),
       ],
       child: Timeline(
-        appBar: MesmerizingSliverAppBar(title: album.name),
+        appBar: MesmerizingSliverAppBar(
+          title: album.name,
+          actions: [GalleryViewButton(scope: album.id, color: Colors.white)],
+        ),
+        groupBy: view == null ? null : GroupAssetsBy.none,
         bottomSheet: DeviceLibraryBottomSheet(album: album),
         showStorageIndicator: true,
       ),

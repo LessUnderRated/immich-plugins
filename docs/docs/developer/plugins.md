@@ -306,6 +306,69 @@ Steps run in the order given. `method` is `pluginName#methodName`. A step whose 
 | `AssetOcrExtraction` | OCR finishes | `data.asset.ocr` is filled in. |
 | `AssetTagged` | A tag is added to an asset | |
 
+## Gallery views (Immich Gallery app)
+
+The serverless Immich Gallery app (the `offline-gallery` branch) runs plugins on the phone. It adds a `GalleryViewV1` method type that lets a plugin sort and filter the photo grid.
+
+A gallery view is not called once per photo. The app calls it once each time you change its settings, and the method returns a small **view spec**. The app turns that spec into the database query that drives the grid, so scrolling stays fast.
+
+### Manifest
+
+Declare the type and the `GalleryView` UI hint. The `schema` becomes the settings form in the app's **View** sheet, which opens from the tune button on Photos or on an album.
+
+```json
+{
+  "name": "galleryView",
+  "title": "Sort & filter",
+  "types": ["GalleryViewV1"],
+  "uiHints": ["GalleryView"],
+  "schema": { "type": "object", "properties": { "sort": { "type": "string", "enum": ["newest", "oldest"] } } }
+}
+```
+
+### Input
+
+```ts
+{
+  type: 'GalleryViewV1',
+  config,                       // values from the schema form
+  workflow: { id: 'gallery-view', authToken: '', stepId: scope },
+  data: {
+    scope: 'main' | 'album',
+    albumId?: string,           // set when scope is 'album'
+    albums: { id: string; name: string }[],
+  },
+}
+```
+
+### Response
+
+```ts
+{
+  view: {
+    sort?: { field: 'createdAt' | 'updatedAt' | 'name' | 'pixels' | 'duration'; direction: 'asc' | 'desc' },
+    include?: { photos?: boolean; videos?: boolean; gifs?: boolean },  // missing means true
+    excludeAlbumIds?: string[],  // hidden from Photos; ignored inside an album
+  },
+}
+```
+
+- **Sort:** `pixels` sorts by width × height. Ties fall back to newest first.
+- **GIFs:** a file counts as a GIF when its name ends in `.gif`. Photos means images that are not GIFs.
+- **Dates:** while a view is active the grid has no date headers, because date groups don't fit name or size order.
+- **Storage:** the app saves which view is chosen, and its settings, separately for Photos and for each album.
+- **Reset:** the View sheet's **Reset** button goes back to the default newest-first grid.
+
+`@immich/plugin-sdk` exports `GalleryViewV1`, `GalleryViewV1Data` and `GalleryViewSpec`. `WorkflowResponse` has an optional `view` field, so `wrapper()` accepts gallery view methods.
+
+```ts
+galleryView: ({ config }) => ({
+  view: {
+    sort: { field: 'createdAt', direction: config.sort === 'oldest' ? 'asc' : 'desc' },
+  },
+}),
+```
+
 ## Debugging
 
 - Set `IMMICH_LOG_LEVEL=debug` to log each step's inputs and outputs (`Inputs: …` / `Outputs: …`) under `Plugin:<name>@<version>`.
