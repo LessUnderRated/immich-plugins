@@ -50,10 +50,15 @@ class PickerActivity : FlutterFragmentActivity() {
   }
 
   private fun requestedMimeType(): String {
-    val type = intent.type ?: return "*/*"
+    val types = listOfNotNull(intent.type) + (intent.getStringArrayExtra(Intent.EXTRA_MIME_TYPES)?.toList() ?: emptyList())
+    if (types.isEmpty() || types.any { it.startsWith("*") || it.contains("cursor.dir/*") }) {
+      return "*/*"
+    }
+    val wantsImages = types.any { it.contains("image") }
+    val wantsVideos = types.any { it.contains("video") }
     return when {
-      type.contains("video") && !type.contains("image") -> "video/*"
-      type.contains("image") && !type.contains("video") -> "image/*"
+      wantsVideos && !wantsImages -> "video/*"
+      wantsImages && !wantsVideos -> "image/*"
       else -> "*/*"
     }
   }

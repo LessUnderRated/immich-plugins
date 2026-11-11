@@ -81,7 +81,15 @@ class _PickerSheetState extends State<_PickerSheet> {
       setState(() => _message = 'Allow photo access for Immich Gallery to pick photos.');
       return;
     }
-    final paths = await PhotoManager.getAssetPathList(type: _type, onlyAll: true);
+    final paths = await PhotoManager.getAssetPathList(
+      type: _type,
+      onlyAll: true,
+      filterOption: FilterOptionGroup(
+        imageOption: const FilterOption(sizeConstraint: SizeConstraint(ignoreSize: true)),
+        videoOption: const FilterOption(sizeConstraint: SizeConstraint(ignoreSize: true)),
+        orders: [const OrderOption(type: OrderOptionType.createDate, asc: false)],
+      ),
+    );
     _all = paths.firstOrNull;
     await _loadMore();
   }
