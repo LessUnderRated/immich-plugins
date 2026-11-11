@@ -21,6 +21,8 @@ enum StoreKey<T> {
 
   syncMigrationStatus<String>._(1013),
 
+  galleryViewOptions<String>._(2000),
+
   // Legacy keys that have been migrated to the new metadata store
   legacyBackupRequireCharging<bool>._(7),
   legacyBackupTriggerDelay<int>._(8),
