@@ -98,6 +98,40 @@ class TimelineRepository extends DatabaseAccessor<Drift> with $TimelineRepositor
         .get();
   }
 
+  TimelineQuery deviceLibrary(GroupAssetsBy groupBy) => (
+    bucketSource: () => _watchDeviceLibraryBucket(groupBy: groupBy),
+    assetSource: (offset, count) => _getDeviceLibraryAssets(offset: offset, count: count),
+    origin: TimelineOrigin.main,
+  );
+
+  Stream<List<Bucket>> _watchDeviceLibraryBucket({GroupAssetsBy groupBy = GroupAssetsBy.day}) {
+    if (groupBy == GroupAssetsBy.none) {
+      return _db.localAssetEntity.count().map(_generateBuckets).watchSingle();
+    }
+
+    final assetCountExp = _db.localAssetEntity.id.count();
+    final dateExp = _db.localAssetEntity.createdAt.dateFmt(groupBy, toLocal: true);
+
+    final query = _db.localAssetEntity.selectOnly()
+      ..addColumns([assetCountExp, dateExp])
+      ..groupBy([dateExp])
+      ..orderBy([OrderingTerm.desc(dateExp)]);
+
+    return query.map((row) {
+      final timeline = row.read(dateExp)!.truncateDate(groupBy);
+      final assetCount = row.read(assetCountExp)!;
+      return TimeBucket(date: timeline, assetCount: assetCount);
+    }).watch();
+  }
+
+  Future<List<BaseAsset>> _getDeviceLibraryAssets({required int offset, required int count}) {
+    final query = _db.localAssetEntity.select()
+      ..orderBy([(row) => OrderingTerm.desc(row.createdAt)])
+      ..limit(count, offset: offset);
+
+    return query.map((row) => row.toDto()).get();
+  }
+
   TimelineQuery localAlbum(String albumId, GroupAssetsBy groupBy) => (
     bucketSource: () => _watchLocalAlbumBucket(albumId, groupBy: groupBy),
     assetSource: (offset, count) => _getLocalAlbumBucketAssets(albumId, offset: offset, count: count),

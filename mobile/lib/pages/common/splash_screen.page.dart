@@ -8,19 +8,11 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:immich_mobile/constants/locales.dart';
 import 'package:immich_mobile/data/db/main/database.dart';
 import 'package:immich_mobile/domain/models/config/app_config.dart';
-import 'package:immich_mobile/domain/models/store.model.dart';
-import 'package:immich_mobile/entities/store.entity.dart';
-import 'package:immich_mobile/extensions/platform_extensions.dart';
+import 'package:immich_mobile/domain/services/offline_user.service.dart';
 import 'package:immich_mobile/generated/codegen_loader.g.dart';
 import 'package:immich_mobile/generated/translations.g.dart';
-import 'package:immich_mobile/infrastructure/repositories/settings.repository.dart';
-import 'package:immich_mobile/providers/app_life_cycle.provider.dart';
-import 'package:immich_mobile/providers/auth.provider.dart';
 import 'package:immich_mobile/providers/background_sync.provider.dart';
-import 'package:immich_mobile/providers/backup/backup.provider.dart';
-import 'package:immich_mobile/providers/server_info.provider.dart';
-import 'package:immich_mobile/providers/view_intent/view_intent_handler.provider.dart';
-import 'package:immich_mobile/providers/websocket.provider.dart';
+import 'package:immich_mobile/providers/gallery_permission.provider.dart';
 import 'package:immich_mobile/routing/router.dart';
 import 'package:immich_mobile/services/immich_logger.service.dart';
 import 'package:immich_mobile/theme/color_scheme.dart';
@@ -304,108 +296,20 @@ class SplashScreenPageState extends ConsumerState<SplashScreenPage> {
   }
 
   Future<void> resumeSession() async {
-    final serverUrl = Store.tryGet(StoreKey.serverUrl);
-    final endpoint = Store.tryGet(StoreKey.serverEndpoint);
-    final accessToken = Store.tryGet(StoreKey.accessToken);
-
-    if (accessToken != null && serverUrl != null && endpoint != null) {
-      final infoProvider = ref.read(serverInfoProvider.notifier);
-      final wsProvider = ref.read(websocketProvider.notifier);
-      final backgroundManager = ref.read(backgroundSyncProvider);
-      final backupNotifier = ref.read(backupProvider.notifier);
-      final lifeCycle = ref.read(appStateProvider.notifier);
-      final viewIntentHandler = ref.read(viewIntentHandlerProvider);
-      final authNotifier = ref.read(authProvider.notifier);
-
+    try {
+      await ensureOfflineUser();
+      await ref.read(galleryPermissionNotifier.notifier).requestGalleryPermission();
       unawaited(
-        authNotifier
-            .setOpenApiServiceEndpoint()
-            .catchError((Object error, StackTrace stackTrace) {
-              log.warning('Failed to resolve server endpoint', error, stackTrace);
-              return null;
-            })
-            .then((_) async {
-              if (Store.tryGet(StoreKey.accessToken) != accessToken) {
-                return false;
-              }
-              await authNotifier.saveAuthInfo(accessToken: accessToken);
-              return true;
-            })
-            .then(
-              (sessionResumed) async {
-                if (!sessionResumed) {
-                  return;
-                }
-
-                try {
-                  wsProvider.connect();
-                  unawaited(infoProvider.getServerInfo());
-
-                  bool syncSuccess = false;
-                  await Future.wait([
-                    backgroundManager.syncLocal(full: true),
-                    backgroundManager.syncRemote().then((success) => syncSuccess = success),
-                  ]);
-
-                  await viewIntentHandler.flushDeferredViewIntent();
-
-                  if (syncSuccess) {
-                    await Future.wait([
-                      backgroundManager.hashAssets().then((_) {
-                        unawaited(_resumeBackup(backupNotifier, lifeCycle));
-                      }),
-                      _resumeBackup(backupNotifier, lifeCycle),
-                      backgroundManager.syncCloudIds(),
-                    ]);
-                  } else {
-                    await backgroundManager.hashAssets();
-                  }
-
-                  if (SettingsRepository.instance.appConfig.backup.syncAlbums) {
-                    await backgroundManager.syncLinkedAlbum();
-                  }
-                } catch (e) {
-                  log.severe('Failed establishing connection to the server: $e');
-                }
-              },
-              onError: (exception) {
-                log.severe('Failed to update auth info', exception);
-                if (!mounted) {
-                  return;
-                }
-
-                unawaited(ref.read(authProvider.notifier).logout());
-                unawaited(context.router.replaceAll([const LoginRoute()]));
-              },
-            ),
+        ref.read(backgroundSyncProvider).syncLocal(full: true).catchError((Object error, StackTrace stack) {
+          log.severe('Failed to scan the device library', error, stack);
+        }),
       );
-    } else {
-      log.severe('Missing crucial offline login info - Logging out completely');
-      unawaited(ref.read(authProvider.notifier).logout());
-      unawaited(context.router.replaceAll([const LoginRoute()]));
-      return;
+    } catch (error, stack) {
+      log.severe('Failed to start the offline gallery', error, stack);
     }
 
-    if (context.router.current.name == SplashScreenRoute.name) {
+    if (mounted && context.router.current.name == SplashScreenRoute.name) {
       unawaited(context.router.replaceAll([const TabShellRoute(), ?widget.deepLink]));
-    }
-  }
-
-  Future<void> _resumeBackup(BackupNotifier notifier, AppLifeCycleNotifier lifeCycle) async {
-    final isEnableBackup = SettingsRepository.instance.appConfig.backup.enabled;
-
-    if (isEnableBackup) {
-      final currentUser = Store.tryGet(StoreKey.currentUser);
-      if (currentUser != null) {
-        // TODO(rewrite): Remove this check and requestFullResume once the splash no longer runs in background launches
-        // iOS also runs the splash in background launches, where the app is never resumed.
-        // there the foreground backup waits for the first resume instead of uploading off screen
-        if (CurrentPlatform.isIOS && WidgetsBinding.instance.lifecycleState != AppLifecycleState.resumed) {
-          lifeCycle.requestFullResume();
-          return;
-        }
-        unawaited(notifier.startForegroundBackup(currentUser.id));
-      }
     }
   }
 
