@@ -72,6 +72,22 @@ class MultiSelectNotifier extends Notifier<MultiSelectState> {
     }
   }
 
+  void replaceSelection({required Iterable<BaseAsset> remove, required Iterable<BaseAsset> add}) {
+    final next = state.selectedAssets.toSet()
+      ..removeAll(remove)
+      ..addAll(add);
+    state = state.copyWith(selectedAssets: next);
+  }
+
+  Future<void> selectAll() async {
+    final total = _timelineService.totalAssets;
+    if (total == 0) {
+      return;
+    }
+    final assets = await _timelineService.loadAssets(0, total);
+    state = state.copyWith(selectedAssets: {...state.selectedAssets, ...assets});
+  }
+
   void reset() {
     state = const MultiSelectState(selectedAssets: {}, lockedSelectionAssets: {}, forceEnable: false);
   }

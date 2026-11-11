@@ -61,7 +61,58 @@ class DeviceMediaWriter(private val activity: ComponentActivity, messenger: Bina
         move(uris, relativePath, result, allowPrompt = true)
       }
 
+      "exportToFiles" -> {
+        val items = call.argument<List<Map<String, Any?>>>("items") ?: emptyList()
+        exportToFiles(items, result)
+      }
+
       else -> result.notImplemented()
+    }
+  }
+
+  private fun exportToFiles(items: List<Map<String, Any?>>, result: MethodChannel.Result) {
+    val pool = Executors.newFixedThreadPool(4)
+    executor.execute {
+      val succeeded = java.util.Collections.synchronizedList(mutableListOf<Map<String, String?>>())
+      val tasks = items.map { item ->
+        pool.submit(Runnable {
+          val id = item["id"] as String
+          val collection = if (item["video"] == true) {
+            MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+          } else {
+            MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+          }
+          val uri = ContentUris.withAppendedId(collection, id.toLong())
+          try {
+            val target = File(item["dest"] as String)
+            activity.contentResolver.openInputStream(uri)?.use { input ->
+              target.outputStream().use { input.copyTo(it, 1 shl 16) }
+            } ?: return@Runnable
+            (item["thumb"] as String?)?.let { thumbPath ->
+              if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                runCatching {
+                  val bitmap = activity.contentResolver.loadThumbnail(uri, android.util.Size(320, 320), null)
+                  File(thumbPath).outputStream().use { bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 85, it) }
+                  bitmap.recycle()
+                }
+              }
+            }
+            val relativePath = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+              activity.contentResolver.query(uri, arrayOf(MediaStore.MediaColumns.RELATIVE_PATH), null, null, null)
+                ?.use { cursor -> if (cursor.moveToFirst()) cursor.getString(0) else null }
+            } else {
+              null
+            }
+            succeeded.add(mapOf("id" to id, "relativePath" to relativePath))
+          } catch (_: Throwable) {
+            File(item["dest"] as String).delete()
+          }
+        })
+      }
+      tasks.forEach { runCatching { it.get() } }
+      pool.shutdown()
+      val ids = succeeded.toList()
+      mainHandler.post { result.success(ids) }
     }
   }
 

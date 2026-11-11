@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/services.dart';
 import 'package:immich_mobile/domain/models/asset/base_asset.model.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
@@ -40,6 +41,18 @@ class PrivateItem {
     createdAt: DateTime.fromMillisecondsSinceEpoch(json['createdAt'] as int? ?? 0),
     latitude: (json['latitude'] as num?)?.toDouble(),
     longitude: (json['longitude'] as num?)?.toDouble(),
+  );
+
+  PrivateItem withRelativePath(String? path) => PrivateItem(
+    id: id,
+    file: file,
+    thumb: thumb,
+    name: name,
+    relativePath: path,
+    isVideo: isVideo,
+    createdAt: createdAt,
+    latitude: latitude,
+    longitude: longitude,
   );
 
   Map<String, dynamic> toJson() => {
@@ -91,38 +104,55 @@ class PrivateVaultRepository {
 
   Future<String> path(String fileName) async => p.join((await _dir()).path, fileName);
 
-  Future<int> hide(List<LocalAsset> assets) async {
+  static const _channel = MethodChannel('immich/device_media');
+  static const _batchSize = 40;
+
+  Future<int> hide(List<LocalAsset> assets, {void Function(int done, int total)? onProgress}) async {
     final directory = await _dir();
     final copied = <String, PrivateItem>{};
-    for (final asset in assets) {
-      final entity = await AssetEntity.fromId(asset.id);
-      final source = await entity?.originFile;
-      if (entity == null || source == null || !source.existsSync()) {
-        continue;
-      }
-      final id = const Uuid().v4();
-      final fileName = '$id${p.extension(asset.name).toLowerCase()}';
-      await source.copy(p.join(directory.path, fileName));
+    var done = 0;
+    onProgress?.call(0, assets.length);
 
-      String? thumbName;
-      final thumb = await entity.thumbnailDataWithSize(const ThumbnailSize.square(320), quality: 85);
-      if (thumb != null) {
-        thumbName = '$id.thumb.jpg';
-        await File(p.join(directory.path, thumbName)).writeAsBytes(thumb, flush: true);
+    for (var start = 0; start < assets.length; start += _batchSize) {
+      final batch = assets.sublist(start, (start + _batchSize).clamp(0, assets.length));
+      final planned = <String, PrivateItem>{};
+      final items = <Map<String, Object?>>[];
+      for (final asset in batch) {
+        final id = const Uuid().v4();
+        final fileName = '$id${p.extension(asset.name).toLowerCase()}';
+        final thumbName = '$id.thumb.jpg';
+        planned[asset.id] = PrivateItem(
+          id: id,
+          file: fileName,
+          thumb: thumbName,
+          name: asset.name,
+          relativePath: null,
+          isVideo: asset.type == AssetType.video,
+          createdAt: asset.createdAt,
+          latitude: asset.latitude,
+          longitude: asset.longitude,
+        );
+        items.add({
+          'id': asset.id,
+          'video': asset.type == AssetType.video,
+          'dest': p.join(directory.path, fileName),
+          'thumb': p.join(directory.path, thumbName),
+        });
       }
 
-      copied[asset.id] = PrivateItem(
-        id: id,
-        file: fileName,
-        thumb: thumbName,
-        name: asset.name,
-        relativePath: entity.relativePath,
-        isVideo: asset.type == AssetType.video,
-        createdAt: asset.createdAt,
-        latitude: asset.latitude,
-        longitude: asset.longitude,
-      );
+      final exported = {
+        for (final row in await _channel.invokeListMethod<Map>('exportToFiles', {'items': items}) ?? const <Map>[])
+          '${row['id']}': row['relativePath'] as String?,
+      };
+      for (final entry in planned.entries) {
+        if (exported.containsKey(entry.key)) {
+          copied[entry.key] = entry.value.withRelativePath(exported[entry.key]);
+        }
+      }
+      done += batch.length;
+      onProgress?.call(done, assets.length);
     }
+
     if (copied.isEmpty) {
       return 0;
     }

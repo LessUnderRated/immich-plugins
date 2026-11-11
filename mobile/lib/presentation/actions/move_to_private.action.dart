@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:immich_mobile/constants/enums.dart';
@@ -28,8 +30,41 @@ class MoveToPrivateAction extends AssetActionBuilder {
     final messenger = ScaffoldMessenger.maybeOf(context);
     final clearSelection = ref.read(clearSelectionProvider(source));
     final backgroundSync = ref.read(backgroundSyncProvider);
+    final progress = ValueNotifier<(int, int)>((0, assets.length));
+    final navigator = Navigator.of(context, rootNavigator: true);
+    var dialogOpen = true;
+    unawaited(
+      showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) => AlertDialog(
+          title: const Text('Moving to Private'),
+          content: ValueListenableBuilder<(int, int)>(
+            valueListenable: progress,
+            builder: (_, value, _) => Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                LinearProgressIndicator(value: value.$2 == 0 ? null : value.$1 / value.$2),
+                const SizedBox(height: 8),
+                Text('${value.$1} of ${value.$2}'),
+              ],
+            ),
+          ),
+        ),
+      ).whenComplete(() => dialogOpen = false),
+    );
+    void closeDialog() {
+      if (dialogOpen) {
+        navigator.pop();
+      }
+    }
+
     try {
-      final moved = await ref.read(privateVaultRepositoryProvider).hide(assets);
+      final moved = await ref
+          .read(privateVaultRepositoryProvider)
+          .hide(assets, onProgress: (done, total) => progress.value = (done, total));
+      closeDialog();
       ref.invalidate(privateItemsProvider);
       clearSelection();
       await backgroundSync.syncLocal();
@@ -37,7 +72,10 @@ class MoveToPrivateAction extends AssetActionBuilder {
         SnackBar(content: Text(moved == 0 ? 'Nothing was moved' : 'Moved $moved to the private gallery')),
       );
     } catch (error, stack) {
+      closeDialog();
       handleError(error, stack: stack, description: 'Failed to move items to the private gallery');
+    } finally {
+      progress.dispose();
     }
   }
 }

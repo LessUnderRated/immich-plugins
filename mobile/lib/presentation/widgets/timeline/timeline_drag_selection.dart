@@ -82,16 +82,10 @@ class _TimelineDragSelectionState extends ConsumerState<TimelineDragSelection> {
       final selectedAssets = timelineService.getAssets(startIndex, count);
 
       // Clear previous drag selection and add new range
-      final multiSelectNotifier = ref.read(multiSelectProvider.notifier);
-      for (final asset in _draggedAssets) {
-        multiSelectNotifier.deselectAsset(asset);
-      }
-      _draggedAssets.clear();
-
-      for (final asset in selectedAssets) {
-        multiSelectNotifier.selectAsset(asset);
-        _draggedAssets.add(asset);
-      }
+      ref.read(multiSelectProvider.notifier).replaceSelection(remove: _draggedAssets, add: selectedAssets);
+      _draggedAssets
+        ..clear()
+        ..addAll(selectedAssets);
     }
   }
 
