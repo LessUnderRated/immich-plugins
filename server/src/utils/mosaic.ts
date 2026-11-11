@@ -3,11 +3,17 @@ import type { ImageDimensions } from 'src/types.js';
 
 const formatNumber = (value: number) => Number(value.toFixed(2)).toString();
 
-const strokeColor = (mode: MosaicStrokeMode) => (mode === MosaicStrokeMode.Paint ? '#fff' : '#000');
+export const strokeBlockSize = (stroke: MosaicStroke, defaultBlockSize: number) => stroke.blockSize ?? defaultBlockSize;
 
-const strokeToSvg = ({ mode, brushSize, points }: MosaicStroke) => {
-  const color = strokeColor(mode);
+export const paintedBlockSizes = (strokes: MosaicStroke[], defaultBlockSize: number) => [
+  ...new Set(
+    strokes
+      .filter((stroke) => stroke.mode === MosaicStrokeMode.Paint)
+      .map((stroke) => strokeBlockSize(stroke, defaultBlockSize)),
+  ),
+];
 
+const strokeToSvg = ({ brushSize, points }: MosaicStroke, color: string) => {
   if (points.length === 1) {
     const [{ x, y }] = points;
     return `<circle cx="${formatNumber(x)}" cy="${formatNumber(y)}" r="${formatNumber(brushSize / 2)}" fill="${color}"/>`;
@@ -17,11 +23,15 @@ const strokeToSvg = ({ mode, brushSize, points }: MosaicStroke) => {
   return `<polyline points="${path}" fill="none" stroke="${color}" stroke-width="${formatNumber(brushSize)}" stroke-linecap="round" stroke-linejoin="round"/>`;
 };
 
-export const buildMosaicMaskSvg = (strokes: MosaicStroke[], { width, height }: ImageDimensions) =>
+export const buildMosaicMaskSvg = (
+  strokes: MosaicStroke[],
+  { width, height }: ImageDimensions,
+  isVisible: (stroke: MosaicStroke) => boolean = (stroke) => stroke.mode === MosaicStrokeMode.Paint,
+) =>
   [
     `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">`,
     `<rect width="${width}" height="${height}" fill="#000"/>`,
-    ...strokes.map((stroke) => strokeToSvg(stroke)),
+    ...strokes.map((stroke) => strokeToSvg(stroke, isVisible(stroke) ? '#fff' : '#000')),
     '</svg>',
   ].join('');
 

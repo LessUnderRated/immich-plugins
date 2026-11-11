@@ -135,6 +135,47 @@ describe(MediaRepository.name, () => {
       expect(pixel(result.data, 4, 28)).not.toEqual(pixel(image.data, 4, 28));
     });
 
+    it('should pixelate each stroke with its own block size', async () => {
+      const image = buildGradient();
+      const result = await sut.applyMosaic(image, {
+        blockSize: 8,
+        strokes: [
+          {
+            mode: MosaicStrokeMode.Paint,
+            brushSize: 16,
+            points: [
+              { x: 0, y: 16 },
+              { x: 16, y: 16 },
+            ],
+          },
+          {
+            mode: MosaicStrokeMode.Paint,
+            brushSize: 16,
+            blockSize: 16,
+            points: [
+              { x: 48, y: 16 },
+              { x: 63, y: 16 },
+            ],
+          },
+        ],
+      });
+
+      expect(pixel(result.data, 9, 9)).toEqual(pixel(result.data, 14, 14));
+      expect(pixel(result.data, 9, 9)).not.toEqual(pixel(result.data, 17, 9));
+      expect(pixel(result.data, 49, 17)).toEqual(pixel(result.data, 62, 22));
+      expect(pixel(result.data, 32, 16)).toEqual(pixel(image.data, 32, 16));
+    });
+
+    it('should let a later stroke replace an earlier one', async () => {
+      const image = buildGradient();
+      const coarse = { mode: MosaicStrokeMode.Paint, brushSize: 200, blockSize: 32, points: [{ x: 32, y: 16 }] };
+      const fine = { mode: MosaicStrokeMode.Paint, brushSize: 200, blockSize: 4, points: [{ x: 32, y: 16 }] };
+      const result = await sut.applyMosaic(image, { blockSize: 8, strokes: [coarse, fine] });
+      const onlyFine = await sut.applyMosaic(image, { blockSize: 8, strokes: [fine] });
+
+      expect(result.data.equals(onlyFine.data)).toBe(true);
+    });
+
     it('should handle images that are not a multiple of the block size', async () => {
       const image = buildGradient();
       const result = await sut.applyMosaic(image, {

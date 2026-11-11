@@ -101,50 +101,67 @@ Future<ui.Image> _applyTransform(ui.Image source, List<AssetEdit> edits) async {
   }
 }
 
-Future<ui.Image> _applyMosaic(ui.Image source, MosaicParameters parameters) async {
-  final width = source.width;
-  final height = source.height;
-  final blockSize = parameters.blockSize;
-  final blocksWide = max(1, (width / blockSize).ceil());
-  final blocksHigh = max(1, (height / blockSize).ceil());
+int mosaicStrokeBlockSize(MosaicStroke stroke, int defaultBlockSize) =>
+    stroke.blockSize.isPresent ? stroke.blockSize.value ?? defaultBlockSize : defaultBlockSize;
 
-  final blocks = await _drawToImage(blocksWide, blocksHigh, (canvas) {
+Future<ui.Image> pixelateImage(ui.Image source, int blockSize, {int? width, int? height}) {
+  final targetWidth = width ?? source.width;
+  final targetHeight = height ?? source.height;
+  final blocksWide = max(1, (targetWidth / blockSize).ceil());
+  final blocksHigh = max(1, (targetHeight / blockSize).ceil());
+  return _drawToImage(blocksWide, blocksHigh, (canvas) {
     canvas.drawImageRect(
       source,
-      Rect.fromLTWH(0, 0, width.toDouble(), height.toDouble()),
+      Rect.fromLTWH(0, 0, source.width.toDouble(), source.height.toDouble()),
       Rect.fromLTWH(0, 0, blocksWide.toDouble(), blocksHigh.toDouble()),
       Paint()..filterQuality = FilterQuality.medium,
     );
   });
+}
+
+Future<ui.Image> _applyMosaic(ui.Image source, MosaicParameters parameters) async {
+  final width = source.width;
+  final height = source.height;
+  final blockSizes = parameters.strokes
+      .where((stroke) => stroke.mode == MosaicStrokeMode.paint)
+      .map((stroke) => mosaicStrokeBlockSize(stroke, parameters.blockSize))
+      .toSet();
+  final blocks = {for (final blockSize in blockSizes) blockSize: await pixelateImage(source, blockSize)};
 
   try {
     return await _drawToImage(width, height, (canvas) {
       final bounds = Rect.fromLTWH(0, 0, width.toDouble(), height.toDouble());
       canvas.drawImage(source, Offset.zero, Paint());
-      canvas.saveLayer(bounds, Paint());
-      for (final stroke in parameters.strokes) {
-        _drawMaskStroke(canvas, stroke);
+      for (final MapEntry(key: blockSize, value: image) in blocks.entries) {
+        canvas.saveLayer(bounds, Paint());
+        for (final stroke in parameters.strokes) {
+          final visible =
+              stroke.mode == MosaicStrokeMode.paint && mosaicStrokeBlockSize(stroke, parameters.blockSize) == blockSize;
+          _drawMaskStroke(canvas, stroke, visible: visible);
+        }
+        canvas.drawImageRect(
+          image,
+          Rect.fromLTWH(0, 0, image.width.toDouble(), image.height.toDouble()),
+          Rect.fromLTWH(0, 0, (image.width * blockSize).toDouble(), (image.height * blockSize).toDouble()),
+          Paint()
+            ..filterQuality = FilterQuality.none
+            ..blendMode = BlendMode.srcIn,
+        );
+        canvas.restore();
       }
-      canvas.drawImageRect(
-        blocks,
-        Rect.fromLTWH(0, 0, blocksWide.toDouble(), blocksHigh.toDouble()),
-        Rect.fromLTWH(0, 0, (blocksWide * blockSize).toDouble(), (blocksHigh * blockSize).toDouble()),
-        Paint()
-          ..filterQuality = FilterQuality.none
-          ..blendMode = BlendMode.srcIn,
-      );
-      canvas.restore();
     });
   } finally {
-    blocks.dispose();
+    for (final image in blocks.values) {
+      image.dispose();
+    }
   }
 }
 
-void _drawMaskStroke(Canvas canvas, MosaicStroke stroke) {
+void _drawMaskStroke(Canvas canvas, MosaicStroke stroke, {required bool visible}) {
   final brushSize = stroke.brushSize;
   final paint = Paint()
     ..color = const Color(0xFFFFFFFF)
-    ..blendMode = stroke.mode == MosaicStrokeMode.erase ? BlendMode.clear : BlendMode.srcOver
+    ..blendMode = visible ? BlendMode.srcOver : BlendMode.clear
     ..strokeCap = StrokeCap.round
     ..strokeJoin = StrokeJoin.round
     ..strokeWidth = brushSize;

@@ -24992,7 +24992,7 @@
       "MosaicParameters": {
         "properties": {
           "blockSize": {
-            "description": "Size of each mosaic block in original image pixels",
+            "description": "Default size of each mosaic block in original image pixels",
             "maximum": 1024,
             "minimum": 2,
             "type": "integer"
@@ -25034,6 +25034,12 @@
       },
       "MosaicStroke": {
         "properties": {
+          "blockSize": {
+            "description": "Mosaic block size for this stroke in original image pixels, defaults to the edit block size",
+            "maximum": 1024,
+            "minimum": 2,
+            "type": "integer"
+          },
           "brushSize": {
             "description": "Brush diameter in original image pixels",
             "exclusiveMinimum": true,

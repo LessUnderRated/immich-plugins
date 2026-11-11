@@ -1403,6 +1403,8 @@ export type MosaicPoint = {
     y: number;
 };
 export type MosaicStroke = {
+    /** Mosaic block size for this stroke in original image pixels, defaults to the edit block size */
+    blockSize?: number;
     /** Brush diameter in original image pixels */
     brushSize: number;
     mode: MosaicStrokeMode;
@@ -1410,7 +1412,7 @@ export type MosaicStroke = {
     points: MosaicPoint[];
 };
 export type MosaicParameters = {
-    /** Size of each mosaic block in original image pixels */
+    /** Default size of each mosaic block in original image pixels */
     blockSize: number;
     /** Brush strokes, applied in order */
     strokes: MosaicStroke[];

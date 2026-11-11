@@ -110,6 +110,7 @@ class EditorProvider extends Notifier<EditorState> {
       crop: const Rect.fromLTRB(0, 0, 1, 1),
       aspectRatio: CropAspectRatio.free,
       mosaicStrokes: const [],
+      mosaicRedoStrokes: const [],
       hasUnsavedEdits: true,
     );
   }
@@ -127,23 +128,25 @@ class EditorProvider extends Notifier<EditorState> {
   }
 
   void setMosaicBlockSize(double blockSize) {
-    state = state.copyWith(
-      mosaicBlockSize: blockSize,
-      hasUnsavedEdits: state.mosaicStrokes.isNotEmpty || state.hasUnsavedEdits,
-    );
+    state = state.copyWith(mosaicBlockSize: blockSize);
   }
 
   void addMosaicStroke(List<Offset> points) {
-    if (points.isEmpty) {
+    if (points.isEmpty || state.mosaicStrokes.length >= maxMosaicStrokes) {
       return;
     }
 
     final stroke = MosaicStrokeDraft(
       points: List.unmodifiable(points),
       brushSize: state.mosaicBrushSize,
+      blockSize: state.mosaicBlockSize,
       erase: state.mosaicTool == MosaicTool.eraser,
     );
-    state = state.copyWith(mosaicStrokes: [...state.mosaicStrokes, stroke], hasUnsavedEdits: true);
+    state = state.copyWith(
+      mosaicStrokes: [...state.mosaicStrokes, stroke],
+      mosaicRedoStrokes: const [],
+      hasUnsavedEdits: true,
+    );
   }
 
   void undoMosaicStroke() {
@@ -153,6 +156,19 @@ class EditorProvider extends Notifier<EditorState> {
 
     state = state.copyWith(
       mosaicStrokes: state.mosaicStrokes.sublist(0, state.mosaicStrokes.length - 1),
+      mosaicRedoStrokes: [...state.mosaicRedoStrokes, state.mosaicStrokes.last],
+      hasUnsavedEdits: true,
+    );
+  }
+
+  void redoMosaicStroke() {
+    if (state.mosaicRedoStrokes.isEmpty) {
+      return;
+    }
+
+    state = state.copyWith(
+      mosaicStrokes: [...state.mosaicStrokes, state.mosaicRedoStrokes.last],
+      mosaicRedoStrokes: state.mosaicRedoStrokes.sublist(0, state.mosaicRedoStrokes.length - 1),
       hasUnsavedEdits: true,
     );
   }
@@ -206,6 +222,7 @@ abstract class EditorState with _$EditorState {
     @Default(defaultMosaicBrushSize) double mosaicBrushSize,
     @Default(defaultMosaicBlockSize) double mosaicBlockSize,
     @Default(<MosaicStrokeDraft>[]) List<MosaicStrokeDraft> mosaicStrokes,
+    @Default(<MosaicStrokeDraft>[]) List<MosaicStrokeDraft> mosaicRedoStrokes,
   }) = _EditorState;
 
   bool get hasEdits {

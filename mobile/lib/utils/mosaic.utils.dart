@@ -2,7 +2,7 @@ import 'dart:math';
 import 'dart:ui';
 
 import 'package:collection/collection.dart';
-import 'package:openapi/api.dart' show MosaicParameters, MosaicPoint, MosaicStroke, MosaicStrokeMode;
+import 'package:openapi/api.dart' show MosaicParameters, MosaicPoint, MosaicStroke, MosaicStrokeMode, Optional;
 
 enum EditorMode { transform, mosaic }
 
@@ -20,27 +20,41 @@ const int maxMosaicStrokes = 1000;
 const int maxMosaicStrokePoints = 10000;
 const double minMosaicPointDistance = 0.002;
 
+const mosaicBrushStep = 0.01;
+const mosaicBlockStep = 0.005;
+
 class MosaicStrokeDraft {
   final List<Offset> points;
   final double brushSize;
+  final double blockSize;
   final bool erase;
 
-  const MosaicStrokeDraft({required this.points, required this.brushSize, required this.erase});
+  const MosaicStrokeDraft({
+    required this.points,
+    required this.brushSize,
+    required this.erase,
+    this.blockSize = defaultMosaicBlockSize,
+  });
 
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
       other is MosaicStrokeDraft &&
           other.brushSize == brushSize &&
+          other.blockSize == blockSize &&
           other.erase == erase &&
           const ListEquality<Offset>().equals(other.points, points);
 
   @override
-  int get hashCode => Object.hash(brushSize, erase, const ListEquality<Offset>().hash(points));
+  int get hashCode => Object.hash(brushSize, blockSize, erase, const ListEquality<Offset>().hash(points));
 }
 
 int mosaicBlockPixels(double blockSize, int width, int height) {
   return (blockSize * min(width, height)).round().clamp(2, 1024);
+}
+
+int mosaicBrushPixels(double brushSize, int width, int height) {
+  return max(1, (brushSize * min(width, height)).round());
 }
 
 MosaicParameters? mosaicToParameters(List<MosaicStrokeDraft> strokes, double blockSize, int width, int height) {
@@ -57,6 +71,7 @@ MosaicParameters? mosaicToParameters(List<MosaicStrokeDraft> strokes, double blo
           (stroke) => MosaicStroke(
             mode: stroke.erase ? MosaicStrokeMode.erase : MosaicStrokeMode.paint,
             brushSize: max(stroke.brushSize * shortestSide, 1),
+            blockSize: Optional.present(mosaicBlockPixels(stroke.blockSize, width, height)),
             points: stroke.points
                 .take(maxMosaicStrokePoints)
                 .map((point) => MosaicPoint(x: point.dx * width, y: point.dy * height))
@@ -73,13 +88,18 @@ MosaicParameters? mosaicToParameters(List<MosaicStrokeDraft> strokes, double blo
   int height,
 ) {
   final shortestSide = min(width, height);
+  double toFraction(int pixels) => pixels / shortestSide;
+
   return (
-    blockSize: (parameters.blockSize / shortestSide).clamp(minMosaicBlockSize, maxMosaicBlockSize),
+    blockSize: toFraction(parameters.blockSize),
     strokes: parameters.strokes
         .map(
           (stroke) => MosaicStrokeDraft(
             points: List.unmodifiable(stroke.points.map((point) => Offset(point.x / width, point.y / height))),
             brushSize: stroke.brushSize / shortestSide,
+            blockSize: toFraction(
+              stroke.blockSize.isPresent ? stroke.blockSize.value ?? parameters.blockSize : parameters.blockSize,
+            ),
             erase: stroke.mode == MosaicStrokeMode.erase,
           ),
         )

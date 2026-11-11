@@ -9,7 +9,13 @@ import { Writable } from 'node:stream';
 import sharp, { Sharp } from 'sharp';
 import { ORIENTATION_TO_SHARP_ROTATION } from 'src/constants.js';
 import { Exif } from 'src/database.js';
-import { AssetEditAction, AssetEditActionItem, MosaicParameters } from 'src/dtos/editing.dto.js';
+import {
+  AssetEditAction,
+  AssetEditActionItem,
+  MosaicParameters,
+  MosaicStroke,
+  MosaicStrokeMode,
+} from 'src/dtos/editing.dto.js';
 import {
   AacProfile,
   Av1Profile,
@@ -38,7 +44,7 @@ import type {
   VideoPacketInfo,
 } from 'src/types.js';
 import { handlePromiseError } from 'src/utils/misc.js';
-import { blendWithMask, buildMosaicMaskSvg } from 'src/utils/mosaic.js';
+import { blendWithMask, buildMosaicMaskSvg, paintedBlockSizes, strokeBlockSize } from 'src/utils/mosaic.js';
 import { createAffineMatrix } from 'src/utils/transform.js';
 
 const probe = (input: string, options: string[]): Promise<FfprobeData> =>
@@ -181,8 +187,29 @@ export class MediaRepository {
     return pipeline;
   }
 
-  async applyMosaic(image: Bitmap, { blockSize, strokes }: MosaicParameters): Promise<Bitmap> {
+  async applyMosaic(image: Bitmap, { blockSize: defaultBlockSize, strokes }: MosaicParameters): Promise<Bitmap> {
     const { width, height, channels } = image.info;
+    let data = image.data;
+
+    for (const blockSize of paintedBlockSizes(strokes, defaultBlockSize)) {
+      const isVisible = (stroke: MosaicStroke) =>
+        stroke.mode === MosaicStrokeMode.Paint && strokeBlockSize(stroke, defaultBlockSize) === blockSize;
+      const [pixelated, mask] = await Promise.all([
+        this.pixelate(image, blockSize),
+        sharp(Buffer.from(buildMosaicMaskSvg(strokes, { width, height }, isVisible)))
+          .resize(width, height, { fit: 'fill' })
+          .extractChannel(0)
+          .raw()
+          .toBuffer(),
+      ]);
+      data = blendWithMask(data, pixelated, mask, channels);
+    }
+
+    return { data, info: image.info };
+  }
+
+  private async pixelate(image: Bitmap, blockSize: number) {
+    const { width, height } = image.info;
     const blocksWide = Math.max(1, Math.ceil(width / blockSize));
     const blocksHigh = Math.max(1, Math.ceil(height / blockSize));
 
@@ -191,20 +218,11 @@ export class MediaRepository {
       .raw()
       .toBuffer({ resolveWithObject: true });
 
-    const [pixelated, mask] = await Promise.all([
-      this.raw(blocks)
-        .resize(blocksWide * blockSize, blocksHigh * blockSize, { fit: 'fill', kernel: 'nearest' })
-        .extract({ left: 0, top: 0, width, height })
-        .raw()
-        .toBuffer(),
-      sharp(Buffer.from(buildMosaicMaskSvg(strokes, { width, height })))
-        .resize(width, height, { fit: 'fill' })
-        .extractChannel(0)
-        .raw()
-        .toBuffer(),
-    ]);
-
-    return { data: blendWithMask(image.data, pixelated, mask, channels), info: image.info };
+    return this.raw(blocks)
+      .resize(blocksWide * blockSize, blocksHigh * blockSize, { fit: 'fill', kernel: 'nearest' })
+      .extract({ left: 0, top: 0, width, height })
+      .raw()
+      .toBuffer();
   }
 
   async generateThumbnail(image: Bitmap, options: GenerateThumbnailOptions, output: string): Promise<void> {

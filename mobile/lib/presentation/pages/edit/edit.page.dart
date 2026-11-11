@@ -15,6 +15,7 @@ import 'package:immich_mobile/generated/translations.g.dart';
 import 'package:immich_mobile/presentation/pages/edit/editor.provider.dart';
 import 'package:immich_mobile/providers/theme.provider.dart';
 import 'package:immich_mobile/theme/theme_data.dart';
+import 'package:immich_mobile/utils/asset_edit_renderer.utils.dart';
 import 'package:immich_mobile/utils/editor.utils.dart';
 import 'package:immich_mobile/utils/mosaic.utils.dart';
 import 'package:immich_mobile/widgets/common/immich_toast.dart';
@@ -537,6 +538,8 @@ class _MosaicControls extends ConsumerWidget {
     final editorState = ref.watch(editorStateProvider);
     final editorNotifier = ref.watch(editorStateProvider.notifier);
     final isBrush = editorState.mosaicTool == MosaicTool.brush;
+    final width = editorState.originalWidth;
+    final height = editorState.originalHeight;
 
     return Column(
       mainAxisSize: MainAxisSize.min,
@@ -557,88 +560,223 @@ class _MosaicControls extends ConsumerWidget {
                 selected: !isBrush,
                 onPressed: () => editorNotifier.setMosaicTool(MosaicTool.eraser),
               ),
+              const VerticalDivider(width: 12, indent: 8, endIndent: 8),
               _CompactIconButton(
                 icon: Icons.undo,
-                tooltip: 'Undo',
+                tooltip: context.t.undo,
                 onPressed: editorState.mosaicStrokes.isEmpty ? null : editorNotifier.undoMosaicStroke,
               ),
-              const VerticalDivider(width: 12, indent: 8, endIndent: 8),
-              Expanded(
-                child: _MosaicSlider(
-                  icon: Icons.circle_outlined,
-                  tooltip: context.t.mosaic_brush_size,
-                  value: editorState.mosaicBrushSize,
-                  min: minMosaicBrushSize,
-                  max: maxMosaicBrushSize,
-                  onChanged: editorNotifier.setMosaicBrushSize,
+              _CompactIconButton(
+                icon: Icons.redo,
+                tooltip: 'Redo',
+                onPressed: editorState.mosaicRedoStrokes.isEmpty ? null : editorNotifier.redoMosaicStroke,
+              ),
+              const Spacer(),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                child: _BrushPreview(
+                  brushSize: editorState.mosaicBrushSize,
+                  blockSize: editorState.mosaicBlockSize,
+                  erase: !isBrush,
                 ),
               ),
             ],
           ),
         ),
-        SizedBox(
-          height: 32,
-          child: _MosaicSlider(
-            icon: Icons.grid_view,
-            tooltip: context.t.mosaic_block_size,
-            value: editorState.mosaicBlockSize,
-            min: minMosaicBlockSize,
-            max: maxMosaicBlockSize,
-            onChanged: editorNotifier.setMosaicBlockSize,
-          ),
+        _SizeControl(
+          icon: Icons.circle_outlined,
+          tooltip: context.t.mosaic_brush_size,
+          value: editorState.mosaicBrushSize,
+          min: minMosaicBrushSize,
+          max: maxMosaicBrushSize,
+          step: mosaicBrushStep,
+          presets: const {'S': 0.02, 'M': 0.05, 'L': 0.1, 'XL': 0.2},
+          valueLabel: '${mosaicBrushPixels(editorState.mosaicBrushSize, width, height)} px',
+          onChanged: editorNotifier.setMosaicBrushSize,
+        ),
+        _SizeControl(
+          icon: Icons.grid_view,
+          tooltip: context.t.mosaic_block_size,
+          value: editorState.mosaicBlockSize,
+          min: minMosaicBlockSize,
+          max: maxMosaicBlockSize,
+          step: mosaicBlockStep,
+          presets: const {'Fine': 0.01, 'Med': 0.025, 'Coarse': 0.05, 'Max': 0.1},
+          valueLabel: '${mosaicBlockPixels(editorState.mosaicBlockSize, width, height)} px',
+          onChanged: editorNotifier.setMosaicBlockSize,
         ),
       ],
     );
   }
 }
 
-class _MosaicSlider extends StatelessWidget {
+class _SizeControl extends StatelessWidget {
   final IconData icon;
   final String tooltip;
   final double value;
   final double min;
   final double max;
+  final double step;
+  final Map<String, double> presets;
+  final String valueLabel;
   final ValueChanged<double> onChanged;
 
-  const _MosaicSlider({
+  const _SizeControl({
     required this.icon,
     required this.tooltip,
     required this.value,
     required this.min,
     required this.max,
+    required this.step,
+    required this.presets,
+    required this.valueLabel,
     required this.onChanged,
   });
 
+  void _change(double next) => onChanged(double.parse(next.clamp(min, max).toStringAsFixed(4)));
+
   @override
   Widget build(BuildContext context) {
-    return Row(
-      children: [
-        Tooltip(
-          message: tooltip,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 8),
-            child: Icon(icon, size: 16, color: Colors.white70),
-          ),
-        ),
-        Expanded(
-          child: SliderTheme(
-            data: SliderTheme.of(context).copyWith(
-              trackHeight: 2,
-              thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
-              overlayShape: const RoundSliderOverlayShape(overlayRadius: 14),
-            ),
-            child: Slider(
-              value: value.clamp(min, max),
-              min: min,
-              max: max,
+    return SizedBox(
+      height: 36,
+      child: Row(
+        children: [
+          Tooltip(
+            message: tooltip,
+            child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 8),
-              onChanged: onChanged,
+              child: Icon(icon, size: 16, color: Colors.white70),
             ),
           ),
-        ),
-      ],
+          SizedBox(
+            width: 52,
+            child: Text(valueLabel, style: context.textTheme.labelMedium?.copyWith(color: Colors.white)),
+          ),
+          _CompactIconButton(icon: Icons.remove, onPressed: value <= min ? null : () => _change(value - step)),
+          Expanded(
+            child: Row(
+              children: [
+                for (final MapEntry(key: label, value: preset) in presets.entries)
+                  Expanded(
+                    child: _PresetButton(
+                      label: label,
+                      selected: (value - preset).abs() < step / 2,
+                      onPressed: () => _change(preset),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          _CompactIconButton(icon: Icons.add, onPressed: value >= max ? null : () => _change(value + step)),
+        ],
+      ),
     );
   }
+}
+
+class _PresetButton extends StatelessWidget {
+  final String label;
+  final bool selected;
+  final VoidCallback onPressed;
+
+  const _PresetButton({required this.label, required this.selected, required this.onPressed});
+
+  @override
+  Widget build(BuildContext context) {
+    final color = selected ? context.primaryColor : Colors.white70;
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 2),
+      child: Material(
+        color: selected ? context.primaryColor.withValues(alpha: 0.15) : Colors.white10,
+        borderRadius: const BorderRadius.all(Radius.circular(8)),
+        child: InkWell(
+          borderRadius: const BorderRadius.all(Radius.circular(8)),
+          onTap: onPressed,
+          child: SizedBox(
+            height: 28,
+            child: Center(
+              child: Text(label, style: context.textTheme.labelSmall?.copyWith(color: color)),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _BrushPreview extends StatelessWidget {
+  final double brushSize;
+  final double blockSize;
+  final bool erase;
+
+  const _BrushPreview({required this.brushSize, required this.blockSize, required this.erase});
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox.square(
+      dimension: 32,
+      child: CustomPaint(
+        painter: _BrushPreviewPainter(
+          brushSize: brushSize,
+          blockSize: blockSize,
+          erase: erase,
+          color: context.primaryColor,
+        ),
+      ),
+    );
+  }
+}
+
+class _BrushPreviewPainter extends CustomPainter {
+  final double brushSize;
+  final double blockSize;
+  final bool erase;
+  final Color color;
+
+  const _BrushPreviewPainter({
+    required this.brushSize,
+    required this.blockSize,
+    required this.erase,
+    required this.color,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final center = size.center(Offset.zero);
+    final maxRadius = size.shortestSide / 2;
+    final radius = max(3.0, maxRadius * (brushSize / maxMosaicBrushSize));
+    final circle = Rect.fromCircle(center: center, radius: radius);
+
+    canvas.save();
+    canvas.clipPath(Path()..addOval(circle));
+    if (erase) {
+      canvas.drawRect(circle, Paint()..color = Colors.white24);
+    } else {
+      final cell = max(2.0, radius * 2 * blockSize / brushSize);
+      for (var y = circle.top; y < circle.bottom; y += cell) {
+        for (var x = circle.left; x < circle.right; x += cell) {
+          final even = (((x - circle.left) / cell).round() + ((y - circle.top) / cell).round()).isEven;
+          canvas.drawRect(Rect.fromLTWH(x, y, cell, cell), Paint()..color = even ? Colors.white70 : Colors.white30);
+        }
+      }
+    }
+    canvas.restore();
+    canvas.drawCircle(
+      center,
+      radius,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.5
+        ..color = color,
+    );
+  }
+
+  @override
+  bool shouldRepaint(_BrushPreviewPainter oldDelegate) =>
+      oldDelegate.brushSize != brushSize ||
+      oldDelegate.blockSize != blockSize ||
+      oldDelegate.erase != erase ||
+      oldDelegate.color != color;
 }
 
 class _ZoomableEditorArea extends StatefulWidget {
@@ -780,9 +918,8 @@ class _MosaicCanvasState extends ConsumerState<_MosaicCanvas> {
   ImageStream? _imageStream;
   ImageStreamListener? _imageListener;
   ui.Image? _source;
-  ui.Image? _pixelated;
-  int _pixelatedBlockPixels = 0;
-  int _pixelationRequest = 0;
+  final Map<int, ui.Image> _pixelated = {};
+  final Set<int> _pending = {};
 
   final List<Offset> _activePoints = [];
   final ValueNotifier<int> _repaint = ValueNotifier(0);
@@ -820,11 +957,8 @@ class _MosaicCanvasState extends ConsumerState<_MosaicCanvas> {
       }
 
       _source?.dispose();
-      setState(() {
-        _source = info.image;
-        _pixelatedBlockPixels = 0;
-      });
-      _schedulePixelation();
+      _clearPixelated();
+      setState(() => _source = info.image);
     });
     stream.addListener(listener);
     _imageStream = stream;
@@ -838,52 +972,34 @@ class _MosaicCanvasState extends ConsumerState<_MosaicCanvas> {
     }
   }
 
-  void _schedulePixelation() {
-    final source = _source;
-    final editorState = ref.read(editorStateProvider);
-    final width = editorState.originalWidth;
-    final height = editorState.originalHeight;
-    if (source == null || width <= 0 || height <= 0) {
-      return;
+  void _clearPixelated() {
+    for (final image in _pixelated.values) {
+      image.dispose();
     }
-
-    final blockPixels = mosaicBlockPixels(editorState.mosaicBlockSize, width, height);
-    if (blockPixels == _pixelatedBlockPixels && _pixelated != null) {
-      return;
-    }
-
-    final request = ++_pixelationRequest;
-    unawaited(
-      _pixelate(source, blockPixels, width, height).then((image) {
-        if (!mounted || request != _pixelationRequest) {
-          image.dispose();
-          return;
-        }
-
-        _pixelated?.dispose();
-        setState(() {
-          _pixelated = image;
-          _pixelatedBlockPixels = blockPixels;
-        });
-      }),
-    );
+    _pixelated.clear();
+    _pending.clear();
   }
 
-  Future<ui.Image> _pixelate(ui.Image source, int blockPixels, int width, int height) async {
-    final blocksWide = (width / blockPixels).ceil();
-    final blocksHigh = (height / blockPixels).ceil();
-    final recorder = ui.PictureRecorder();
-    Canvas(recorder).drawImageRect(
-      source,
-      Rect.fromLTWH(0, 0, source.width.toDouble(), source.height.toDouble()),
-      Rect.fromLTWH(0, 0, blocksWide.toDouble(), blocksHigh.toDouble()),
-      Paint()..filterQuality = FilterQuality.medium,
-    );
-    final picture = recorder.endRecording();
-    try {
-      return await picture.toImage(blocksWide, blocksHigh);
-    } finally {
-      picture.dispose();
+  void _ensurePixelated(Iterable<int> blockSizes, int width, int height) {
+    final source = _source;
+    if (source == null) {
+      return;
+    }
+
+    for (final blockSize in blockSizes) {
+      if (_pixelated.containsKey(blockSize) || !_pending.add(blockSize)) {
+        continue;
+      }
+
+      unawaited(
+        pixelateImage(source, blockSize, width: width, height: height).then((image) {
+          if (!mounted || !identical(source, _source) || !_pending.remove(blockSize)) {
+            image.dispose();
+            return;
+          }
+          setState(() => _pixelated[blockSize] = image);
+        }),
+      );
     }
   }
 
@@ -935,7 +1051,7 @@ class _MosaicCanvasState extends ConsumerState<_MosaicCanvas> {
     widget.pinches.removeListener(_cancelActiveStroke);
     _stopListening();
     _source?.dispose();
-    _pixelated?.dispose();
+    _clearPixelated();
     _repaint.dispose();
     super.dispose();
   }
@@ -943,7 +1059,6 @@ class _MosaicCanvasState extends ConsumerState<_MosaicCanvas> {
   @override
   Widget build(BuildContext context) {
     final editorState = ref.watch(editorStateProvider);
-    ref.listen(editorStateProvider.select((state) => state.mosaicBlockSize), (_, _) => _schedulePixelation());
 
     final source = _source;
     final width = editorState.originalWidth;
@@ -951,6 +1066,16 @@ class _MosaicCanvasState extends ConsumerState<_MosaicCanvas> {
     if (source == null || width <= 0 || height <= 0) {
       return const Center(child: CircularProgressIndicator());
     }
+
+    final activeBlockSize = mosaicBlockPixels(editorState.mosaicBlockSize, width, height);
+    _ensurePixelated(
+      {
+        activeBlockSize,
+        for (final stroke in editorState.mosaicStrokes) mosaicBlockPixels(stroke.blockSize, width, height),
+      },
+      width,
+      height,
+    );
 
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -971,13 +1096,17 @@ class _MosaicCanvasState extends ConsumerState<_MosaicCanvas> {
                 size: size,
                 painter: _MosaicPainter(
                   source: source,
-                  pixelated: _pixelated,
-                  blockPixels: _pixelatedBlockPixels,
-                  originalSize: Size(width.toDouble(), height.toDouble()),
+                  pixelated: Map.unmodifiable(_pixelated),
+                  originalWidth: width,
+                  originalHeight: height,
                   strokes: editorState.mosaicStrokes,
                   activePoints: _activePoints,
-                  activeBrushSize: editorState.mosaicBrushSize,
-                  activeErase: editorState.mosaicTool == MosaicTool.eraser,
+                  activeStroke: MosaicStrokeDraft(
+                    points: const [],
+                    brushSize: editorState.mosaicBrushSize,
+                    blockSize: editorState.mosaicBlockSize,
+                    erase: editorState.mosaicTool == MosaicTool.eraser,
+                  ),
                   repaint: _repaint,
                 ),
               ),
@@ -991,25 +1120,25 @@ class _MosaicCanvasState extends ConsumerState<_MosaicCanvas> {
 
 class _MosaicPainter extends CustomPainter {
   final ui.Image source;
-  final ui.Image? pixelated;
-  final int blockPixels;
-  final Size originalSize;
+  final Map<int, ui.Image> pixelated;
+  final int originalWidth;
+  final int originalHeight;
   final List<MosaicStrokeDraft> strokes;
   final List<Offset> activePoints;
-  final double activeBrushSize;
-  final bool activeErase;
+  final MosaicStrokeDraft activeStroke;
 
   const _MosaicPainter({
     required this.source,
     required this.pixelated,
-    required this.blockPixels,
-    required this.originalSize,
+    required this.originalWidth,
+    required this.originalHeight,
     required this.strokes,
     required this.activePoints,
-    required this.activeBrushSize,
-    required this.activeErase,
+    required this.activeStroke,
     required Listenable repaint,
   }) : super(repaint: repaint);
+
+  int _blockPixels(MosaicStrokeDraft stroke) => mosaicBlockPixels(stroke.blockSize, originalWidth, originalHeight);
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -1021,29 +1150,36 @@ class _MosaicPainter extends CustomPainter {
       Paint()..filterQuality = FilterQuality.medium,
     );
 
-    final pixelated = this.pixelated;
-    if (pixelated == null) {
-      return;
-    }
+    final drawn = [
+      for (final stroke in strokes) (stroke.points, stroke),
+      if (activePoints.isNotEmpty) (activePoints, activeStroke),
+    ];
+    final scale = size.width / originalWidth;
 
-    canvas.saveLayer(bounds, Paint());
-    for (final stroke in strokes) {
-      _drawStroke(canvas, size, stroke.points, stroke.brushSize, stroke.erase);
-    }
-    if (activePoints.isNotEmpty) {
-      _drawStroke(canvas, size, activePoints, activeBrushSize, activeErase);
-    }
+    for (final blockPixels in {
+      for (final (_, stroke) in drawn)
+        if (!stroke.erase) _blockPixels(stroke),
+    }) {
+      final image = pixelated[blockPixels];
+      if (image == null) {
+        continue;
+      }
 
-    final scale = size.width / originalSize.width;
-    canvas.drawImageRect(
-      pixelated,
-      Rect.fromLTWH(0, 0, pixelated.width.toDouble(), pixelated.height.toDouble()),
-      Rect.fromLTWH(0, 0, pixelated.width * blockPixels * scale, pixelated.height * blockPixels * scale),
-      Paint()
-        ..filterQuality = FilterQuality.none
-        ..blendMode = BlendMode.srcIn,
-    );
-    canvas.restore();
+      canvas.saveLayer(bounds, Paint());
+      for (final (points, stroke) in drawn) {
+        final visible = !stroke.erase && _blockPixels(stroke) == blockPixels;
+        _drawStroke(canvas, size, points, stroke.brushSize, !visible);
+      }
+      canvas.drawImageRect(
+        image,
+        Rect.fromLTWH(0, 0, image.width.toDouble(), image.height.toDouble()),
+        Rect.fromLTWH(0, 0, image.width * blockPixels * scale, image.height * blockPixels * scale),
+        Paint()
+          ..filterQuality = FilterQuality.none
+          ..blendMode = BlendMode.srcIn,
+      );
+      canvas.restore();
+    }
   }
 
   void _drawStroke(Canvas canvas, Size size, List<Offset> points, double brushSize, bool erase) {
@@ -1071,10 +1207,8 @@ class _MosaicPainter extends CustomPainter {
   @override
   bool shouldRepaint(_MosaicPainter oldDelegate) {
     return oldDelegate.source != source ||
-        oldDelegate.pixelated != pixelated ||
-        oldDelegate.blockPixels != blockPixels ||
+        !mapEquals(oldDelegate.pixelated, pixelated) ||
         oldDelegate.strokes != strokes ||
-        oldDelegate.activeBrushSize != activeBrushSize ||
-        oldDelegate.activeErase != activeErase;
+        oldDelegate.activeStroke != activeStroke;
   }
 }

@@ -70,12 +70,18 @@ const MosaicStrokeSchema = z
     mode: MosaicStrokeModeSchema,
     brushSize: z.number().positive().describe('Brush diameter in original image pixels').meta({ format: 'double' }),
     points: z.array(MosaicPointSchema).min(1).max(10_000).describe('Points along the stroke'),
+    blockSize: z
+      .int()
+      .min(2)
+      .max(1024)
+      .optional()
+      .describe('Mosaic block size for this stroke in original image pixels, defaults to the edit block size'),
   })
   .meta({ id: 'MosaicStroke' });
 
 const MosaicParametersSchema = z
   .object({
-    blockSize: z.int().min(2).max(1024).describe('Size of each mosaic block in original image pixels'),
+    blockSize: z.int().min(2).max(1024).describe('Default size of each mosaic block in original image pixels'),
     strokes: z.array(MosaicStrokeSchema).min(1).max(1000).describe('Brush strokes, applied in order'),
   })
   .meta({ id: 'MosaicParameters' });
