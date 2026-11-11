@@ -82,6 +82,11 @@ class LocalAlbumsPage extends ConsumerWidget {
             title: Text(context.t.albums),
             actions: [
               IconButton(
+                tooltip: 'Trash',
+                icon: const Icon(Icons.delete_outline),
+                onPressed: () => context.pushRoute(const DeviceTrashRoute()),
+              ),
+              IconButton(
                 tooltip: 'Downloads',
                 icon: const Icon(Icons.download_done_outlined),
                 onPressed: () => showDownloadsRuleDialog(context),

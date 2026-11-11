@@ -85,6 +85,38 @@ class DeviceMediaWriter(private val activity: ComponentActivity, messenger: Bina
         background(result) { privateFiles.delete(file) }
       }
 
+      "listTrashed" -> background(result) { listTrashed() }
+
+      "trashThumbnail" -> {
+        val id = call.argument<String>("id")!!
+        val video = call.argument<Boolean>("video") ?: false
+        background(result) { trashThumbnail(id, video) }
+      }
+
+      "restoreTrashed", "deleteTrashed" -> {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+          result.success(false)
+          return
+        }
+        val uris = (call.argument<List<Map<String, Any?>>>("items") ?: emptyList()).map { item ->
+          ContentUris.withAppendedId(
+            if (item["video"] == true) MediaStore.Video.Media.EXTERNAL_CONTENT_URI else MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+            (item["id"] as String).toLong(),
+          )
+        }
+        if (uris.isEmpty()) {
+          result.success(true)
+          return
+        }
+        val request = if (call.method == "restoreTrashed") {
+          MediaStore.createTrashRequest(activity.contentResolver, uris, false)
+        } else {
+          MediaStore.createDeleteRequest(activity.contentResolver, uris)
+        }
+        pendingGrant = { granted -> result.success(granted) }
+        launcher.launch(IntentSenderRequest.Builder(request.intentSender).build())
+      }
+
       "exportToFiles" -> {
         val items = call.argument<List<Map<String, Any?>>>("items") ?: emptyList()
         exportToFiles(items, result)
@@ -92,6 +124,61 @@ class DeviceMediaWriter(private val activity: ComponentActivity, messenger: Bina
 
       else -> result.notImplemented()
     }
+  }
+
+  private fun listTrashed(): List<Map<String, Any?>> {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+      return emptyList()
+    }
+    val items = mutableListOf<Map<String, Any?>>()
+    for ((collection, video) in listOf(
+      MediaStore.Images.Media.EXTERNAL_CONTENT_URI to false,
+      MediaStore.Video.Media.EXTERNAL_CONTENT_URI to true,
+    )) {
+      val args = android.os.Bundle().apply {
+        putInt(MediaStore.QUERY_ARG_MATCH_TRASHED, MediaStore.MATCH_ONLY)
+      }
+      val columns = arrayOf(
+        MediaStore.MediaColumns._ID,
+        MediaStore.MediaColumns.DISPLAY_NAME,
+        MediaStore.MediaColumns.DATE_EXPIRES,
+        MediaStore.MediaColumns.DATE_TAKEN,
+      )
+      activity.contentResolver.query(collection, columns, args, null)?.use { cursor ->
+        while (cursor.moveToNext()) {
+          items.add(
+            mapOf(
+              "id" to cursor.getLong(0).toString(),
+              "name" to cursor.getString(1),
+              "expires" to if (cursor.isNull(2)) null else cursor.getLong(2) * 1000,
+              "takenAt" to if (cursor.isNull(3)) null else cursor.getLong(3),
+              "video" to video,
+            ),
+          )
+        }
+      }
+    }
+    return items.sortedByDescending { it["expires"] as Long? ?: 0L }
+  }
+
+  private fun trashThumbnail(id: String, video: Boolean): String? {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+      return null
+    }
+    val target = File(File(activity.cacheDir, "trash_thumbs").apply { mkdirs() }, "$id.jpg")
+    if (target.exists()) {
+      return target.absolutePath
+    }
+    val uri = ContentUris.withAppendedId(
+      if (video) MediaStore.Video.Media.EXTERNAL_CONTENT_URI else MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+      id.toLong(),
+    )
+    return runCatching {
+      val bitmap = activity.contentResolver.loadThumbnail(uri, android.util.Size(256, 256), null)
+      target.outputStream().use { bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 80, it) }
+      bitmap.recycle()
+      target.absolutePath
+    }.getOrNull()
   }
 
   private fun background(result: MethodChannel.Result, block: () -> Any?) {
