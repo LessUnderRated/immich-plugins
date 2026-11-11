@@ -13,6 +13,7 @@ import 'package:immich_mobile/generated/codegen_loader.g.dart';
 import 'package:immich_mobile/generated/translations.g.dart';
 import 'package:immich_mobile/providers/background_sync.provider.dart';
 import 'package:immich_mobile/providers/device_plugins.provider.dart';
+import 'package:immich_mobile/providers/downloads_rule.provider.dart';
 import 'package:immich_mobile/providers/gallery_permission.provider.dart';
 import 'package:immich_mobile/providers/private_vault.provider.dart';
 import 'package:immich_mobile/routing/router.dart';
@@ -303,6 +304,7 @@ class SplashScreenPageState extends ConsumerState<SplashScreenPage> {
       await ref.read(privateAlbumRepositoryProvider).ids();
       await ref.read(galleryPermissionNotifier.notifier).requestGalleryPermission();
       final engine = ref.read(deviceWorkflowEngineProvider);
+      final organizer = ref.read(downloadsOrganizerProvider);
       unawaited(
         ref
             .read(backgroundSyncProvider)
@@ -310,7 +312,10 @@ class SplashScreenPageState extends ConsumerState<SplashScreenPage> {
             .catchError((Object error, StackTrace stack) {
               log.severe('Failed to scan the device library', error, stack);
             })
-            .whenComplete(engine.startWatching),
+            .whenComplete(() {
+              engine.startWatching();
+              organizer.startWatching();
+            }),
       );
     } catch (error, stack) {
       log.severe('Failed to start the offline gallery', error, stack);

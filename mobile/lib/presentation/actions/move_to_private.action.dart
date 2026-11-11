@@ -29,7 +29,12 @@ class MoveToPrivateAction extends AssetActionBuilder {
     );
   }
 
-  Future<void> _toggle(BuildContext context, WidgetRef ref, List<LocalAsset> assets, {required bool makePrivate}) async {
+  Future<void> _toggle(
+    BuildContext context,
+    WidgetRef ref,
+    List<LocalAsset> assets, {
+    required bool makePrivate,
+  }) async {
     final messenger = ScaffoldMessenger.maybeOf(context);
     final clearSelection = ref.read(clearSelectionProvider(source));
     final repository = ref.read(privateAlbumRepositoryProvider);

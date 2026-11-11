@@ -16,6 +16,7 @@ import 'package:immich_mobile/infrastructure/repositories/app_album.repository.d
 import 'package:immich_mobile/infrastructure/repositories/duplicate_finder.repository.dart';
 import 'package:immich_mobile/presentation/actions/device_album.actions.dart';
 import 'package:immich_mobile/presentation/widgets/images/thumbnail.widget.dart';
+import 'package:immich_mobile/presentation/widgets/downloads_rule_dialog.widget.dart';
 import 'package:immich_mobile/providers/app_album.provider.dart';
 import 'package:immich_mobile/providers/background_sync.provider.dart';
 import 'package:immich_mobile/providers/infrastructure/db.provider.dart';
@@ -80,6 +81,11 @@ class LocalAlbumsPage extends ConsumerWidget {
             centerTitle: true,
             title: Text(context.t.albums),
             actions: [
+              IconButton(
+                tooltip: 'Downloads',
+                icon: const Icon(Icons.download_done_outlined),
+                onPressed: () => showDownloadsRuleDialog(context),
+              ),
               IconButton(
                 tooltip: 'Find duplicates',
                 icon: const Icon(Icons.copy_all_outlined),
