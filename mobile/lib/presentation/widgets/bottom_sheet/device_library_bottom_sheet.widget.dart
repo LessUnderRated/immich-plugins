@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:immich_mobile/presentation/actions/action.widget.dart';
 import 'package:immich_mobile/presentation/actions/delete.action.dart';
+import 'package:immich_mobile/presentation/actions/move_to_private.action.dart';
 import 'package:immich_mobile/presentation/actions/share.action.dart';
 import 'package:immich_mobile/presentation/widgets/bottom_sheet/base_bottom_sheet.widget.dart';
 
@@ -17,6 +18,7 @@ class DeviceLibraryBottomSheet extends StatelessWidget {
       resizeOnScroll: false,
       actions: <ActionColumnButton>[
         .new(action: ShareAction(source: .timeline)),
+        .new(action: MoveToPrivateAction(source: .timeline)),
         .new(action: DeleteAction(source: .timeline)),
       ],
     );

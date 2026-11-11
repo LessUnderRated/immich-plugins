@@ -36,7 +36,7 @@ void _expectColor(img.Image image, int x, int y, (int, int, int) expected) {
 }
 
 Future<img.Image> _render(List<AssetEdit> edits) async {
-  final output = await renderAssetEdits(_halves(), edits);
+  final output = (await renderAssetEdits(_halves(), edits)).bytes;
   return img.decodeJpg(output)!;
 }
 

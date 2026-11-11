@@ -9,6 +9,7 @@ import 'package:immich_mobile/domain/utils/event_stream.dart';
 import 'package:immich_mobile/extensions/build_context_extensions.dart';
 import 'package:immich_mobile/generated/translations.g.dart';
 import 'package:immich_mobile/providers/haptic_feedback.provider.dart';
+import 'package:immich_mobile/providers/private_vault.provider.dart';
 import 'package:immich_mobile/providers/tab.provider.dart';
 import 'package:immich_mobile/routing/router.dart';
 
@@ -36,6 +37,11 @@ class _TabShellPageState extends ConsumerState<TabShellPage> {
         icon: const Icon(Icons.photo_album_outlined),
         selectedIcon: Icon(Icons.photo_album_rounded, color: context.primaryColor),
       ),
+      NavigationDestination(
+        label: 'Private',
+        icon: const Icon(Icons.lock_outline),
+        selectedIcon: Icon(Icons.lock, color: context.primaryColor),
+      ),
     ];
 
     Widget navigationRail(TabsRouter tabsRouter) {
@@ -58,7 +64,7 @@ class _TabShellPageState extends ConsumerState<TabShellPage> {
     }
 
     return AutoTabsRouter(
-      routes: const [MainTimelineRoute(), LocalAlbumsRoute()],
+      routes: const [MainTimelineRoute(), LocalAlbumsRoute(), PrivateGalleryRoute()],
       duration: const Duration(milliseconds: 600),
       transitionBuilder: (context, child, animation) => FadeTransition(opacity: animation, child: child),
       builder: (context, child) {
@@ -85,9 +91,15 @@ class _TabShellPageState extends ConsumerState<TabShellPage> {
   }
 }
 
+const _privateTabIndex = 2;
+
 void _onNavigationSelected(TabsRouter router, int index, WidgetRef ref) {
   if (router.activeIndex == kPhotoTabIndex && index == kPhotoTabIndex) {
     EventStream.shared.emit(const ScrollToTopEvent());
+  }
+
+  if (router.activeIndex == _privateTabIndex && index != _privateTabIndex) {
+    ref.read(privateUnlockedProvider.notifier).state = false;
   }
 
   ref.read(hapticFeedbackProvider.notifier).selectionClick();

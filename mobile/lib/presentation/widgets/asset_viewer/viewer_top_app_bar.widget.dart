@@ -21,6 +21,8 @@ import 'package:immich_mobile/utils/timezone.dart';
 import 'package:immich_ui/immich_ui.dart';
 
 class ViewerTopAppBar extends ConsumerWidget implements PreferredSizeWidget {
+  static const double _fadeOverhang = 72;
+
   const ViewerTopAppBar({super.key});
 
   @override
@@ -74,8 +76,13 @@ class ViewerTopAppBar extends ConsumerWidget implements PreferredSizeWidget {
         opacity: opacity,
         duration: Durations.short2,
         child: Stack(
+          clipBehavior: Clip.none,
           children: [
-            Positioned.fill(
+            Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              height: context.padding.top + preferredSize.height + _fadeOverhang,
               child: IgnorePointer(
                 child: DecoratedBox(
                   decoration: BoxDecoration(
@@ -84,8 +91,8 @@ class ViewerTopAppBar extends ConsumerWidget implements PreferredSizeWidget {
                         : const LinearGradient(
                             begin: Alignment.topCenter,
                             end: Alignment.bottomCenter,
-                            colors: [Colors.black45, Colors.black12, Colors.transparent],
-                            stops: [0.0, 0.7, 1.0],
+                            colors: [Color(0xA6000000), Color(0x66000000), Color(0x1F000000), Colors.transparent],
+                            stops: [0.0, 0.45, 0.75, 1.0],
                           ),
                   ),
                 ),
@@ -146,6 +153,8 @@ class _AppBarBackButton extends ConsumerWidget {
 }
 
 class _AssetInfoTitle extends ConsumerWidget {
+  static const _titleShadows = [Shadow(color: Color(0x99000000), blurRadius: 6)];
+
   final BaseAsset asset;
 
   const _AssetInfoTitle({required this.asset});
@@ -163,8 +172,14 @@ class _AssetInfoTitle extends ConsumerWidget {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        Text(dateFormatted, style: context.textTheme.labelLarge?.copyWith(color: Colors.white)),
-        Text(timeFormatted, style: context.textTheme.labelMedium?.copyWith(color: Colors.white70)),
+        Text(
+          dateFormatted,
+          style: context.textTheme.labelLarge?.copyWith(color: Colors.white, shadows: _titleShadows),
+        ),
+        Text(
+          timeFormatted,
+          style: context.textTheme.labelMedium?.copyWith(color: Colors.white, shadows: _titleShadows),
+        ),
       ],
     );
   }

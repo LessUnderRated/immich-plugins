@@ -18,7 +18,16 @@ Future<ui.Image> decodeEditableImage(Uint8List bytes) async {
   }
 }
 
-Future<Uint8List> renderAssetEdits(Uint8List bytes, List<AssetEdit> edits, {int jpegQuality = 92}) async {
+enum RenderFormat { jpeg, png }
+
+typedef RenderedImage = ({Uint8List bytes, int width, int height});
+
+Future<RenderedImage> renderAssetEdits(
+  Uint8List bytes,
+  List<AssetEdit> edits, {
+  RenderFormat format = RenderFormat.jpeg,
+  int jpegQuality = 92,
+}) async {
   final original = await decodeEditableImage(bytes);
   final mosaic = edits.whereType<MosaicEdit>().firstOrNull;
   final source = mosaic == null ? original : await _applyMosaic(original, mosaic.parameters);
@@ -30,20 +39,28 @@ Future<Uint8List> renderAssetEdits(Uint8List bytes, List<AssetEdit> edits, {int 
   source.dispose();
 
   try {
+    final width = transformed.width;
+    final height = transformed.height;
+    if (format == RenderFormat.png) {
+      final png = await transformed.toByteData(format: ui.ImageByteFormat.png);
+      if (png == null) {
+        throw StateError('Unable to encode the rendered image');
+      }
+      return (bytes: png.buffer.asUint8List(png.offsetInBytes, png.lengthInBytes), width: width, height: height);
+    }
+
     final data = await transformed.toByteData(format: ui.ImageByteFormat.rawRgba);
     if (data == null) {
       throw StateError('Unable to read the rendered image');
     }
-
-    final width = transformed.width;
-    final height = transformed.height;
     final pixels = data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes);
-    return await Isolate.run(
+    final jpeg = await Isolate.run(
       () => img.encodeJpg(
         img.Image.fromBytes(width: width, height: height, bytes: pixels.buffer, numChannels: 4),
         quality: jpegQuality,
       ),
     );
+    return (bytes: jpeg, width: width, height: height);
   } finally {
     transformed.dispose();
   }

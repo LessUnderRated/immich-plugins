@@ -5,10 +5,12 @@ import 'package:immich_mobile/extensions/build_context_extensions.dart';
 import 'package:immich_mobile/presentation/actions/action.dart';
 import 'package:immich_mobile/presentation/actions/delete.action.dart';
 import 'package:immich_mobile/presentation/actions/edit_asset.action.dart';
+import 'package:immich_mobile/presentation/actions/move_to_private.action.dart';
 import 'package:immich_mobile/presentation/actions/restore.action.dart';
 import 'package:immich_mobile/presentation/actions/share.action.dart';
 import 'package:immich_mobile/presentation/widgets/action_buttons/add_action_button.widget.dart';
 import 'package:immich_mobile/presentation/widgets/asset_viewer/ocr_toggle_button.widget.dart';
+import 'package:immich_mobile/presentation/widgets/asset_viewer/viewer_carousel.widget.dart';
 import 'package:immich_mobile/providers/asset_viewer/asset_viewer.provider.dart';
 import 'package:immich_mobile/providers/infrastructure/readonly_mode.provider.dart';
 import 'package:immich_mobile/providers/infrastructure/timeline.provider.dart';
@@ -48,7 +50,10 @@ class ViewerBottomBar extends ConsumerWidget {
 
       if (!isInLockedView) ...[
         if (!isInTrash) ...[
-          ..._actionColumnButtons(context, ref, const [EditAssetAction(source: .viewer)]),
+          ..._actionColumnButtons(context, ref, const [
+            EditAssetAction(source: .viewer),
+            MoveToPrivateAction(source: .viewer),
+          ]),
           if (asset.hasRemote) ImmichColorOverride(color: null, child: AddActionButton(originalTheme: originalTheme)),
         ],
         ..._actionColumnButtons(context, ref, const [DeleteAction(source: .viewer)]),
@@ -85,12 +90,13 @@ class ViewerBottomBar extends ConsumerWidget {
                   SafeArea(
                     top: false,
                     child: Padding(
-                      padding: const EdgeInsets.only(top: 16),
+                      padding: const EdgeInsets.only(top: 8),
                       child: Column(
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           if (asset.isImage) OcrToggleButton(asset: asset),
                           if (asset.isVideo) VideoControls(videoPlayerName: asset.id),
+                          const Padding(padding: EdgeInsets.symmetric(vertical: 6), child: ViewerCarousel()),
                           if (!isReadonlyModeEnabled)
                             ImmichColorOverride(
                               color: Colors.white,

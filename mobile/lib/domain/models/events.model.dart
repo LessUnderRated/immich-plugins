@@ -37,3 +37,9 @@ class MultiSelectToggleEvent extends Event {
 class MapMarkerReloadEvent extends Event {
   const MapMarkerReloadEvent();
 }
+
+class ViewerJumpToIndexEvent extends Event {
+  final int index;
+
+  const ViewerJumpToIndexEvent(this.index);
+}

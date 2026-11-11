@@ -7,15 +7,12 @@ import 'package:http/http.dart' as http;
 import 'package:immich_mobile/data/db/main/database.dart';
 import 'package:immich_mobile/data/db/main/table/local/asset.dart';
 import 'package:immich_mobile/domain/models/asset/base_asset.model.dart';
-import 'package:immich_mobile/domain/models/asset_edit.model.dart';
 import 'package:immich_mobile/domain/models/device_plugin.model.dart';
 import 'package:immich_mobile/domain/services/offline_user.service.dart';
 import 'package:immich_mobile/infrastructure/plugins/device_plugin_store.dart';
 import 'package:immich_mobile/infrastructure/plugins/wasm_plugin_runtime.dart';
 import 'package:immich_mobile/infrastructure/repositories/device_edit.repository.dart';
-import 'package:immich_mobile/utils/asset_edit_renderer.utils.dart';
 import 'package:logging/logging.dart';
-import 'package:openapi/api.dart' show CropParameters, MirrorParameters, MosaicParameters, RotateParameters;
 import 'package:photo_manager/photo_manager.dart' hide AssetType;
 
 const _engineStateFile = 'engine.json';
@@ -398,9 +395,9 @@ class DeviceWorkflowEngine {
       'addAssetsToAlbums' => _addToAlbums(_strings(arg(0)['albumIds']), _strings(arg(0)['assetIds'])),
       'httpRequest' => _httpRequest(text(0), arg(1)),
       'bulkTagAssets' => _bulkTag(_strings(arg(0)['tagIds']), _strings(arg(0)['assetIds'])),
-      'getAssetEdits' => Future.value({'assetId': text(0), 'edits': const []}),
+      'getAssetEdits' => _getAssetEdits(text(0)),
       'editAsset' => _editAsset(text(0), arg(1)),
-      'removeAssetEdits' => Future.value(null),
+      'removeAssetEdits' => _removeAssetEdits(text(0)),
       _ => throw HostFunctionException(501, 'Host function $name is not available on the device'),
     };
   }
@@ -547,50 +544,34 @@ class DeviceWorkflowEngine {
     return {'count': count};
   }
 
-  Future<Map<String, dynamic>> _editAsset(String assetId, Map<String, dynamic> dto) async {
-    final rawEdits = dto['edits'] is List ? dto['edits'] as List : const [];
-    final edits = rawEdits.whereType<Map>().map(_parseEdit).nonNulls.toList();
-    if (edits.isEmpty) {
-      throw const HostFunctionException(400, 'No valid edits');
-    }
-
+  Future<LocalAsset> _localAsset(String assetId) async {
     final row = await (_db.localAssetEntity.select()..where((row) => row.id.equals(assetId))).getSingleOrNull();
     if (row == null) {
       throw const HostFunctionException(404, 'Asset not found');
     }
-    final original = await _edits.readOriginal(assetId);
-    if (original == null) {
-      throw const HostFunctionException(404, 'Original file not found');
-    }
-
-    final rendered = await renderAssetEdits(original, edits);
-    final savedId = await _edits.saveEditedCopy(row.toDto(), rendered);
-    if (savedId != null) {
-      await _markCreated(savedId);
-    }
-    return {'assetId': assetId, 'edits': rawEdits};
+    return row.toDto();
   }
 
-  static AssetEdit? _parseEdit(Map edit) {
-    final parameters = edit['parameters'];
-    return switch (edit['action']) {
-      'crop' => switch (CropParameters.fromJson(parameters)) {
-        final value? => CropEdit(value),
-        null => null,
-      },
-      'rotate' => switch (RotateParameters.fromJson(parameters)) {
-        final value? => RotateEdit(value),
-        null => null,
-      },
-      'mirror' => switch (MirrorParameters.fromJson(parameters)) {
-        final value? => MirrorEdit(value),
-        null => null,
-      },
-      'mosaic' => switch (MosaicParameters.fromJson(parameters)) {
-        final value? => MosaicEdit(value),
-        null => null,
-      },
-      _ => null,
-    };
+  Future<Map<String, dynamic>> _getAssetEdits(String assetId) async => {
+    'assetId': assetId,
+    'edits': await _edits.getEditsJson(assetId),
+  };
+
+  Future<Map<String, dynamic>> _editAsset(String assetId, Map<String, dynamic> dto) async {
+    final rawEdits = dto['edits'] is List ? dto['edits'] as List : const [];
+    final edits = rawEdits.whereType<Map>().map(assetEditFromJson).nonNulls.toList();
+    if (edits.isEmpty) {
+      throw const HostFunctionException(400, 'No valid edits');
+    }
+
+    final result = await _edits.applyEdits(await _localAsset(assetId), edits);
+    if (result.createdId != null) {
+      await _markCreated(result.createdId!);
+    }
+    return _getAssetEdits(assetId);
+  }
+
+  Future<void> _removeAssetEdits(String assetId) async {
+    await _edits.removeEdits(await _localAsset(assetId));
   }
 }

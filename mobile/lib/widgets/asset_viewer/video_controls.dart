@@ -103,51 +103,52 @@ class _VideoControlsState extends ConsumerState<VideoControls> {
     final isLoaded = duration != Duration.zero;
 
     return Padding(
-      padding: const EdgeInsets.only(left: 16, right: 16, bottom: 12),
-      child: Column(
-        spacing: 4,
+      padding: const EdgeInsets.fromLTRB(4, 0, 12, 4),
+      child: Row(
         children: [
-          Row(
-            children: [
-              IconButton(
-                iconSize: 32,
-                padding: const EdgeInsets.all(12),
-                constraints: const BoxConstraints(),
-                icon: isFinished
-                    ? const Icon(Icons.replay, color: Colors.white, shadows: VideoControls._controlShadows)
-                    : AnimatedPlayPause(
-                        color: Colors.white,
-                        playing: isPlaying,
-                        shadows: VideoControls._controlShadows,
-                      ),
-                onPressed: () => _toggle(isCasting),
-              ),
-              const Spacer(),
-              IgnorePointer(
-                child: Text(
-                  "${position.format()} / ${duration.format()}",
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w500,
-                    fontFeatures: [FontFeature.tabularFigures()],
-                    shadows: VideoControls._controlShadows,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 12),
-            ],
+          IconButton(
+            iconSize: 22,
+            padding: const EdgeInsets.all(8),
+            constraints: const BoxConstraints(),
+            visualDensity: VisualDensity.compact,
+            icon: isFinished
+                ? const Icon(Icons.replay, color: Colors.white, shadows: VideoControls._controlShadows)
+                : AnimatedPlayPause(color: Colors.white, playing: isPlaying, shadows: VideoControls._controlShadows),
+            onPressed: () => _toggle(isCasting),
           ),
-          Slider(
-            value: min(position.inMicroseconds.toDouble(), duration.inMicroseconds.toDouble()),
-            min: 0,
-            max: max(duration.inMicroseconds.toDouble(), 1),
-            thumbColor: Colors.white,
-            activeColor: Colors.white,
-            inactiveColor: whiteOpacity75,
-            padding: EdgeInsets.zero,
-            onChangeStart: (_) => notifier.hold(),
-            onChangeEnd: (_) => notifier.release(),
-            onChanged: isLoaded ? (value) => _onSeek(isCasting, value) : null,
+          Expanded(
+            child: SliderTheme(
+              data: SliderTheme.of(context).copyWith(
+                trackHeight: 2,
+                thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 5, disabledThumbRadius: 4),
+                overlayShape: const RoundSliderOverlayShape(overlayRadius: 12),
+                trackShape: const RoundedRectSliderTrackShape(),
+              ),
+              child: Slider(
+                value: min(position.inMicroseconds.toDouble(), duration.inMicroseconds.toDouble()),
+                min: 0,
+                max: max(duration.inMicroseconds.toDouble(), 1),
+                thumbColor: Colors.white,
+                activeColor: Colors.white,
+                inactiveColor: whiteOpacity75.withValues(alpha: 0.35),
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                onChangeStart: (_) => notifier.hold(),
+                onChangeEnd: (_) => notifier.release(),
+                onChanged: isLoaded ? (value) => _onSeek(isCasting, value) : null,
+              ),
+            ),
+          ),
+          IgnorePointer(
+            child: Text(
+              "${position.format()} / ${duration.format()}",
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 12,
+                fontWeight: FontWeight.w500,
+                fontFeatures: [FontFeature.tabularFigures()],
+                shadows: VideoControls._controlShadows,
+              ),
+            ),
           ),
         ],
       ),

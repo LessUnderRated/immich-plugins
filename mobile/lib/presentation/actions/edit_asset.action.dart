@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:typed_data';
 
 import 'package:auto_route/auto_route.dart';
 import 'package:collection/collection.dart';
@@ -117,10 +116,14 @@ class EditAssetAction extends AssetActionBuilder {
         return;
       }
 
-      ref.read(editorStateProvider.notifier).init(const [], exif);
+      final existing = await _deviceEditRepository.getEdits(asset.id);
+      if (!context.mounted) {
+        return;
+      }
+      ref.read(editorStateProvider.notifier).init(existing, exif);
       unawaited(
         context.pushRoute(
-          EditImageRoute(image: Image.memory(bytes), applyEdits: (edits) => applyDeviceEdits(ref, asset, bytes, edits)),
+          EditImageRoute(image: Image.memory(bytes), applyEdits: (edits) => applyDeviceEdits(ref, asset, edits)),
         ),
       );
     } catch (error, stack) {
@@ -141,13 +144,8 @@ Future<void> applyEdits(WidgetRef ref, String remoteId, List<AssetEdit> edits) a
   ]).catchError((_) {});
 }
 
-Future<void> applyDeviceEdits(WidgetRef ref, LocalAsset asset, Uint8List original, List<AssetEdit> edits) async {
-  if (edits.isEmpty) {
-    return;
-  }
-
+Future<void> applyDeviceEdits(WidgetRef ref, LocalAsset asset, List<AssetEdit> edits) async {
   final backgroundSync = ref.read(backgroundSyncProvider);
-  final rendered = await renderAssetEdits(original, edits);
-  await _deviceEditRepository.saveEditedCopy(asset, rendered);
+  await _deviceEditRepository.applyEdits(asset, edits);
   unawaited(backgroundSync.syncLocal());
 }

@@ -49,6 +49,9 @@ import 'package:immich_mobile/presentation/pages/download_info.page.dart';
 import 'package:immich_mobile/presentation/pages/edit/edit.page.dart';
 import 'package:immich_mobile/presentation/pages/plugins/device_workflow_editor.page.dart';
 import 'package:immich_mobile/presentation/pages/plugins/plugins.page.dart';
+import 'package:immich_mobile/presentation/pages/private/private_gallery.page.dart';
+import 'package:immich_mobile/presentation/pages/private/private_viewer.page.dart';
+import 'package:immich_mobile/infrastructure/repositories/private_vault.repository.dart';
 import 'package:immich_mobile/domain/models/device_plugin.model.dart';
 import 'package:immich_mobile/presentation/pages/favorite.page.dart';
 import 'package:immich_mobile/presentation/pages/feature_message/whats_new.page.dart';
@@ -127,6 +130,7 @@ class AppRouter extends RootStackRouter {
       children: [
         AutoRoute(page: MainTimelineRoute.page, guards: [_authGuard, _duplicateGuard]),
         AutoRoute(page: LocalAlbumsRoute.page, guards: [_duplicateGuard]),
+        AutoRoute(page: PrivateGalleryRoute.page),
       ],
     ),
     AutoRoute(page: ProfilePictureCropRoute.page),
@@ -189,6 +193,7 @@ class AppRouter extends RootStackRouter {
     AutoRoute(page: EditImageRoute.page),
     AutoRoute(page: PluginsRoute.page, guards: [_duplicateGuard]),
     AutoRoute(page: DeviceWorkflowEditorRoute.page),
+    AutoRoute(page: PrivateViewerRoute.page),
     AutoRoute(page: ActivitiesRoute.page, guards: [_authGuard, _duplicateGuard]),
     AutoRoute(page: BackupAssetDetailRoute.page, guards: [_authGuard, _duplicateGuard]),
     AutoRoute(page: AssetTroubleshootRoute.page, guards: [_authGuard, _duplicateGuard]),

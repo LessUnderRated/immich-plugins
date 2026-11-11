@@ -15,6 +15,7 @@ import 'package:immich_mobile/extensions/scroll_extensions.dart';
 import 'package:immich_mobile/generated/translations.g.dart';
 import 'package:immich_mobile/presentation/widgets/action_buttons/download_status_floating_button.widget.dart';
 import 'package:immich_mobile/presentation/widgets/asset_viewer/asset_page.widget.dart';
+import 'package:immich_mobile/presentation/widgets/asset_viewer/viewer_carousel.widget.dart';
 import 'package:immich_mobile/presentation/widgets/asset_viewer/asset_preloader.dart';
 import 'package:immich_mobile/presentation/widgets/asset_viewer/asset_stack.provider.dart';
 import 'package:immich_mobile/presentation/widgets/asset_viewer/viewer_bottom_app_bar.widget.dart';
@@ -94,6 +95,14 @@ class _AssetViewerState extends ConsumerState<AssetViewer> {
   StreamSubscription? _reloadSubscription;
   KeepAliveLink? _stackChildrenKeepAlive;
 
+  void _jumpTo(int index) {
+    if (index < 0 || index >= _totalAssets || !_pageController.hasClients) {
+      return;
+    }
+    _pageController.jumpToPage(index);
+    unawaited(_onAssetChanged(index));
+  }
+
   void _onTapNavigate(int direction) {
     final page = _pageController.page?.toInt();
     if (page == null) {
@@ -159,6 +168,7 @@ class _AssetViewerState extends ConsumerState<AssetViewer> {
   }
 
   void _onAssetInit(Duration timeStamp) {
+    ref.read(viewerCurrentIndexProvider.notifier).state = widget.initialIndex;
     _preloader.preload(
       widget.initialIndex,
       context.sizeData,
@@ -176,6 +186,7 @@ class _AssetViewerState extends ConsumerState<AssetViewer> {
 
   Future<void> _onAssetChanged(int index) async {
     _currentPage = index;
+    ref.read(viewerCurrentIndexProvider.notifier).state = index;
 
     final asset = await ref.read(timelineServiceProvider).getAssetAsync(index);
     if (asset == null) {
@@ -227,6 +238,8 @@ class _AssetViewerState extends ConsumerState<AssetViewer> {
     switch (event) {
       case TimelineReloadEvent():
         _onTimelineReloadEvent();
+      case ViewerJumpToIndexEvent(:final index):
+        _jumpTo(index);
       default:
     }
   }
