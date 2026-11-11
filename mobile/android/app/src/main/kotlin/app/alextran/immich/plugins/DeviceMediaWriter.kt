@@ -3,6 +3,7 @@ package app.alextran.immich.plugins
 import android.app.Activity
 import android.app.RecoverableSecurityException
 import android.content.ContentUris
+import android.content.ContentValues
 import android.net.Uri
 import android.os.Build
 import android.os.Handler
@@ -46,7 +47,54 @@ class DeviceMediaWriter(private val activity: ComponentActivity, messenger: Bina
         overwrite(uri, source, exifSource, width, height, result, allowPrompt = true)
       }
 
+      "moveToFolder" -> {
+        val items = call.argument<List<Map<String, Any>>>("items") ?: emptyList()
+        val relativePath = call.argument<String>("relativePath")!!
+        val uris = items.map { item ->
+          val collection = if (item["video"] == true) {
+            MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+          } else {
+            MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+          }
+          ContentUris.withAppendedId(collection, (item["id"] as String).toLong())
+        }
+        move(uris, relativePath, result, allowPrompt = true)
+      }
+
       else -> result.notImplemented()
+    }
+  }
+
+  private fun move(uris: List<Uri>, relativePath: String, result: MethodChannel.Result, allowPrompt: Boolean) {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+      result.error("unsupported", "Moving between albums needs Android 10 or newer", null)
+      return
+    }
+    executor.execute {
+      try {
+        val values = ContentValues().apply { put(MediaStore.MediaColumns.RELATIVE_PATH, relativePath) }
+        var moved = 0
+        for (uri in uris) {
+          moved += activity.contentResolver.update(uri, values, null, null)
+        }
+        mainHandler.post { result.success(moved) }
+      } catch (error: SecurityException) {
+        if (!allowPrompt) {
+          mainHandler.post { result.error("write_denied", error.message, null) }
+          return@execute
+        }
+        mainHandler.post {
+          requestWriteAccess(uris, error) { granted ->
+            if (granted) {
+              move(uris, relativePath, result, allowPrompt = false)
+            } else {
+              result.error("write_denied", "Permission to move the photos was denied", null)
+            }
+          }
+        }
+      } catch (error: Throwable) {
+        mainHandler.post { result.error("move_failed", error.message ?: error.toString(), null) }
+      }
     }
   }
 
@@ -69,7 +117,7 @@ class DeviceMediaWriter(private val activity: ComponentActivity, messenger: Bina
           return@execute
         }
         mainHandler.post {
-          requestWriteAccess(uri, error) { granted ->
+          requestWriteAccess(listOf(uri), error) { granted ->
             if (granted) {
               overwrite(uri, source, exifSource, width, height, result, allowPrompt = false)
             } else {
@@ -83,10 +131,10 @@ class DeviceMediaWriter(private val activity: ComponentActivity, messenger: Bina
     }
   }
 
-  private fun requestWriteAccess(uri: Uri, error: SecurityException, callback: (Boolean) -> Unit) {
+  private fun requestWriteAccess(uris: List<Uri>, error: SecurityException, callback: (Boolean) -> Unit) {
     val sender = when {
       Build.VERSION.SDK_INT >= Build.VERSION_CODES.R ->
-        MediaStore.createWriteRequest(activity.contentResolver, listOf(uri)).intentSender
+        MediaStore.createWriteRequest(activity.contentResolver, uris).intentSender
 
       Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && error is RecoverableSecurityException ->
         error.userAction.actionIntent.intentSender

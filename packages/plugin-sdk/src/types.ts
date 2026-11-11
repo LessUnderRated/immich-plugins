@@ -13,12 +13,36 @@ type DeepPartial<T> = T extends Date
       ? DeepPartial<R>[]
       : T;
 
+export const GalleryViewV1 = 'GalleryViewV1' as const;
+
+/** Event types a plugin method can declare: server workflow types plus app-only hooks. */
+export type PluginEventType = WorkflowType | typeof GalleryViewV1;
+
 export type WorkflowEventMap = {
   [WorkflowType.AssetV1]: AssetV1;
+  [GalleryViewV1]: GalleryViewV1Data;
   // [WorkflowType.AssetPersonV1]: AssetPersonV1;
-} & { [K in WorkflowType]: unknown };
+} & { [K in PluginEventType]: unknown };
 
-export type WorkflowEventData<T extends WorkflowType> = WorkflowEventMap[T];
+export type WorkflowEventData<T extends PluginEventType> = WorkflowEventMap[T];
+
+/** Input of a GalleryViewV1 method: called once per settings change, never per photo. */
+export type GalleryViewV1Data = {
+  scope: 'main' | 'album';
+  albumId?: string;
+  albums: { id: string; name: string }[];
+};
+
+/** How the gallery should be sorted and filtered; the app turns this into a database query. */
+export type GalleryViewSpec = {
+  sort?: {
+    field: 'createdAt' | 'updatedAt' | 'name' | 'pixels' | 'duration';
+    direction: 'asc' | 'desc';
+  };
+  include?: { photos?: boolean; videos?: boolean; gifs?: boolean };
+  /** Hidden from the main gallery; ignored inside an album. */
+  excludeAlbumIds?: string[];
+};
 
 export enum WorkflowTrigger {
   AssetCreate = 'AssetCreate',
@@ -29,7 +53,7 @@ export enum WorkflowTrigger {
 }
 
 export type WorkflowEventPayload<
-  T extends WorkflowType,
+  T extends PluginEventType,
   TConfig = WorkflowStepConfig,
 > = {
   trigger: WorkflowTrigger;
@@ -44,11 +68,13 @@ export type WorkflowEventPayload<
   };
 };
 
-export type WorkflowChanges<T extends WorkflowType> = DeepPartial<
+export type WorkflowChanges<T extends PluginEventType> = DeepPartial<
   WorkflowEventData<T>
 >;
 
-export type WorkflowResponse<T extends WorkflowType> = {
+export type WorkflowResponse<T extends PluginEventType> = {
+  /** GalleryViewV1 methods return the view to apply */
+  view?: GalleryViewSpec;
   workflow?: {
     /** stop the workflow */
     continue?: boolean;

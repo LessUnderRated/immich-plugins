@@ -19,6 +19,9 @@ enum StoreKey<T> {
   // Read-only Mode settings
   readonlyModeEnabled<bool>._(138),
 
+  // Gallery view plugin selection per scope, as JSON
+  galleryViews<String>._(2000),
+
   syncMigrationStatus<String>._(1013),
 
   // Legacy keys that have been migrated to the new metadata store

@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:collection/collection.dart';
+import 'package:immich_mobile/domain/models/gallery_view.model.dart';
 import 'package:immich_mobile/constants/constants.dart';
 import 'package:immich_mobile/domain/models/asset/base_asset.model.dart';
 import 'package:immich_mobile/domain/models/events.model.dart';
@@ -52,10 +53,11 @@ class TimelineFactory {
 
   TimelineService main(List<String> timelineUsers) => TimelineService(_timelineRepository.main(timelineUsers, groupBy));
 
-  TimelineService deviceLibrary() => TimelineService(_timelineRepository.deviceLibrary(GroupAssetsBy.none));
+  TimelineService deviceLibrary({GalleryViewSpec? view}) =>
+      TimelineService(_timelineRepository.deviceLibrary(GroupAssetsBy.none, view: view));
 
-  TimelineService localAlbum({required String albumId}) =>
-      TimelineService(_timelineRepository.localAlbum(albumId, groupBy));
+  TimelineService localAlbum({required String albumId, GalleryViewSpec? view}) =>
+      TimelineService(_timelineRepository.localAlbum(albumId, view == null ? groupBy : GroupAssetsBy.none, view: view));
 
   TimelineService remoteAlbum({required String albumId}) =>
       TimelineService(_timelineRepository.remoteAlbum(albumId, groupBy));

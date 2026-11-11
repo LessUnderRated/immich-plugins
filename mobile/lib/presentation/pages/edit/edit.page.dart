@@ -5,6 +5,7 @@ import 'dart:ui' as ui;
 import 'package:auto_route/auto_route.dart';
 import 'package:crop_image/crop_image.dart';
 import 'package:easy_localization/easy_localization.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:immich_mobile/constants/aspect_ratios.dart';
@@ -32,6 +33,33 @@ class EditImagePage extends ConsumerStatefulWidget {
 }
 
 class _EditImagePageState extends ConsumerState<EditImagePage> with TickerProviderStateMixin {
+  final ValueNotifier<int> _pinches = ValueNotifier(0);
+  Rect? _cropBeforeGesture;
+
+  @override
+  void dispose() {
+    _pinches.dispose();
+    super.dispose();
+  }
+
+  void _onFirstPointer() {
+    _cropBeforeGesture = ref.read(editorStateProvider).crop;
+  }
+
+  void _restoreCropBeforeGesture() {
+    final crop = _cropBeforeGesture;
+    if (crop != null && ref.read(editorStateProvider).crop != crop) {
+      ref.read(editorStateProvider.notifier).setCrop(crop);
+    }
+  }
+
+  void _onPinchStart() {
+    _pinches.value++;
+    _restoreCropBeforeGesture();
+  }
+
+  void _onPinchEnd() => _restoreCropBeforeGesture();
+
   Future<void> _saveEditedImage() async {
     ref.read(editorStateProvider.notifier).setIsEditing(true);
 
@@ -130,48 +158,47 @@ class _EditImagePageState extends ConsumerState<EditImagePage> with TickerProvid
         child: Scaffold(
           appBar: AppBar(
             backgroundColor: Colors.black,
-            title: Text(context.t.edit),
+            toolbarHeight: 44,
+            titleSpacing: 0,
+            title: Text(context.t.edit, style: const TextStyle(fontSize: 16)),
             leading: ImmichCloseButton(onPressed: () => Navigator.of(context).maybePop()),
             actions: [_SaveEditsButton(onSave: _saveEditedImage)],
           ),
           backgroundColor: Colors.black,
           body: SafeArea(
-            bottom: false,
             child: Column(
               children: [
                 Expanded(
-                  child: switch (mode) {
-                    EditorMode.transform => _EditorPreview(image: widget.image),
-                    EditorMode.mosaic => _MosaicCanvas(image: widget.image),
-                  },
+                  child: _ZoomableEditorArea(
+                    key: ValueKey(mode),
+                    onPointerStart: _onFirstPointer,
+                    onPinchStart: _onPinchStart,
+                    onPinchEnd: _onPinchEnd,
+                    child: switch (mode) {
+                      EditorMode.transform => _EditorPreview(image: widget.image),
+                      EditorMode.mosaic => _MosaicCanvas(image: widget.image, pinches: _pinches),
+                    },
+                  ),
                 ),
                 AnimatedSize(
-                  duration: const Duration(milliseconds: 250),
+                  duration: const Duration(milliseconds: 200),
                   curve: Curves.easeInOut,
                   alignment: Alignment.bottomCenter,
                   clipBehavior: Clip.none,
-                  child: Container(
-                    width: double.infinity,
-                    decoration: BoxDecoration(
-                      color: ref.watch(immichThemeProvider).dark.surface,
-                      borderRadius: const BorderRadius.only(
-                        topLeft: Radius.circular(20),
-                        topRight: Radius.circular(20),
+                  child: ColoredBox(
+                    color: ref.watch(immichThemeProvider).dark.surface,
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(8, 6, 8, 4),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          switch (mode) {
+                            EditorMode.transform => const _TransformControls(),
+                            EditorMode.mosaic => const _MosaicControls(),
+                          },
+                          const Row(children: [_EditorModeSelector(), Spacer(), _ResetEditsButton()]),
+                        ],
                       ),
-                    ),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const _EditorModeSelector(),
-                        switch (mode) {
-                          EditorMode.transform => const _TransformControls(),
-                          EditorMode.mosaic => const _MosaicControls(),
-                        },
-                        const Padding(
-                          padding: EdgeInsets.only(bottom: 36, left: 24, right: 24),
-                          child: Row(children: [Spacer(), _ResetEditsButton()]),
-                        ),
-                      ],
                     ),
                   ),
                 ),
@@ -184,33 +211,43 @@ class _EditImagePageState extends ConsumerState<EditImagePage> with TickerProvid
   }
 }
 
-class _AspectRatioButton extends StatelessWidget {
+class _AspectRatioChip extends StatelessWidget {
   final CropAspectRatio ratio;
   final bool isSelected;
   final VoidCallback onPressed;
 
-  const _AspectRatioButton({required this.ratio, required this.isSelected, required this.onPressed});
+  const _AspectRatioChip({required this.ratio, required this.isSelected, required this.onPressed});
 
   @override
   Widget build(BuildContext context) {
-    final color = isSelected ? context.primaryColor : context.themeData.iconTheme.color;
+    final color = isSelected ? context.primaryColor : Colors.white70;
+    final label = switch (ratio) {
+      CropAspectRatio.free => context.t.crop_aspect_ratio_free,
+      CropAspectRatio.original => context.t.crop_aspect_ratio_original,
+      _ => '${ratio.numerator}:${ratio.denominator}',
+    };
 
-    return Column(
-      mainAxisSize: MainAxisSize.max,
-      children: [
-        IconButton(
-          iconSize: 36,
-          icon: ratio.ratio != null
-              ? _AspectRatioRect(ratio: ratio.ratio!, color: color)
-              : Icon(ratio.icon, color: color),
-          onPressed: onPressed,
+    return InkWell(
+      borderRadius: const BorderRadius.all(Radius.circular(6)),
+      onTap: onPressed,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+        decoration: BoxDecoration(
+          color: isSelected ? context.primaryColor.withValues(alpha: 0.15) : null,
+          borderRadius: const BorderRadius.all(Radius.circular(6)),
         ),
-        Text(switch (ratio) {
-          CropAspectRatio.free => context.t.crop_aspect_ratio_free,
-          CropAspectRatio.original => context.t.crop_aspect_ratio_original,
-          _ => '${ratio.numerator}:${ratio.denominator}',
-        }, style: context.textTheme.displayMedium),
-      ],
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (ratio.ratio != null)
+              _AspectRatioRect(ratio: ratio.ratio!, color: color)
+            else
+              Icon(ratio.icon, color: color, size: 16),
+            const SizedBox(width: 4),
+            Text(label, style: TextStyle(color: color, fontSize: 12)),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -224,15 +261,15 @@ class _AspectRatioRect extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return SizedBox(
-      width: 28,
-      height: 28,
+      width: 16,
+      height: 16,
       child: Center(
         child: AspectRatio(
           aspectRatio: ratio,
           child: Container(
             decoration: BoxDecoration(
-              border: Border.all(color: color ?? Colors.transparent, width: 3),
-              borderRadius: const BorderRadius.all(Radius.circular(4)),
+              border: Border.all(color: color ?? Colors.transparent, width: 1.5),
+              borderRadius: const BorderRadius.all(Radius.circular(2)),
             ),
           ),
         ),
@@ -241,28 +278,33 @@ class _AspectRatioRect extends StatelessWidget {
   }
 }
 
-class _AspectRatioSelector extends ConsumerWidget {
-  const _AspectRatioSelector();
+class _CompactIconButton extends StatelessWidget {
+  final IconData icon;
+  final VoidCallback? onPressed;
+  final String? tooltip;
+  final bool selected;
+  final int quarterTurns;
+
+  const _CompactIconButton({
+    required this.icon,
+    required this.onPressed,
+    this.tooltip,
+    this.selected = false,
+    this.quarterTurns = 0,
+  });
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final editorState = ref.watch(editorStateProvider);
-    final editorNotifier = ref.watch(editorStateProvider.notifier);
-
-    return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      child: Row(
-        children: CropAspectRatio.values.map((entry) {
-          return Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 8.0),
-            child: _AspectRatioButton(
-              ratio: entry,
-              isSelected: editorState.aspectRatio == entry,
-              onPressed: () => editorNotifier.setAspectRatio(entry),
-            ),
-          );
-        }).toList(),
-      ),
+  Widget build(BuildContext context) {
+    return IconButton(
+      tooltip: tooltip,
+      visualDensity: VisualDensity.compact,
+      constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+      padding: const EdgeInsets.all(6),
+      iconSize: 20,
+      style: selected ? IconButton.styleFrom(backgroundColor: context.primaryColor.withValues(alpha: 0.15)) : null,
+      icon: RotatedBox(quarterTurns: quarterTurns, child: Icon(icon)),
+      color: selected ? context.primaryColor : Colors.white,
+      onPressed: onPressed,
     );
   }
 }
@@ -272,59 +314,41 @@ class _TransformControls extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final aspectRatio = ref.watch(editorStateProvider.select((state) => state.aspectRatio));
     final editorNotifier = ref.watch(editorStateProvider.notifier);
 
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Padding(
-          padding: const EdgeInsets.only(left: 20, right: 20, top: 20, bottom: 10),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Row(
-                children: [
-                  ImmichIconButton(
-                    icon: Icons.rotate_left,
-                    variant: ImmichVariant.ghost,
-                    color: ImmichColor.secondary,
-                    onPressed: editorNotifier.rotateCCW,
-                  ),
-                  const SizedBox(width: 8),
-                  ImmichIconButton(
-                    icon: Icons.rotate_right,
-                    variant: ImmichVariant.ghost,
-                    color: ImmichColor.secondary,
-                    onPressed: editorNotifier.rotateCW,
-                  ),
-                ],
-              ),
-              Row(
-                children: [
-                  ImmichIconButton(
-                    icon: Icons.flip,
-                    variant: ImmichVariant.ghost,
-                    color: ImmichColor.secondary,
-                    onPressed: editorNotifier.flipHorizontally,
-                  ),
-                  const SizedBox(width: 8),
-                  Transform.rotate(
-                    angle: pi / 2,
-                    child: ImmichIconButton(
-                      icon: Icons.flip,
-                      variant: ImmichVariant.ghost,
-                      color: ImmichColor.secondary,
-                      onPressed: editorNotifier.flipVertically,
+    return SizedBox(
+      height: 40,
+      child: Row(
+        children: [
+          _CompactIconButton(icon: Icons.rotate_left, tooltip: 'Rotate left', onPressed: editorNotifier.rotateCCW),
+          _CompactIconButton(icon: Icons.rotate_right, tooltip: 'Rotate right', onPressed: editorNotifier.rotateCW),
+          _CompactIconButton(icon: Icons.flip, tooltip: 'Flip', onPressed: editorNotifier.flipHorizontally),
+          _CompactIconButton(
+            icon: Icons.flip,
+            tooltip: 'Flip vertically',
+            quarterTurns: 1,
+            onPressed: editorNotifier.flipVertically,
+          ),
+          const VerticalDivider(width: 12, indent: 8, endIndent: 8),
+          Expanded(
+            child: ListView(
+              scrollDirection: Axis.horizontal,
+              children: [
+                for (final ratio in CropAspectRatio.values)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 4),
+                    child: _AspectRatioChip(
+                      ratio: ratio,
+                      isSelected: aspectRatio == ratio,
+                      onPressed: () => editorNotifier.setAspectRatio(ratio),
                     ),
                   ),
-                ],
-              ),
-            ],
+              ],
+            ),
           ),
-        ),
-        const _AspectRatioSelector(),
-        const SizedBox(height: 32),
-      ],
+        ],
+      ),
     );
   }
 }
@@ -479,17 +503,28 @@ class _EditorModeSelector extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final mode = ref.watch(editorStateProvider.select((state) => state.mode));
 
-    return Padding(
-      padding: const EdgeInsets.only(left: 20, right: 20, top: 16),
-      child: SegmentedButton<EditorMode>(
-        showSelectedIcon: false,
-        segments: [
-          ButtonSegment(value: EditorMode.transform, icon: const Icon(Icons.crop_rotate), label: Text(context.t.crop)),
-          ButtonSegment(value: EditorMode.mosaic, icon: const Icon(Icons.grid_on), label: Text(context.t.mosaic)),
-        ],
-        selected: {mode},
-        onSelectionChanged: (selection) => ref.read(editorStateProvider.notifier).setMode(selection.first),
+    return SegmentedButton<EditorMode>(
+      showSelectedIcon: false,
+      style: SegmentedButton.styleFrom(
+        visualDensity: VisualDensity.compact,
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        padding: const EdgeInsets.symmetric(horizontal: 10),
+        textStyle: const TextStyle(fontSize: 12),
       ),
+      segments: [
+        ButtonSegment(
+          value: EditorMode.transform,
+          icon: const Icon(Icons.crop_rotate, size: 16),
+          label: Text(context.t.crop),
+        ),
+        ButtonSegment(
+          value: EditorMode.mosaic,
+          icon: const Icon(Icons.grid_on, size: 16),
+          label: Text(context.t.mosaic),
+        ),
+      ],
+      selected: {mode},
+      onSelectionChanged: (selection) => ref.read(editorStateProvider.notifier).setMode(selection.first),
     );
   }
 }
@@ -503,86 +538,71 @@ class _MosaicControls extends ConsumerWidget {
     final editorNotifier = ref.watch(editorStateProvider.notifier);
     final isBrush = editorState.mosaicTool == MosaicTool.brush;
 
-    return Padding(
-      padding: const EdgeInsets.only(left: 20, right: 20, top: 12, bottom: 12),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Row(
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        SizedBox(
+          height: 40,
+          child: Row(
             children: [
-              _MosaicToolButton(
+              _CompactIconButton(
                 icon: Icons.brush,
-                label: context.t.mosaic_brush,
-                isSelected: isBrush,
+                tooltip: context.t.mosaic_brush,
+                selected: isBrush,
                 onPressed: () => editorNotifier.setMosaicTool(MosaicTool.brush),
               ),
-              const SizedBox(width: 8),
-              _MosaicToolButton(
+              _CompactIconButton(
                 icon: Icons.auto_fix_normal,
-                label: context.t.mosaic_eraser,
-                isSelected: !isBrush,
+                tooltip: context.t.mosaic_eraser,
+                selected: !isBrush,
                 onPressed: () => editorNotifier.setMosaicTool(MosaicTool.eraser),
               ),
-              const Spacer(),
-              ImmichIconButton(
+              _CompactIconButton(
                 icon: Icons.undo,
-                variant: ImmichVariant.ghost,
-                color: ImmichColor.secondary,
-                disabled: editorState.mosaicStrokes.isEmpty,
-                onPressed: editorNotifier.undoMosaicStroke,
+                tooltip: 'Undo',
+                onPressed: editorState.mosaicStrokes.isEmpty ? null : editorNotifier.undoMosaicStroke,
+              ),
+              const VerticalDivider(width: 12, indent: 8, endIndent: 8),
+              Expanded(
+                child: _MosaicSlider(
+                  icon: Icons.circle_outlined,
+                  tooltip: context.t.mosaic_brush_size,
+                  value: editorState.mosaicBrushSize,
+                  min: minMosaicBrushSize,
+                  max: maxMosaicBrushSize,
+                  onChanged: editorNotifier.setMosaicBrushSize,
+                ),
               ),
             ],
           ),
-          _MosaicSlider(
-            label: context.t.mosaic_brush_size,
-            value: editorState.mosaicBrushSize,
-            min: minMosaicBrushSize,
-            max: maxMosaicBrushSize,
-            onChanged: editorNotifier.setMosaicBrushSize,
-          ),
-          _MosaicSlider(
-            label: context.t.mosaic_block_size,
+        ),
+        SizedBox(
+          height: 32,
+          child: _MosaicSlider(
+            icon: Icons.grid_view,
+            tooltip: context.t.mosaic_block_size,
             value: editorState.mosaicBlockSize,
             min: minMosaicBlockSize,
             max: maxMosaicBlockSize,
             onChanged: editorNotifier.setMosaicBlockSize,
           ),
-        ],
-      ),
-    );
-  }
-}
-
-class _MosaicToolButton extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  final bool isSelected;
-  final VoidCallback onPressed;
-
-  const _MosaicToolButton({required this.icon, required this.label, required this.isSelected, required this.onPressed});
-
-  @override
-  Widget build(BuildContext context) {
-    final color = isSelected ? context.primaryColor : context.themeData.iconTheme.color;
-
-    return TextButton.icon(
-      onPressed: onPressed,
-      icon: Icon(icon, color: color),
-      label: Text(label, style: TextStyle(color: color)),
-      style: TextButton.styleFrom(backgroundColor: isSelected ? context.primaryColor.withValues(alpha: 0.15) : null),
+        ),
+      ],
     );
   }
 }
 
 class _MosaicSlider extends StatelessWidget {
-  final String label;
+  final IconData icon;
+  final String tooltip;
   final double value;
   final double min;
   final double max;
   final ValueChanged<double> onChanged;
 
   const _MosaicSlider({
-    required this.label,
+    required this.icon,
+    required this.tooltip,
     required this.value,
     required this.min,
     required this.max,
@@ -593,19 +613,164 @@ class _MosaicSlider extends StatelessWidget {
   Widget build(BuildContext context) {
     return Row(
       children: [
-        SizedBox(width: 96, child: Text(label, style: context.textTheme.bodyMedium)),
+        Tooltip(
+          message: tooltip,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            child: Icon(icon, size: 16, color: Colors.white70),
+          ),
+        ),
         Expanded(
-          child: Slider(value: value.clamp(min, max), min: min, max: max, onChanged: onChanged),
+          child: SliderTheme(
+            data: SliderTheme.of(context).copyWith(
+              trackHeight: 2,
+              thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
+              overlayShape: const RoundSliderOverlayShape(overlayRadius: 14),
+            ),
+            child: Slider(
+              value: value.clamp(min, max),
+              min: min,
+              max: max,
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              onChanged: onChanged,
+            ),
+          ),
         ),
       ],
     );
   }
 }
 
+class _ZoomableEditorArea extends StatefulWidget {
+  final Widget child;
+  final VoidCallback onPointerStart;
+  final VoidCallback onPinchStart;
+  final VoidCallback onPinchEnd;
+
+  const _ZoomableEditorArea({
+    super.key,
+    required this.child,
+    required this.onPointerStart,
+    required this.onPinchStart,
+    required this.onPinchEnd,
+  });
+
+  @override
+  State<_ZoomableEditorArea> createState() => _ZoomableEditorAreaState();
+}
+
+class _ZoomableEditorAreaState extends State<_ZoomableEditorArea> {
+  static const double _maxScale = 8;
+
+  final Map<int, Offset> _pointers = {};
+  Matrix4 _matrix = Matrix4.identity();
+  Matrix4 _startMatrix = Matrix4.identity();
+  Offset _startFocal = Offset.zero;
+  double _startDistance = 1;
+  bool _pinching = false;
+  Size _size = Size.zero;
+
+  double get _scale => _matrix.getMaxScaleOnAxis();
+
+  (Offset, double) _focalAndDistance() {
+    final points = _pointers.values.take(2).toList();
+    return ((points[0] + points[1]) / 2, max((points[0] - points[1]).distance, 1));
+  }
+
+  void _onDown(PointerDownEvent event) {
+    if (_pointers.isEmpty) {
+      widget.onPointerStart();
+    }
+    _pointers[event.pointer] = event.localPosition;
+    if (_pointers.length == 2) {
+      final (focal, distance) = _focalAndDistance();
+      _startFocal = focal;
+      _startDistance = distance;
+      _startMatrix = _matrix.clone();
+      if (!_pinching) {
+        setState(() => _pinching = true);
+        widget.onPinchStart();
+      }
+    }
+  }
+
+  void _onMove(PointerMoveEvent event) {
+    if (!_pointers.containsKey(event.pointer)) {
+      return;
+    }
+    _pointers[event.pointer] = event.localPosition;
+    if (!_pinching || _pointers.length < 2) {
+      return;
+    }
+
+    final (focal, distance) = _focalAndDistance();
+    final startScale = _startMatrix.getMaxScaleOnAxis();
+    final targetScale = (startScale * distance / _startDistance).clamp(1.0, _maxScale);
+    final factor = targetScale / startScale;
+
+    final next = Matrix4.identity()
+      ..translateByDouble(focal.dx, focal.dy, 0, 1)
+      ..scaleByDouble(factor, factor, 1, 1)
+      ..translateByDouble(-_startFocal.dx, -_startFocal.dy, 0, 1)
+      ..multiply(_startMatrix);
+    setState(() => _matrix = _clamp(next));
+  }
+
+  void _onUp(PointerEvent event) {
+    _pointers.remove(event.pointer);
+    if (_pointers.length == 1 && _pinching) {
+      _startMatrix = _matrix.clone();
+    }
+    if (_pointers.isEmpty && _pinching) {
+      setState(() {
+        _pinching = false;
+        if (_scale <= 1.02) {
+          _matrix = Matrix4.identity();
+        }
+      });
+      widget.onPinchEnd();
+    }
+  }
+
+  Matrix4 _clamp(Matrix4 matrix) {
+    final scale = matrix.getMaxScaleOnAxis();
+    final translation = matrix.getTranslation();
+    final minX = _size.width - _size.width * scale;
+    final minY = _size.height - _size.height * scale;
+    final x = translation.x.clamp(min(minX, 0.0), 0.0).toDouble();
+    final y = translation.y.clamp(min(minY, 0.0), 0.0).toDouble();
+    return Matrix4.identity()
+      ..translateByDouble(x, y, 0, 1)
+      ..scaleByDouble(scale, scale, 1, 1);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        _size = constraints.biggest;
+        return Listener(
+          onPointerDown: _onDown,
+          onPointerMove: _onMove,
+          onPointerUp: _onUp,
+          onPointerCancel: _onUp,
+          child: ClipRect(
+            child: AbsorbPointer(
+              absorbing: _pinching,
+              child: Transform(transform: _matrix, child: widget.child),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
 class _MosaicCanvas extends ConsumerStatefulWidget {
   final Image image;
+  final ValueListenable<int> pinches;
 
-  const _MosaicCanvas({required this.image});
+  const _MosaicCanvas({required this.image, required this.pinches});
 
   @override
   ConsumerState<_MosaicCanvas> createState() => _MosaicCanvasState();
@@ -622,6 +787,18 @@ class _MosaicCanvasState extends ConsumerState<_MosaicCanvas> {
   final List<Offset> _activePoints = [];
   final ValueNotifier<int> _repaint = ValueNotifier(0);
   int? _activePointer;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.pinches.addListener(_cancelActiveStroke);
+  }
+
+  void _cancelActiveStroke() {
+    _activePointer = null;
+    _activePoints.clear();
+    _repaint.value++;
+  }
 
   @override
   void didChangeDependencies() {
@@ -755,6 +932,7 @@ class _MosaicCanvasState extends ConsumerState<_MosaicCanvas> {
 
   @override
   void dispose() {
+    widget.pinches.removeListener(_cancelActiveStroke);
     _stopListening();
     _source?.dispose();
     _pixelated?.dispose();
