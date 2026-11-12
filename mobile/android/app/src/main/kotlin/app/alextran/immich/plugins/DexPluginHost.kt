@@ -1,6 +1,7 @@
 package app.alextran.immich.plugins
 
 import android.content.Context
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import app.alextran.immich.plugins.api.ImmichPlugin
@@ -21,6 +22,7 @@ class DexPluginHost(private val context: Context, messenger: BinaryMessenger) : 
   private val mainHandler = Handler(Looper.getMainLooper())
   private val executor = Executors.newCachedThreadPool { runnable -> Thread(runnable, "dex-plugins") }
   private val plugins = ConcurrentHashMap<String, ImmichPlugin>()
+  private val pluginDirs = ConcurrentHashMap<String, File>()
 
   init {
     channel.setMethodCallHandler(this)
@@ -34,6 +36,7 @@ class DexPluginHost(private val context: Context, messenger: BinaryMessenger) : 
         val entry = call.argument<String>("entry")!!
         runInBackground(result) {
           plugins[key] = instantiate(key, File(dexPath), entry)
+          pluginDirs[key] = File(File(dexPath).parentFile, "files").apply { mkdirs() }
           null
         }
       }
@@ -68,15 +71,33 @@ class DexPluginHost(private val context: Context, messenger: BinaryMessenger) : 
     target.setReadOnly()
 
     val optimized = File(directory, "oat").apply { mkdirs() }
-    val loader = DexClassLoader(target.path, optimized.path, null, javaClass.classLoader)
+    val loader = DexClassLoader(target.path, optimized.path, copyNativeLibraries(key, source.parentFile!!), javaClass.classLoader)
     val instance = loader.loadClass(entry).getDeclaredConstructor().newInstance()
     return instance as? ImmichPlugin
       ?: throw IllegalStateException("$entry does not implement ${ImmichPlugin::class.java.name}")
   }
 
+  private fun copyNativeLibraries(key: String, pluginRoot: File): String? {
+    val libraries = File(pluginRoot, "files/lib")
+    val abi = Build.SUPPORTED_ABIS.firstOrNull { File(libraries, it).isDirectory } ?: return null
+    val target = File(context.codeCacheDir, "dex-plugins/$key-libs")
+    if (target.exists()) {
+      target.walkBottomUp().forEach { it.setWritable(true) }
+      target.deleteRecursively()
+    }
+    target.mkdirs()
+    File(libraries, abi).listFiles { file -> file.name.endsWith(".so") }?.forEach { library ->
+      val copy = File(target, library.name)
+      library.copyTo(copy, overwrite = true)
+      copy.setReadOnly()
+    }
+    return target.path
+  }
+
   private fun hostFor(key: String) = object : PluginHost {
     override val context: Context = this@DexPluginHost.context
     override val dataDir: File = File(context.filesDir, "dex-plugin-data/$key").apply { mkdirs() }
+    override val pluginDir: File = pluginDirs[key] ?: dataDir
     override val pluginName: String = key
 
     override fun callHost(name: String, argsJson: String): String =

@@ -10,6 +10,7 @@ interface ImmichPlugin {
 interface PluginHost {
   val context: Context
   val dataDir: File
+  val pluginDir: File
   val pluginName: String
 
   fun callHost(name: String, argsJson: String): String

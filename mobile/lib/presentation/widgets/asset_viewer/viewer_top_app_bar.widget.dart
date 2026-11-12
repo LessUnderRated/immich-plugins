@@ -12,6 +12,7 @@ import 'package:immich_mobile/presentation/actions/device_album.actions.dart';
 import 'package:immich_mobile/presentation/actions/favorite.action.dart';
 import 'package:immich_mobile/presentation/actions/plugin.action.dart';
 import 'package:immich_mobile/presentation/widgets/action_buttons/motion_photo_action_button.widget.dart';
+import 'package:immich_mobile/presentation/widgets/asset_viewer/viewer_censor.widget.dart';
 import 'package:immich_mobile/presentation/widgets/asset_viewer/viewer_kebab_menu.widget.dart';
 import 'package:immich_mobile/providers/asset_viewer/asset_viewer.provider.dart';
 import 'package:immich_mobile/providers/infrastructure/asset_viewer/asset.provider.dart';
@@ -68,6 +69,7 @@ class ViewerTopAppBar extends ConsumerWidget implements PreferredSizeWidget {
       const ActionIconButton(action: FavoriteAction(source: .viewer)),
       const ActionIconButton(action: DeviceFavoriteAction(source: .viewer)),
       const ActionIconButton(action: PluginAction(source: .viewer)),
+      const ViewerCensorButton(),
 
       ImmichColorOverride(color: null, child: ViewerKebabMenu(originalTheme: originalTheme)),
     ];

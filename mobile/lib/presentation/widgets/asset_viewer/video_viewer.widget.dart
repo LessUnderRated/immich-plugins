@@ -7,6 +7,7 @@ import 'package:immich_mobile/domain/models/asset/base_asset.model.dart';
 import 'package:immich_mobile/domain/models/store.model.dart';
 import 'package:immich_mobile/entities/store.entity.dart';
 import 'package:immich_mobile/extensions/platform_extensions.dart';
+import 'package:immich_mobile/presentation/widgets/asset_viewer/viewer_censor.widget.dart';
 import 'package:immich_mobile/providers/asset_viewer/asset_viewer.provider.dart';
 import 'package:immich_mobile/providers/asset_viewer/is_motion_video_playing.provider.dart';
 import 'package:immich_mobile/providers/asset_viewer/video_player_provider.dart';
@@ -14,6 +15,7 @@ import 'package:immich_mobile/providers/cast.provider.dart';
 import 'package:immich_mobile/providers/infrastructure/asset.provider.dart';
 import 'package:immich_mobile/providers/infrastructure/settings.provider.dart';
 import 'package:immich_mobile/providers/infrastructure/storage.provider.dart';
+import 'package:immich_mobile/providers/viewer_censor.provider.dart';
 import 'package:immich_mobile/services/api.service.dart';
 import 'package:logging/logging.dart';
 import 'package:native_video_player/native_video_player.dart';
@@ -321,6 +323,9 @@ class NativeVideoViewerState extends ConsumerState<NativeVideoViewer> with Widge
     // the view from the tree when we start a route transition, which has the side effect of properly ordering the `dispose`
     final isRouteActive = ModalRoute.of(context)?.isActive ?? true;
     final showPlayer = !isCasting && isRouteActive;
+    final asset = widget.asset;
+    final localId = asset is LocalAsset ? asset.id : (asset is RemoteAsset ? asset.localId : null);
+    final censorAssetId = ref.watch(viewerCensorActiveProvider) && !asset.isMotionPhoto ? localId : null;
 
     return IgnorePointer(
       child: Stack(
@@ -331,6 +336,10 @@ class NativeVideoViewerState extends ConsumerState<NativeVideoViewer> with Widge
               visible: _isVideoReady,
               child: NativeVideoPlayerView(onViewReady: _initController),
             ),
+            if (censorAssetId != null)
+              Positioned.fill(
+                child: VideoCensorOverlay(assetId: censorAssetId, controller: _controller),
+              ),
             Center(
               child: AnimatedOpacity(
                 opacity: status == VideoPlaybackStatus.buffering ? 1.0 : 0.0,

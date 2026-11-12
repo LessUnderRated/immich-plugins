@@ -44,6 +44,8 @@ class DevicePluginMethod {
   bool get isCensorStyle => uiHints.contains('CensorStyle') || types.contains('CensorStyleV1');
 
   bool get isAssetAction => uiHints.contains('AssetAction') || types.contains('AssetActionV1');
+
+  bool get isViewerFilter => uiHints.contains('ViewerFilter') || types.contains('ViewerFilterV1');
 }
 
 enum DevicePluginRuntime { wasm, dex }

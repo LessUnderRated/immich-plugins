@@ -170,7 +170,17 @@ class DevicePluginStore {
       if (dexEntry == null) {
         throw const FormatException('The zip does not contain a .dex file');
       }
-      await _write(name, manifestText, dexEntry.content, _dexFile);
+      final prefix = base == '.' ? '' : '$base/';
+      final extras = <String, List<int>>{
+        for (final file in archive.files)
+          if (file.isFile &&
+              file != manifestEntry &&
+              file != dexEntry &&
+              file.name.startsWith(prefix) &&
+              !p.posix.normalize(file.name.substring(prefix.length)).startsWith('..'))
+            p.posix.normalize(file.name.substring(prefix.length)): file.content,
+      };
+      await _write(name, manifestText, dexEntry.content, _dexFile, extras: extras);
       return name;
     }
 
@@ -197,7 +207,13 @@ class DevicePluginStore {
     }
   }
 
-  Future<void> _write(String name, String manifest, List<int> code, String codeFile) async {
+  Future<void> _write(
+    String name,
+    String manifest,
+    List<int> code,
+    String codeFile, {
+    Map<String, List<int>> extras = const {},
+  }) async {
     final directory = Directory(p.join((await root).path, name));
     final staging = Directory('${directory.path}.staging');
     if (staging.existsSync()) {
@@ -206,6 +222,11 @@ class DevicePluginStore {
     await staging.create(recursive: true);
     await File(p.join(staging.path, _manifestFile)).writeAsString(manifest, flush: true);
     await File(p.join(staging.path, codeFile)).writeAsBytes(code, flush: true);
+    for (final MapEntry(key: path, value: bytes) in extras.entries) {
+      final target = File(p.join(staging.path, 'files', path));
+      await target.parent.create(recursive: true);
+      await target.writeAsBytes(bytes, flush: true);
+    }
     if (directory.existsSync()) {
       await directory.delete(recursive: true);
     }

@@ -16,6 +16,7 @@ import 'package:immich_mobile/presentation/widgets/asset_viewer/asset_stack.prov
 import 'package:immich_mobile/presentation/widgets/asset_viewer/asset_stack.widget.dart';
 import 'package:immich_mobile/presentation/widgets/asset_viewer/ocr_overlay.widget.dart';
 import 'package:immich_mobile/presentation/widgets/asset_viewer/video_viewer.widget.dart';
+import 'package:immich_mobile/presentation/widgets/asset_viewer/viewer_censor.widget.dart';
 import 'package:immich_mobile/presentation/widgets/images/image_provider.dart';
 import 'package:immich_mobile/presentation/widgets/images/progressive_image.widget.dart';
 import 'package:immich_mobile/presentation/widgets/images/thumbnail.widget.dart';
@@ -24,6 +25,7 @@ import 'package:immich_mobile/providers/asset_viewer/is_motion_video_playing.pro
 import 'package:immich_mobile/providers/infrastructure/settings.provider.dart';
 import 'package:immich_mobile/providers/infrastructure/timeline.provider.dart';
 import 'package:immich_mobile/providers/view_intent/view_intent_file_path.provider.dart';
+import 'package:immich_mobile/providers/viewer_censor.provider.dart';
 import 'package:immich_mobile/widgets/common/immich_loading_indicator.dart';
 import 'package:immich_mobile/widgets/photo_view/photo_view.dart';
 
@@ -368,35 +370,40 @@ class _AssetPageState extends ConsumerState<AssetPage> {
     );
 
     if (asset.isImage && !isPlayingMotionVideo) {
-      return ProgressiveImage(
-        provider: imageProvider,
-        builder: (context, provider) => PhotoView(
-          key: Key(asset.heroTag),
-          index: widget.index,
-          imageProvider: provider,
-          heroAttributes: heroAttributes,
-          loadingBuilder: (context, progress, index) => const Center(child: ImmichLoadingIndicator()),
-          gaplessPlayback: true,
-          filterQuality: FilterQuality.high,
-          tightMode: true,
-          enablePanAlways: true,
-          maxScale: _maxImagePixelSize,
-          disableScaleGestures: _showingDetails,
-          scaleStateChangedCallback: _onScaleStateChanged,
-          onPageBuild: _onPageBuild,
-          onDragStart: _onDragStart,
-          onDragUpdate: _onDragUpdate,
-          onDragEnd: _onDragEnd,
-          onDragCancel: _onDragCancel,
-          onTapUp: _onTapUp,
-          onLongPressStart: asset.isMotionPhoto ? _onLongPress : null,
-          errorBuilder: (_, _, _) => SizedBox(
-            width: size.width,
-            height: size.height,
-            child: Thumbnail.fromAsset(asset: asset, fit: BoxFit.contain),
-          ),
+      Widget photoView(ImageProvider provider) => PhotoView(
+        key: Key(asset.heroTag),
+        index: widget.index,
+        imageProvider: provider,
+        heroAttributes: heroAttributes,
+        loadingBuilder: (context, progress, index) => const Center(child: ImmichLoadingIndicator()),
+        gaplessPlayback: true,
+        filterQuality: FilterQuality.high,
+        tightMode: true,
+        enablePanAlways: true,
+        maxScale: _maxImagePixelSize,
+        disableScaleGestures: _showingDetails,
+        scaleStateChangedCallback: _onScaleStateChanged,
+        onPageBuild: _onPageBuild,
+        onDragStart: _onDragStart,
+        onDragUpdate: _onDragUpdate,
+        onDragEnd: _onDragEnd,
+        onDragCancel: _onDragCancel,
+        onTapUp: _onTapUp,
+        onLongPressStart: asset.isMotionPhoto ? _onLongPress : null,
+        errorBuilder: (_, _, _) => SizedBox(
+          width: size.width,
+          height: size.height,
+          child: Thumbnail.fromAsset(asset: asset, fit: BoxFit.contain),
         ),
       );
+
+      Widget original() =>
+          ProgressiveImage(provider: imageProvider, builder: (context, provider) => photoView(provider));
+
+      if (ref.watch(viewerCensorActiveProvider)) {
+        return CensoredPhoto(asset: asset, original: original, censored: photoView);
+      }
+      return original();
     }
 
     return PhotoView.customChild(

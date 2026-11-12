@@ -155,6 +155,16 @@ class DeviceWorkflowEngine {
     return {'assetId': assetId, 'outcome': result.outcome.name, 'createdId': result.createdId};
   }
 
+  Future<List<(DevicePlugin, DevicePluginMethod)>> viewerFilterMethods() async {
+    await ensureReady();
+    return [
+      for (final plugin in await _store.list())
+        if (plugin.enabled && _loaded.containsKey(plugin.name))
+          for (final method in plugin.methods)
+            if (method.isViewerFilter) (plugin, method),
+    ];
+  }
+
   Future<List<(DevicePlugin, DevicePluginMethod)>> censorStyleMethods() async {
     await ensureReady();
     return [
