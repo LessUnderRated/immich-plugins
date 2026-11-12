@@ -7,6 +7,7 @@ import 'package:collection/collection.dart';
 import 'package:flutter/painting.dart';
 import 'package:immich_mobile/infrastructure/plugins/device_workflow_engine.dart';
 import 'package:immich_mobile/utils/asset_edit_renderer.utils.dart';
+import 'package:immich_mobile/utils/censor_geometry.dart';
 
 const censorStyleType = 'CensorStyleV1';
 
@@ -63,11 +64,14 @@ class CensorStyles {
     final cell = max(1, size ~/ 2);
     final grid = await downsampleImage(source, cell, width: width, height: height);
     final Map<String, dynamic>? response;
+    final GridSampler sampler;
     try {
       final data = await grid.toByteData(format: ui.ImageByteFormat.rawRgba);
       if (data == null) {
         return null;
       }
+      final rgba = data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes);
+      sampler = GridSampler(rgba: rgba, width: grid.width, height: grid.height, cell: cell);
       response = await _engine.callPluginMethod(selected.pluginName, selected.methodName, {
         'type': censorStyleType,
         'config': options,
@@ -75,22 +79,23 @@ class CensorStyles {
           'width': width,
           'height': height,
           'size': size,
-          'grid': {
-            'width': grid.width,
-            'height': grid.height,
-            'cell': cell,
-            'rgba': base64Encode(data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes)),
-          },
+          'grid': {'width': grid.width, 'height': grid.height, 'cell': cell, 'rgba': base64Encode(rgba)},
         },
       });
     } finally {
       grid.dispose();
     }
 
-    return response == null ? null : _draw(response, source, width);
+    return response == null ? null : _draw(response, source, width, height, sampler);
   }
 
-  Future<ui.Image> _draw(Map<String, dynamic> response, ui.Image source, int width) async {
+  Future<ui.Image> _draw(
+    Map<String, dynamic> response,
+    ui.Image source,
+    int width,
+    int height,
+    GridSampler sampler,
+  ) async {
     final scale = source.width / width;
     final bounds = Rect.fromLTWH(0, 0, source.width.toDouble(), source.height.toDouble());
     final overlay = await _decodeImage(response['image']);
@@ -119,18 +124,21 @@ class CensorStyles {
       );
     }
 
-    final shapes = response['shapes'];
-    if (shapes is List) {
-      final paint = Paint()
-        ..isAntiAlias = false
-        ..style = PaintingStyle.fill;
-      for (final shape in shapes.whereType<Map>()) {
-        final path = _path(shape['points'], scale);
-        if (path == null) {
-          continue;
-        }
-        canvas.drawPath(path, paint..color = _color(shape['color']));
+    final area = Size(width.toDouble(), height.toDouble());
+    final polygons = [
+      ...buildCensorTiles(response['tiles'], area, sampler),
+      ...buildCensorCells(response['cells'], area, sampler),
+      ...buildCensorShapes(response['shapes'], sampler),
+    ];
+    final paint = Paint()
+      ..isAntiAlias = false
+      ..style = PaintingStyle.fill;
+    for (final polygon in polygons) {
+      final path = Path()..moveTo(polygon.points.first.dx * scale, polygon.points.first.dy * scale);
+      for (final point in polygon.points.skip(1)) {
+        path.lineTo(point.dx * scale, point.dy * scale);
       }
+      canvas.drawPath(path..close(), paint..color = polygon.color);
     }
 
     final picture = recorder.endRecording();
@@ -140,28 +148,6 @@ class CensorStyles {
       picture.dispose();
       overlay?.dispose();
     }
-  }
-
-  static Path? _path(Object? points, double scale) {
-    if (points is! List || points.length < 6) {
-      return null;
-    }
-    final path = Path()..moveTo((points[0] as num) * scale, (points[1] as num) * scale);
-    for (var index = 2; index + 1 < points.length; index += 2) {
-      path.lineTo((points[index] as num) * scale, (points[index + 1] as num) * scale);
-    }
-    return path..close();
-  }
-
-  static Color _color(Object? value) {
-    if (value is List && value.length >= 3) {
-      final alpha = value.length > 3 ? (value[3] as num).toInt() : 255;
-      return Color.fromARGB(alpha, (value[0] as num).toInt(), (value[1] as num).toInt(), (value[2] as num).toInt());
-    }
-    if (value is String && value.startsWith('#') && value.length == 7) {
-      return Color(int.parse('ff${value.substring(1)}', radix: 16));
-    }
-    return const Color(0xFF000000);
   }
 
   static Future<ui.Image?> _decodeImage(Object? image) async {
