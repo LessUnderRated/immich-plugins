@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:auto_route/auto_route.dart';
 import 'package:flutter/material.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
+import 'package:immich_mobile/providers/device_plugins.provider.dart';
 import 'package:immich_mobile/providers/routes.provider.dart';
 
 class AppNavigationObserver extends AutoRouterObserver {
@@ -18,6 +19,12 @@ class AppNavigationObserver extends AutoRouterObserver {
     unawaited(
       Future(() {
         ref.read(currentRouteNameProvider.notifier).state = route.settings.name;
+        unawaited(
+          ref.read(deviceWorkflowEngineProvider).emit('route.changed', {
+            'route': route.settings.name,
+            'previous': previousRoute?.settings.name,
+          }),
+        );
         ref.read(previousRouteNameProvider.notifier).state = previousRoute?.settings.name;
         ref.read(previousRouteDataProvider.notifier).state = previousRoute?.settings;
       }),

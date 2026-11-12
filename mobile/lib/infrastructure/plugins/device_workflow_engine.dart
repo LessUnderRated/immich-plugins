@@ -11,7 +11,7 @@ import 'package:immich_mobile/domain/models/device_plugin.model.dart';
 import 'package:immich_mobile/domain/services/offline_user.service.dart';
 import 'package:immich_mobile/infrastructure/plugins/device_plugin_store.dart';
 import 'package:immich_mobile/infrastructure/plugins/plugin_host_extras.dart';
-import 'package:immich_mobile/infrastructure/plugins/wasm_plugin_runtime.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_runtime.dart';
 import 'package:immich_mobile/infrastructure/repositories/app_album.repository.dart';
 import 'package:immich_mobile/infrastructure/repositories/device_edit.repository.dart';
 import 'package:logging/logging.dart';
@@ -42,7 +42,7 @@ class DeviceWorkflowRun {
 class DeviceWorkflowEngine {
   final Drift _db;
   final DevicePluginStore _store;
-  final WasmPluginRuntime _runtime;
+  final PluginRuntime _runtime;
   final DeviceEditRepository _edits;
   final AppAlbumRepository _albums;
   final _log = Logger('DeviceWorkflowEngine');
@@ -56,6 +56,7 @@ class DeviceWorkflowEngine {
 
   DeviceWorkflowEngine(this._db, this._store, this._runtime, this._edits, this._albums) {
     _runtime.hostHandler = _handleHostCall;
+    _runtime.eventHandler = (plugin, name, payload) => _performUi(plugin, {'type': name, ...?_decodeMap(payload)});
   }
 
   Stream<void> get changes => _changes.stream;
@@ -63,9 +64,9 @@ class DeviceWorkflowEngine {
   Future<void> ensureReady() => _ready ??= _initialize();
 
   Future<void> _initialize() async {
-    await _store.installBundled();
     await _store.installFromDropFolder();
     await reload();
+    unawaited(emit('app.start', const {}));
   }
 
   Future<List<DevicePlugin>> plugins() => _store.list();
@@ -81,6 +82,101 @@ class DeviceWorkflowEngine {
   }
 
   late final PluginHostExtras _extras = PluginHostExtras(() => _store.root);
+
+  Future<Object?> Function(String plugin, Map<String, dynamic> action)? uiHandler;
+
+  static Map<String, dynamic>? _decodeMap(String text) {
+    try {
+      final decoded = jsonDecode(text);
+      return decoded is Map ? Map<String, dynamic>.from(decoded) : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<Object?> _performUi(String plugin, Map<String, dynamic> action) async {
+    if (action['type'] == 'refresh') {
+      _changes.add(null);
+    }
+    return uiHandler?.call(plugin, action);
+  }
+
+  Future<List<PluginContribution>> contributions() async {
+    await ensureReady();
+    return [
+      for (final plugin in await _store.list())
+        if (plugin.enabled && _loaded.containsKey(plugin.name)) ...plugin.contributions,
+    ];
+  }
+
+  Future<Map<String, dynamic>> assetJson(LocalAsset asset) => _assetV1(asset);
+
+  Future<String> pluginsRoot() async => (await _store.root).path;
+
+  Future<Map<String, (String, Map<String, dynamic>)>> routeOverrides() async {
+    await ensureReady();
+    return {
+      for (final plugin in await _store.list())
+        if (plugin.enabled && _loaded.containsKey(plugin.name))
+          for (final MapEntry(:key, :value) in plugin.routes.entries) key: (plugin.name, value),
+    };
+  }
+
+  Future<void> performResponse(String plugin, Map<String, dynamic>? response) async {
+    final actions = response?['actions'];
+    for (final action in (actions is List ? actions : const []).whereType<Map>()) {
+      await _performUi(plugin, Map<String, dynamic>.from(action));
+    }
+    final message = response?['message'];
+    if (message is String && message.isNotEmpty) {
+      await _performUi(plugin, {'type': 'toast', 'message': message});
+    }
+  }
+
+  Future<void> runContribution(PluginContribution contribution, {List<LocalAsset> assets = const []}) async {
+    final method = contribution.method;
+    if (method == null) {
+      if (contribution.view != null) {
+        await _performUi(contribution.plugin, {
+          'type': 'openPage',
+          'view': contribution.view,
+          'title': contribution.title,
+          'params': contribution.params,
+        });
+      }
+      return;
+    }
+    final response = await callPluginMethod(contribution.plugin, method, {
+      'type': 'ButtonV1',
+      'config': contribution.params,
+      'workflow': {'id': 'button', 'authToken': '', 'stepId': contribution.id},
+      'data': {
+        'slot': contribution.slot,
+        'assets': [for (final asset in assets) await _assetV1(asset)],
+      },
+    });
+    await performResponse(contribution.plugin, response);
+  }
+
+  Future<void> emit(String event, Map<String, dynamic> data) async {
+    for (final plugin in await _store.list()) {
+      final method = plugin.events[event];
+      if (method == null || !plugin.enabled || !_loaded.containsKey(plugin.name)) {
+        continue;
+      }
+      try {
+        final response = await callPluginMethod(plugin.name, method, {
+          'type': 'EventV1',
+          'config': const {},
+          'workflow': {'id': 'event', 'authToken': '', 'stepId': event},
+          'data': {'event': event, ...data},
+        });
+        await performResponse(plugin.name, response);
+      } catch (error, stack) {
+        _log.warning('Plugin ${plugin.name} failed on $event', error, stack);
+      }
+    }
+  }
 
   Future<List<(DevicePlugin, DevicePluginMethod)>> assetActionMethods() async {
     await ensureReady();
@@ -518,6 +614,7 @@ class DeviceWorkflowEngine {
       'deleteFile' => _extras.deleteFile(plugin, text(0)).then((_) => null),
       'getStorage' => _extras.getStorage(plugin, text(0)),
       'setStorage' => _extras.setStorage(plugin, text(0), args.length > 1 ? args[1] : null).then((_) => null),
+      'ui' => _performUi(plugin, arg(0)),
       _ => throw HostFunctionException(501, 'Host function $name is not available on the device'),
     };
   }

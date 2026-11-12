@@ -1,25 +1,61 @@
 import 'dart:convert';
-import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:immich_mobile/domain/models/device_plugin.model.dart';
 
 void main() {
-  test('parses the bundled core plugin manifest', () {
-    final json = jsonDecode(File('assets/plugins/immich-plugin-core/manifest.json').readAsStringSync()) as Map;
+  test('parses a native plugin manifest with contributions', () {
     final plugin = DevicePlugin.fromManifest(
-      Map<String, dynamic>.from(json),
-      codePath: 'plugin.wasm',
+      {
+        'name': 'demo',
+        'version': '1.0.0',
+        'runtime': 'dex',
+        'entry': 'com.example.Demo',
+        'methods': [
+          {
+            'name': 'filter',
+            'types': [deviceAssetType],
+            'uiHints': ['Filter'],
+          },
+          {
+            'name': 'blur',
+            'types': ['CensorStyleV1'],
+            'pixels': true,
+          },
+        ],
+        'contributes': {
+          'buttons': [
+            {'id': 'go', 'title': 'Go', 'slot': 'main.appBar', 'icon': 'bolt', 'method': 'onGo'},
+          ],
+          'pages': [
+            {'id': 'home', 'title': 'Home', 'view': 'home'},
+          ],
+          'overlays': [
+            {'id': 'hud', 'slot': 'global', 'view': 'hud', 'interactive': true},
+          ],
+          'events': {'app.start': 'onStart', 'viewer.open': 'onOpen'},
+          'routes': {
+            'MainTimelineRoute': {'view': 'gallery', 'title': 'Gallery'},
+          },
+        },
+      },
+      codePath: 'plugin.dex',
       enabled: true,
-      bundled: true,
+      bundled: false,
     );
 
-    expect(plugin.name, 'immich-plugin-core');
-    expect(plugin.usesHostFunctions, isTrue);
-    expect(plugin.method('assetEdit')?.hostFunctions, isTrue);
-    expect(plugin.method('assetFavorite')?.types, contains(deviceAssetType));
-    expect(plugin.method('assetFileFilter')?.isFilter, isTrue);
-    expect(plugin.templates, isNotEmpty);
+    expect(plugin.entry, 'com.example.Demo');
+    expect(plugin.method('filter')?.isFilter, isTrue);
+    expect(plugin.method('blur')?.isCensorStyle, isTrue);
+    expect(plugin.method('blur')?.pixels, isTrue);
+    expect(plugin.contributions.map((item) => (item.kind, item.slot, item.id)), [
+      (PluginContributionKind.button, 'main.appBar', 'go'),
+      (PluginContributionKind.page, 'plugins.page', 'home'),
+      (PluginContributionKind.overlay, 'global', 'hud'),
+    ]);
+    expect(plugin.contributions.last.interactive, isTrue);
+    expect(plugin.events, {'app.start': 'onStart', 'viewer.open': 'onOpen'});
+    expect(plugin.routes['MainTimelineRoute']?['view'], 'gallery');
   });
 
   test('round trips a workflow', () {

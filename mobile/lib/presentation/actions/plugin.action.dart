@@ -5,6 +5,7 @@ import 'package:immich_mobile/domain/models/asset/base_asset.model.dart';
 import 'package:immich_mobile/domain/models/device_plugin.model.dart';
 import 'package:immich_mobile/presentation/actions/action.dart';
 import 'package:immich_mobile/presentation/pages/plugins/schema_form.widget.dart';
+import 'package:immich_mobile/presentation/plugins/plugin_ui.dart';
 import 'package:immich_mobile/providers/background_sync.provider.dart';
 import 'package:immich_mobile/providers/device_plugins.provider.dart';
 import 'package:immich_mobile/utils/error_handler.dart';
@@ -21,7 +22,8 @@ class PluginAction extends AssetActionBuilder {
   ActionItem? create(BuildContext context, WidgetRef ref) {
     final assets = ref.watch(_stateProvider(source));
     final methods = ref.watch(assetActionMethodsProvider).valueOrNull ?? const [];
-    if (assets == null || methods.isEmpty) {
+    final buttons = ref.watch(pluginSurfacesProvider).slot('selection');
+    if (assets == null || (methods.isEmpty && buttons.isEmpty)) {
       return null;
     }
     return .new(
@@ -31,7 +33,7 @@ class PluginAction extends AssetActionBuilder {
         context: context,
         showDragHandle: true,
         isScrollControlled: true,
-        builder: (_) => _PluginActionSheet(source: source, assets: assets, methods: methods),
+        builder: (_) => _PluginActionSheet(source: source, assets: assets, methods: methods, buttons: buttons),
       ),
     );
   }
@@ -41,8 +43,9 @@ class _PluginActionSheet extends ConsumerStatefulWidget {
   final ActionSource source;
   final List<LocalAsset> assets;
   final List<(DevicePlugin, DevicePluginMethod)> methods;
+  final List<PluginContribution> buttons;
 
-  const _PluginActionSheet({required this.source, required this.assets, required this.methods});
+  const _PluginActionSheet({required this.source, required this.assets, required this.methods, required this.buttons});
 
   @override
   ConsumerState<_PluginActionSheet> createState() => _PluginActionSheetState();
@@ -101,6 +104,20 @@ class _PluginActionSheetState extends ConsumerState<_PluginActionSheet> {
                     style: Theme.of(context).textTheme.titleMedium,
                   ),
                   const SizedBox(height: 8),
+                  for (final button in widget.buttons)
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: PluginIcon(plugin: button.plugin, icon: button.icon),
+                      title: Text(button.title),
+                      subtitle: Text(button.plugin),
+                      onTap: () async {
+                        final navigator = Navigator.of(context);
+                        final clearSelection = ref.read(clearSelectionProvider(widget.source));
+                        await runPluginContribution(ref, button, assets: widget.assets);
+                        clearSelection();
+                        navigator.pop();
+                      },
+                    ),
                   for (final entry in widget.methods)
                     ListTile(
                       contentPadding: EdgeInsets.zero,

@@ -11,10 +11,12 @@ import 'package:immich_mobile/presentation/actions/action.widget.dart';
 import 'package:immich_mobile/presentation/actions/device_album.actions.dart';
 import 'package:immich_mobile/presentation/actions/favorite.action.dart';
 import 'package:immich_mobile/presentation/actions/plugin.action.dart';
+import 'package:immich_mobile/presentation/plugins/plugin_ui.dart';
 import 'package:immich_mobile/presentation/widgets/action_buttons/motion_photo_action_button.widget.dart';
 import 'package:immich_mobile/presentation/widgets/asset_viewer/viewer_censor.widget.dart';
 import 'package:immich_mobile/presentation/widgets/asset_viewer/viewer_kebab_menu.widget.dart';
 import 'package:immich_mobile/providers/asset_viewer/asset_viewer.provider.dart';
+import 'package:immich_mobile/providers/device_plugins.provider.dart';
 import 'package:immich_mobile/providers/infrastructure/asset_viewer/asset.provider.dart';
 import 'package:immich_mobile/providers/infrastructure/current_album.provider.dart';
 import 'package:immich_mobile/providers/infrastructure/readonly_mode.provider.dart';
@@ -31,6 +33,12 @@ class ViewerTopAppBar extends ConsumerWidget implements PreferredSizeWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final asset = ref.watch(assetViewerProvider.select((s) => s.currentAsset));
+    ref.listen(assetViewerProvider.select((s) => s.currentAsset), (_, next) {
+      if (next is LocalAsset) {
+        final engine = ref.read(deviceWorkflowEngineProvider);
+        unawaited(engine.assetJson(next).then((json) => engine.emit('viewer.open', {'asset': json})));
+      }
+    });
     if (asset == null) {
       return const SizedBox.shrink();
     }
@@ -70,6 +78,7 @@ class ViewerTopAppBar extends ConsumerWidget implements PreferredSizeWidget {
       const ActionIconButton(action: DeviceFavoriteAction(source: .viewer)),
       const ActionIconButton(action: PluginAction(source: .viewer)),
       const ViewerCensorButton(),
+      PluginSlotButtons(slot: 'viewer.topBar', assets: [if (asset is LocalAsset) asset]),
 
       ImmichColorOverride(color: null, child: ViewerKebabMenu(originalTheme: originalTheme)),
     ];

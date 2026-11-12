@@ -46,14 +46,5 @@
 -keep class com.example.ok_http.** { *; }
 ##---------------End: proguard configuration for ok_http JNI ----------
 
-# WebAssembly plugin runtime (Extism on Chicory)
--keep class com.dylibso.chicory.** { *; }
--keep class org.extism.sdk.** { *; }
--dontwarn com.dylibso.chicory.compiler.**
--dontwarn com.google.errorprone.annotations.**
--dontwarn com.dylibso.chicory.annotations.**
--dontwarn java.lang.System$Logger
--dontwarn java.lang.System$Logger$Level
-
 # Dex plugins are compiled against this API and loaded at runtime
 -keep interface app.alextran.immich.plugins.api.** { *; }

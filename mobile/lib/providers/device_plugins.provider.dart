@@ -3,7 +3,7 @@ import 'package:immich_mobile/domain/models/device_plugin.model.dart';
 import 'package:immich_mobile/infrastructure/plugins/censor_styles.dart';
 import 'package:immich_mobile/infrastructure/plugins/device_plugin_store.dart';
 import 'package:immich_mobile/infrastructure/plugins/device_workflow_engine.dart';
-import 'package:immich_mobile/infrastructure/plugins/wasm_plugin_runtime.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_runtime.dart';
 import 'package:immich_mobile/infrastructure/repositories/device_edit.repository.dart';
 import 'package:immich_mobile/providers/app_album.provider.dart';
 import 'package:immich_mobile/providers/infrastructure/db.provider.dart';
@@ -21,7 +21,7 @@ final Provider<DeviceWorkflowEngine> deviceWorkflowEngineProvider = Provider<Dev
   return DeviceWorkflowEngine(
     ref.watch(driftProvider),
     DevicePluginStore(),
-    WasmPluginRuntime(),
+    PluginRuntime(),
     ref.watch(deviceEditRepositoryProvider),
     ref.watch(appAlbumRepositoryProvider),
   );
@@ -54,3 +54,5 @@ final assetActionMethodsProvider = FutureProvider<List<(DevicePlugin, DevicePlug
   ref.watch(_engineChangesProvider);
   return ref.watch(deviceWorkflowEngineProvider).assetActionMethods();
 });
+
+final pluginFilesRootProvider = FutureProvider<String>((ref) => ref.watch(deviceWorkflowEngineProvider).pluginsRoot());

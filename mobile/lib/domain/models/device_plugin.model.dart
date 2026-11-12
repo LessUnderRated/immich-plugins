@@ -48,7 +48,59 @@ class DevicePluginMethod {
   bool get isViewerFilter => uiHints.contains('ViewerFilter') || types.contains('ViewerFilterV1');
 }
 
-enum DevicePluginRuntime { wasm, dex }
+enum PluginContributionKind { button, page, overlay }
+
+class PluginContribution {
+  final String plugin;
+  final PluginContributionKind kind;
+  final String id;
+  final String title;
+  final String slot;
+  final String? icon;
+  final String? method;
+  final String? view;
+  final bool interactive;
+  final Map<String, dynamic> params;
+
+  const PluginContribution({
+    required this.plugin,
+    required this.kind,
+    required this.id,
+    required this.title,
+    required this.slot,
+    this.icon,
+    this.method,
+    this.view,
+    this.interactive = false,
+    this.params = const {},
+  });
+
+  String get key => '$plugin#${kind.name}#$id';
+
+  static List<PluginContribution> parse(String plugin, Object? contributes) {
+    if (contributes is! Map) {
+      return const [];
+    }
+    PluginContribution item(PluginContributionKind kind, Map json, String defaultSlot) => PluginContribution(
+      plugin: plugin,
+      kind: kind,
+      id: '${json['id'] ?? json['method'] ?? json['view'] ?? kind.name}',
+      title: '${json['title'] ?? json['id'] ?? plugin}',
+      slot: '${json['slot'] ?? defaultSlot}',
+      icon: json['icon'] as String?,
+      method: json['method'] as String?,
+      view: json['view'] as String?,
+      interactive: json['interactive'] == true,
+      params: json['params'] is Map ? Map<String, dynamic>.from(json['params'] as Map) : const {},
+    );
+    List<Map> list(Object? value) => value is List ? value.whereType<Map>().toList() : const [];
+    return [
+      for (final json in list(contributes['buttons'])) item(PluginContributionKind.button, json, 'viewer.topBar'),
+      for (final json in list(contributes['pages'])) item(PluginContributionKind.page, json, 'plugins.page'),
+      for (final json in list(contributes['overlays'])) item(PluginContributionKind.overlay, json, 'viewer'),
+    ];
+  }
+}
 
 class DevicePlugin {
   final String name;
@@ -57,10 +109,12 @@ class DevicePlugin {
   final String description;
   final String author;
   final String codePath;
-  final DevicePluginRuntime runtime;
   final String? entry;
   final List<DevicePluginMethod> methods;
   final List<Map<String, dynamic>> templates;
+  final List<PluginContribution> contributions;
+  final Map<String, String> events;
+  final Map<String, Map<String, dynamic>> routes;
   final bool enabled;
   final bool bundled;
 
@@ -71,10 +125,12 @@ class DevicePlugin {
     required this.description,
     required this.author,
     required this.codePath,
-    this.runtime = DevicePluginRuntime.wasm,
     this.entry,
     required this.methods,
     required this.templates,
+    this.contributions = const [],
+    this.events = const {},
+    this.routes = const {},
     required this.enabled,
     required this.bundled,
   });
@@ -91,13 +147,25 @@ class DevicePlugin {
     description: json['description'] as String? ?? '',
     author: json['author'] as String? ?? '',
     codePath: codePath,
-    runtime: json['runtime'] == 'dex' ? DevicePluginRuntime.dex : DevicePluginRuntime.wasm,
     entry: json['entry'] as String?,
     methods: (json['methods'] as List? ?? const [])
         .whereType<Map>()
         .map((method) => DevicePluginMethod.fromJson(Map<String, dynamic>.from(method)))
         .toList(),
     templates: (json['templates'] as List? ?? const []).whereType<Map>().map(Map<String, dynamic>.from).toList(),
+    contributions: PluginContribution.parse(json['name'] as String, json['contributes']),
+    events: json['contributes'] is Map && (json['contributes'] as Map)['events'] is Map
+        ? {
+            for (final MapEntry(:key, :value) in ((json['contributes'] as Map)['events'] as Map).entries)
+              '$key': '$value',
+          }
+        : const {},
+    routes: json['contributes'] is Map && (json['contributes'] as Map)['routes'] is Map
+        ? {
+            for (final MapEntry(:key, :value) in ((json['contributes'] as Map)['routes'] as Map).entries)
+              if (value is Map) '$key': Map<String, dynamic>.from(value),
+          }
+        : const {},
     enabled: enabled,
     bundled: bundled,
   );

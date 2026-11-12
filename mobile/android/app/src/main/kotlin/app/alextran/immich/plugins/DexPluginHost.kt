@@ -1,6 +1,16 @@
 package app.alextran.immich.plugins
 
+import android.app.Activity
 import android.content.Context
+import android.graphics.Color
+import android.view.Gravity
+import android.view.View
+import android.widget.TextView
+import app.alextran.immich.plugins.api.ImmichViewLifecycle
+import app.alextran.immich.plugins.api.ImmichViewPlugin
+import io.flutter.plugin.common.StandardMessageCodec
+import io.flutter.plugin.platform.PlatformView
+import io.flutter.plugin.platform.PlatformViewFactory
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
@@ -17,7 +27,10 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
-class DexPluginHost(private val context: Context, messenger: BinaryMessenger) : MethodChannel.MethodCallHandler {
+class DexPluginHost(private val context: Context, messenger: BinaryMessenger) :
+  MethodChannel.MethodCallHandler, PlatformViewFactory(StandardMessageCodec.INSTANCE) {
+  var activity: Activity? = null
+
   private val channel = MethodChannel(messenger, CHANNEL)
   private val mainHandler = Handler(Looper.getMainLooper())
   private val executor = Executors.newCachedThreadPool { runnable -> Thread(runnable, "dex-plugins") }
@@ -99,9 +112,46 @@ class DexPluginHost(private val context: Context, messenger: BinaryMessenger) : 
     override val dataDir: File = File(context.filesDir, "dex-plugin-data/$key").apply { mkdirs() }
     override val pluginDir: File = pluginDirs[key] ?: dataDir
     override val pluginName: String = key
+    override val activity: Activity? get() = this@DexPluginHost.activity
 
     override fun callHost(name: String, argsJson: String): String =
       invokeHost(key, name, "{\"authToken\":\"\",\"args\":$argsJson}")
+
+    override fun runOnUi(block: Runnable) {
+      mainHandler.post(block)
+    }
+
+    override fun sendEvent(name: String, payloadJson: String) {
+      mainHandler.post { channel.invokeMethod("event", mapOf("plugin" to key, "name" to name, "payload" to payloadJson)) }
+    }
+  }
+
+  override fun create(context: Context, viewId: Int, args: Any?): PlatformView {
+    val params = args as? Map<*, *> ?: emptyMap<String, Any>()
+    val key = params["plugin"] as? String ?: ""
+    val viewType = params["view"] as? String ?: ""
+    val json = params["params"] as? String ?: "{}"
+    val plugin = plugins[key]
+    val viewContext = activity ?: context
+    val view = try {
+      (plugin as? ImmichViewPlugin)?.createView(viewContext, viewType, json, hostFor(key))
+        ?: message(viewContext, "Plugin $key has no view \"$viewType\"")
+    } catch (error: Throwable) {
+      message(viewContext, "Plugin view failed: ${error.message ?: error}")
+    }
+    return object : PlatformView {
+      override fun getView(): View = view
+
+      override fun dispose() {
+        (plugin as? ImmichViewLifecycle)?.onViewDisposed(viewType, view)
+      }
+    }
+  }
+
+  private fun message(context: Context, text: String): View = TextView(context).apply {
+    this.text = text
+    setTextColor(Color.WHITE)
+    gravity = Gravity.CENTER
   }
 
   private fun runInBackground(result: MethodChannel.Result, block: () -> String?) {
@@ -150,6 +200,7 @@ class DexPluginHost(private val context: Context, messenger: BinaryMessenger) : 
 
   companion object {
     const val CHANNEL = "immich/dex_plugins"
+    const val VIEW_TYPE = "immich/plugin_view"
     private const val HOST_TIMEOUT_SECONDS = 300L
 
     private fun errorJson(status: Int, message: String): String =
