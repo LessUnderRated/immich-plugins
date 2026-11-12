@@ -1,13 +1,17 @@
 import 'dart:convert';
+import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:collection/collection.dart';
 import 'package:flutter/painting.dart';
+import 'package:immich_mobile/domain/models/device_plugin.model.dart';
 import 'package:immich_mobile/infrastructure/plugins/device_workflow_engine.dart';
 import 'package:immich_mobile/utils/asset_edit_renderer.utils.dart';
 import 'package:immich_mobile/utils/censor_geometry.dart';
+import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
 
 const censorStyleType = 'CensorStyleV1';
 
@@ -24,7 +28,10 @@ class CensorStyleOption {
     required this.title,
     required this.description,
     required this.schema,
+    this.pixels = false,
   });
+
+  final bool pixels;
 
   String get key => '$pluginName#$methodName';
 
@@ -44,6 +51,7 @@ class CensorStyles {
         title: method.title,
         description: method.description,
         schema: method.schema,
+        pixels: method.pixels && plugin.runtime == DevicePluginRuntime.dex,
       ),
   ];
 
@@ -72,16 +80,25 @@ class CensorStyles {
       }
       final rgba = data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes);
       sampler = GridSampler(rgba: rgba, width: grid.width, height: grid.height, cell: cell);
-      response = await _engine.callPluginMethod(selected.pluginName, selected.methodName, {
-        'type': censorStyleType,
-        'config': options,
-        'data': {
-          'width': width,
-          'height': height,
-          'size': size,
-          'grid': {'width': grid.width, 'height': grid.height, 'cell': cell, 'rgba': base64Encode(rgba)},
-        },
-      });
+      final sourceFile = selected.pixels ? await _writePixels(source) : null;
+      try {
+        response = await _engine.callPluginMethod(selected.pluginName, selected.methodName, {
+          'type': censorStyleType,
+          'config': options,
+          'data': {
+            'width': width,
+            'height': height,
+            'size': size,
+            'grid': {'width': grid.width, 'height': grid.height, 'cell': cell, 'rgba': base64Encode(rgba)},
+            if (sourceFile != null)
+              'source': {'path': sourceFile.path, 'width': source.width, 'height': source.height, 'format': 'rgba'},
+          },
+        });
+      } finally {
+        if (sourceFile != null && sourceFile.existsSync()) {
+          await sourceFile.delete();
+        }
+      }
     } finally {
       grid.dispose();
     }
@@ -150,6 +167,17 @@ class CensorStyles {
     }
   }
 
+  static Future<File> _writePixels(ui.Image source) async {
+    final data = await source.toByteData(format: ui.ImageByteFormat.rawRgba);
+    if (data == null) {
+      throw StateError('Unable to read pixels');
+    }
+    final directory = await getTemporaryDirectory();
+    final file = File(p.join(directory.path, 'censor-${DateTime.now().microsecondsSinceEpoch}.rgba'));
+    await file.writeAsBytes(data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes), flush: true);
+    return file;
+  }
+
   static Future<ui.Image?> _decodeImage(Object? image) async {
     if (image is! Map) {
       return null;
@@ -157,10 +185,18 @@ class CensorStyles {
     final width = image['width'];
     final height = image['height'];
     final rgba = image['rgba'];
-    if (width is! int || height is! int || rgba is! String) {
+    final path = image['path'];
+    if (width is! int || height is! int || (rgba is! String && path is! String)) {
       return null;
     }
-    final pixels = base64Decode(rgba);
+    final Uint8List pixels;
+    if (path is String) {
+      final file = File(path);
+      pixels = await file.readAsBytes();
+      await file.delete();
+    } else {
+      pixels = base64Decode(rgba as String);
+    }
     if (pixels.length != width * height * 4) {
       return null;
     }

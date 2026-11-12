@@ -29,11 +29,15 @@ const deviceHostFunctions = [
 
 class WasmPluginRuntime {
   static const _channel = MethodChannel('immich/wasm_plugins');
+  static const _dexChannel = MethodChannel('immich/dex_plugins');
+
+  final Map<String, DevicePluginRuntime> _runtimes = {};
 
   HostFunctionHandler? _hostHandler;
 
   WasmPluginRuntime() {
     _channel.setMethodCallHandler(_onNativeCall);
+    _dexChannel.setMethodCallHandler(_onNativeCall);
   }
 
   set hostHandler(HostFunctionHandler handler) => _hostHandler = handler;
@@ -50,21 +54,34 @@ class WasmPluginRuntime {
     return handler(args['plugin'] as String, args['name'] as String, args['input'] as String);
   }
 
-  Future<void> load(DevicePlugin plugin) => _channel.invokeMethod('load', {
-    'key': plugin.name,
-    'wasmPath': plugin.wasmPath,
-    'hostFunctions': deviceHostFunctions,
-    'enableHostFunctions': true,
-  });
+  MethodChannel _channelFor(String plugin) => _runtimes[plugin] == DevicePluginRuntime.dex ? _dexChannel : _channel;
 
-  Future<void> unload(String name) => _channel.invokeMethod('unload', {'key': name});
+  Future<void> load(DevicePlugin plugin) async {
+    _runtimes[plugin.name] = plugin.runtime;
+    await switch (plugin.runtime) {
+      DevicePluginRuntime.wasm => _channel.invokeMethod('load', {
+        'key': plugin.name,
+        'wasmPath': plugin.codePath,
+        'hostFunctions': deviceHostFunctions,
+        'enableHostFunctions': true,
+      }),
+      DevicePluginRuntime.dex => _dexChannel.invokeMethod('load', {
+        'key': plugin.name,
+        'dexPath': plugin.codePath,
+        'entry': plugin.entry,
+      }),
+    };
+  }
+
+  Future<void> unload(String name) async {
+    await _channelFor(name).invokeMethod('unload', {'key': name});
+    _runtimes.remove(name);
+  }
 
   Future<Map<String, dynamic>?> call(String plugin, String method, Map<String, dynamic> input) async {
-    final output = await _channel.invokeMethod<String>('call', {
-      'key': plugin,
-      'method': method,
-      'input': jsonEncode(input),
-    });
+    final output = await _channelFor(
+      plugin,
+    ).invokeMethod<String>('call', {'key': plugin, 'method': method, 'input': jsonEncode(input)});
     if (output == null || output.trim().isEmpty) {
       return null;
     }

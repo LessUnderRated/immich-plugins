@@ -11,6 +11,7 @@ import 'package:path_provider/path_provider.dart';
 const _bundledPlugins = ['immich-plugin-core'];
 const _manifestFile = 'manifest.json';
 const _wasmFile = 'plugin.wasm';
+const _dexFile = 'plugin.dex';
 final _validName = RegExp(r'^[A-Za-z0-9._-]+$');
 
 class DevicePluginStore {
@@ -77,7 +78,9 @@ class DevicePluginStore {
     for (final entry in directory.listSync().whereType<Directory>()) {
       final manifest = File(p.join(entry.path, _manifestFile));
       final wasm = File(p.join(entry.path, _wasmFile));
-      if (!manifest.existsSync() || !wasm.existsSync()) {
+      final dex = File(p.join(entry.path, _dexFile));
+      final code = wasm.existsSync() ? wasm : dex;
+      if (!manifest.existsSync() || !code.existsSync()) {
         continue;
       }
       try {
@@ -86,7 +89,7 @@ class DevicePluginStore {
         plugins.add(
           DevicePlugin.fromManifest(
             json,
-            wasmPath: wasm.path,
+            codePath: code.path,
             enabled: !disabled.contains(name),
             bundled: _bundledPlugins.contains(name),
           ),
@@ -112,7 +115,7 @@ class DevicePluginStore {
           }
         }
         final wasm = await rootBundle.load('assets/plugins/$name/$_wasmFile');
-        await _write(name, manifestText, wasm.buffer.asUint8List(wasm.offsetInBytes, wasm.lengthInBytes));
+        await _write(name, manifestText, wasm.buffer.asUint8List(wasm.offsetInBytes, wasm.lengthInBytes), _wasmFile);
       } catch (error, stack) {
         _log.severe('Unable to install bundled plugin $name', error, stack);
       }
@@ -153,6 +156,24 @@ class DevicePluginStore {
     }
 
     final base = p.posix.dirname(manifestEntry.name);
+    if (manifest['runtime'] == 'dex') {
+      if (manifest['entry'] is! String) {
+        throw const FormatException('A dex plugin manifest needs an "entry" class name');
+      }
+      final declaredDex = manifest['dexPath'] as String?;
+      final dexName = declaredDex == null
+          ? null
+          : p.posix.normalize(p.posix.join(base == '.' ? '' : base, declaredDex));
+      final dexEntry =
+          archive.files.where((file) => file.isFile && file.name == dexName).firstOrNull ??
+          archive.files.where((file) => file.isFile && file.name.toLowerCase().endsWith('.dex')).firstOrNull;
+      if (dexEntry == null) {
+        throw const FormatException('The zip does not contain a .dex file');
+      }
+      await _write(name, manifestText, dexEntry.content, _dexFile);
+      return name;
+    }
+
     final declared = manifest['wasmPath'] as String?;
     final wasmName = declared == null ? null : p.posix.normalize(p.posix.join(base == '.' ? '' : base, declared));
     final wasmEntry =
@@ -162,7 +183,7 @@ class DevicePluginStore {
       throw const FormatException('The zip does not contain a .wasm file');
     }
 
-    await _write(name, manifestText, wasmEntry.content);
+    await _write(name, manifestText, wasmEntry.content, _wasmFile);
     return name;
   }
 
@@ -176,7 +197,7 @@ class DevicePluginStore {
     }
   }
 
-  Future<void> _write(String name, String manifest, List<int> wasm) async {
+  Future<void> _write(String name, String manifest, List<int> code, String codeFile) async {
     final directory = Directory(p.join((await root).path, name));
     final staging = Directory('${directory.path}.staging');
     if (staging.existsSync()) {
@@ -184,7 +205,7 @@ class DevicePluginStore {
     }
     await staging.create(recursive: true);
     await File(p.join(staging.path, _manifestFile)).writeAsString(manifest, flush: true);
-    await File(p.join(staging.path, _wasmFile)).writeAsBytes(wasm, flush: true);
+    await File(p.join(staging.path, codeFile)).writeAsBytes(code, flush: true);
     if (directory.existsSync()) {
       await directory.delete(recursive: true);
     }

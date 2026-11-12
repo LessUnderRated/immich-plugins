@@ -20,6 +20,7 @@ import app.alextran.immich.images.RemoteImageApi
 import app.alextran.immich.images.RemoteImagesImpl
 import app.alextran.immich.passkey.PasskeyPlugin
 import app.alextran.immich.plugins.DeviceMediaWriter
+import app.alextran.immich.plugins.DexPluginHost
 import app.alextran.immich.plugins.WasmPluginHost
 import app.alextran.immich.permission.PermissionApi
 import app.alextran.immich.permission.PermissionApiImpl
@@ -36,6 +37,7 @@ class MainActivity : FlutterFragmentActivity() {
     registerPlugins(this, flutterEngine)
     flutterEngine.plugins.add(PasskeyPlugin())
     WasmPluginHost(flutterEngine.dartExecutor.binaryMessenger)
+    DexPluginHost(applicationContext, flutterEngine.dartExecutor.binaryMessenger)
     DeviceMediaWriter(this, flutterEngine.dartExecutor.binaryMessenger)
   }
 

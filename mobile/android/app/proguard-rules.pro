@@ -54,3 +54,6 @@
 -dontwarn com.dylibso.chicory.annotations.**
 -dontwarn java.lang.System$Logger
 -dontwarn java.lang.System$Logger$Level
+
+# Dex plugins are compiled against this API and loaded at runtime
+-keep interface app.alextran.immich.plugins.api.** { *; }
