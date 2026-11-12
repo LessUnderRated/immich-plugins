@@ -4,6 +4,7 @@ import 'dart:io';
 
 import 'package:immich_mobile/domain/models/asset/base_asset.model.dart';
 import 'package:immich_mobile/extensions/platform_extensions.dart';
+import 'package:immich_mobile/infrastructure/repositories/private_files.repository.dart';
 import 'package:logging/logging.dart';
 import 'package:photo_manager/photo_manager.dart';
 
@@ -13,6 +14,10 @@ class StorageRepository {
   StorageRepository();
 
   Future<File?> getFileForAsset(String assetId) async {
+    if (isPrivateAssetId(assetId)) {
+      final privateFile = File(privateFilePathOf(assetId));
+      return privateFile.existsSync() ? privateFile : null;
+    }
     File? file;
     final log = Logger('StorageRepository');
 

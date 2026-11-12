@@ -6,6 +6,7 @@ import 'package:flutter/painting.dart';
 import 'package:flutter/services.dart';
 import 'package:immich_mobile/domain/models/asset/base_asset.model.dart';
 import 'package:immich_mobile/domain/models/asset_edit.model.dart';
+import 'package:immich_mobile/infrastructure/repositories/private_files.repository.dart';
 import 'package:immich_mobile/utils/asset_edit_renderer.utils.dart';
 import 'package:openapi/api.dart' show CropParameters, MirrorParameters, MosaicParameters, RotateParameters;
 import 'package:path/path.dart' as p;
@@ -69,12 +70,11 @@ class DeviceEditRepository {
   }
 
   Future<Uint8List?> readOriginal(String localId) async {
-    final backup = await _backupIfExists(localId);
+    final backup = await _backupIfExists(_backupKey(localId));
     if (backup != null) {
       return backup.readAsBytes();
     }
-    final entity = await AssetEntity.fromId(localId);
-    final file = await entity?.originFile;
+    final file = await _sourceFile(localId);
     if (file == null || !file.existsSync()) {
       return null;
     }
@@ -122,8 +122,7 @@ class DeviceEditRepository {
   }
 
   Future<Uint8List?> readCurrent(String localId) async {
-    final entity = await AssetEntity.fromId(localId);
-    final file = await entity?.originFile;
+    final file = await _sourceFile(localId);
     if (file == null || !file.existsSync()) {
       return null;
     }
@@ -142,8 +141,19 @@ class DeviceEditRepository {
     return (outcome: DeviceEditOutcome.editedInPlace, createdId: null);
   }
 
+  Future<File?> _sourceFile(String localId) async {
+    if (isPrivateAssetId(localId)) {
+      return File(privateFilePathOf(localId));
+    }
+    final entity = await AssetEntity.fromId(localId);
+    return entity?.originFile;
+  }
+
+  String _backupKey(String localId) =>
+      isPrivateAssetId(localId) ? 'private_${p.basename(privateFilePathOf(localId)).hashCode.toUnsigned(32)}' : localId;
+
   Future<DeviceEditResult> removeEdits(LocalAsset asset) async {
-    final backup = await _backupIfExists(asset.id);
+    final backup = await _backupIfExists(_backupKey(asset.id));
     final state = await _readState();
     if (backup == null) {
       return (outcome: DeviceEditOutcome.unchanged, createdId: null);
@@ -156,21 +166,30 @@ class DeviceEditRepository {
   }
 
   Future<File> _ensureBackup(LocalAsset asset) async {
-    final existing = await _backupIfExists(asset.id);
+    final existing = await _backupIfExists(_backupKey(asset.id));
     if (existing != null) {
       return existing;
     }
-    final entity = await AssetEntity.fromId(asset.id);
-    final source = await entity?.originFile;
+    final source = await _sourceFile(asset.id);
     if (source == null || !source.existsSync()) {
       throw StateError('Original file not found');
     }
-    final backup = await _backupFile(asset.id, asset.name);
+    final backup = await _backupFile(_backupKey(asset.id), asset.name);
     await backup.parent.create(recursive: true);
     return source.copy(backup.path);
   }
 
   Future<void> _overwrite(String localId, Uint8List bytes, {File? exifSource, int? width, int? height}) async {
+    if (isPrivateAssetId(localId)) {
+      final target = File(privateFilePathOf(localId));
+      final staged = File('${target.path}.tmp');
+      await staged.writeAsBytes(bytes, flush: true);
+      await staged.rename(target.path);
+      PaintingBinding.instance.imageCache
+        ..clear()
+        ..clearLiveImages();
+      return;
+    }
     final temp = File(p.join((await getTemporaryDirectory()).path, 'edit_$localId'));
     await temp.writeAsBytes(bytes, flush: true);
     try {

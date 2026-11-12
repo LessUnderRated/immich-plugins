@@ -8,6 +8,7 @@ import 'package:immich_mobile/extensions/build_context_extensions.dart';
 import 'package:immich_mobile/extensions/platform_extensions.dart';
 import 'package:immich_mobile/generated/translations.g.dart';
 import 'package:immich_mobile/presentation/actions/action.dart';
+import 'package:immich_mobile/presentation/actions/private_files.helpers.dart';
 import 'package:immich_mobile/providers/infrastructure/settings.provider.dart';
 import 'package:immich_mobile/providers/infrastructure/toast.provider.dart';
 import 'package:immich_mobile/repositories/asset_media.repository.dart';
@@ -31,8 +32,10 @@ class ShareAction extends AssetActionBuilder {
     return .new(
       icon: CurrentPlatform.isAndroid ? Icons.share_rounded : Icons.ios_share_rounded,
       label: context.t.share,
-      onAction: () => _share(context, ref, assets, ref.read(appConfigProvider).share.fileType),
-      onSecondaryAction: () => _promptQualityAndShare(context, ref, assets),
+      onAction: () => assets.any(isPrivateAsset)
+          ? sharePrivateAssets(ref, assets)
+          : _share(context, ref, assets, ref.read(appConfigProvider).share.fileType),
+      onSecondaryAction: assets.any(isPrivateAsset) ? null : () => _promptQualityAndShare(context, ref, assets),
     );
   }
 

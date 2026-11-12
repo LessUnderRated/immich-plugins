@@ -5,6 +5,7 @@ import 'package:immich_mobile/constants/enums.dart';
 import 'package:immich_mobile/domain/models/asset/base_asset.model.dart';
 import 'package:immich_mobile/infrastructure/repositories/app_album.repository.dart';
 import 'package:immich_mobile/infrastructure/repositories/device_album.repository.dart';
+import 'package:immich_mobile/infrastructure/repositories/private_files.repository.dart';
 import 'package:immich_mobile/presentation/actions/action.dart';
 import 'package:immich_mobile/providers/app_album.provider.dart';
 import 'package:immich_mobile/providers/background_sync.provider.dart';
@@ -14,7 +15,7 @@ const _folders = DeviceAlbumRepository();
 
 final _localAssetsProvider = Provider.family.autoDispose<List<LocalAsset>?, ActionSource>((ref, source) {
   final local = ref.watch(assetsActionProvider(source)).whereType<LocalAsset>().toList(growable: false);
-  return local.isEmpty ? null : local;
+  return local.isEmpty || local.any((asset) => isPrivateAssetId(asset.id)) ? null : local;
 }, dependencies: [assetsActionProvider]);
 
 Future<void> _run(

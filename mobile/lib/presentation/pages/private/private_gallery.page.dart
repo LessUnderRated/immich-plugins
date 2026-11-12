@@ -16,7 +16,8 @@ import 'package:immich_mobile/presentation/widgets/timeline/timeline.widget.dart
 import 'package:immich_mobile/providers/infrastructure/timeline.provider.dart';
 import 'package:drift/drift.dart' hide Column;
 import 'package:immich_mobile/data/db/main/table/local/asset.dart';
-import 'package:immich_mobile/presentation/pages/private/private_files.page.dart';
+import 'package:immich_mobile/domain/models/asset/base_asset.model.dart';
+import 'package:immich_mobile/domain/services/timeline.service.dart';
 import 'package:immich_mobile/providers/background_sync.provider.dart';
 import 'package:immich_mobile/providers/infrastructure/db.provider.dart';
 import 'package:immich_mobile/providers/private_vault.provider.dart';
@@ -138,7 +139,63 @@ class _MigratingPrivateFilesState extends ConsumerState<_MigratingPrivateFiles> 
   }
 
   @override
-  Widget build(BuildContext context) => PrivateFilesView(onLock: widget.onLock, legacyCount: widget.legacyCount);
+  Widget build(BuildContext context) => _PrivateFilesTimeline(onLock: widget.onLock, legacyCount: widget.legacyCount);
+}
+
+class _PrivateFilesTimeline extends ConsumerWidget {
+  final VoidCallback onLock;
+  final int legacyCount;
+
+  const _PrivateFilesTimeline({required this.onLock, required this.legacyCount});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    return ProviderScope(
+      overrides: [
+        timelineServiceProvider.overrideWith((ref) {
+          final repository = ref.watch(privateFilesRepositoryProvider);
+          var assets = <BaseAsset>[];
+          final counts = StreamController<int>.broadcast();
+          Future<void> reload() async {
+            assets = [for (final file in await repository.list()) file.toAsset()];
+            if (!counts.isClosed) {
+              counts.add(assets.length);
+            }
+          }
+
+          final subscription = repository.changes.listen((_) => unawaited(reload()));
+          unawaited(reload());
+          final timelineService = ref
+              .watch(timelineFactoryProvider)
+              .fromAssetStream(() => assets, counts.stream, TimelineOrigin.localAlbum);
+          ref.onDispose(() {
+            unawaited(subscription.cancel());
+            unawaited(counts.close());
+            timelineService.dispose();
+          });
+          return timelineService;
+        }),
+      ],
+      child: Timeline(
+        appBar: SliverAppBar(
+          floating: true,
+          snap: true,
+          centerTitle: true,
+          title: const Text('Private'),
+          actions: [
+            if (legacyCount > 0)
+              TextButton(
+                onPressed: () => context.pushRoute(const PrivateLegacyRoute()),
+                child: Text('Older items ($legacyCount)'),
+              ),
+            IconButton(tooltip: 'Lock', icon: const Icon(Icons.lock_outline), onPressed: onLock),
+          ],
+        ),
+        groupBy: GroupAssetsBy.none,
+        bottomSheet: const _PrivateBottomSheet(),
+      ),
+    );
+  }
 }
 
 class _PrivateTimeline extends ConsumerWidget {

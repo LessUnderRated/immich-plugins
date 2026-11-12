@@ -4,6 +4,7 @@ import android.content.ContentResolver
 import android.content.ContentUris
 import android.content.Context
 import android.graphics.*
+import android.media.ThumbnailUtils
 import android.net.Uri
 import android.os.Build
 import android.os.CancellationSignal
@@ -16,6 +17,7 @@ import androidx.exifinterface.media.ExifInterface
 import app.alextran.immich.NativeBuffer
 import app.alextran.immich.NativeImage
 import kotlin.math.*
+import java.io.File
 import java.io.IOException
 import java.util.concurrent.Executors
 import com.bumptech.glide.Glide
@@ -35,6 +37,8 @@ data class Request(
 
 // Impeller shrinks each side to the GPU texture limit on its own, which squishes long images.
 const val MAX_PIXEL_SIZE = 16384
+
+const val PRIVATE_PREFIX = "private:"
 
 /** Set [exactSize] to decode at the smallest size that covers [target] without upscaling. */
 @RequiresApi(Build.VERSION_CODES.Q)
@@ -198,11 +202,9 @@ class LocalImagesImpl(context: Context) : LocalImageApi {
     signal: CancellationSignal
   ) {
     signal.throwIfCanceled()
-    val id = assetId.toLong()
-    val uri = ContentUris.withAppendedId(Images.Media.EXTERNAL_CONTENT_URI, id)
-
-    signal.throwIfCanceled()
-    val bytes = resolver.openInputStream(uri)?.use { it.readBytes() }
+    val bytes = privateFile(assetId)?.readBytes()
+      ?: resolver.openInputStream(ContentUris.withAppendedId(Images.Media.EXTERNAL_CONTENT_URI, assetId.toLong()))
+        ?.use { it.readBytes() }
       ?: throw IOException("Could not read image data for $assetId")
 
     signal.throwIfCanceled()
@@ -231,6 +233,15 @@ class LocalImagesImpl(context: Context) : LocalImageApi {
   ) {
     signal.throwIfCanceled()
     val size = Size(width.toInt(), height.toInt())
+    val private = privateFile(assetId)
+    if (private != null) {
+      try {
+        callback(Result.success(decodePrivate(private, size, isVideo, signal).toNativeBuffer()))
+      } catch (e: Exception) {
+        callback(if (e is OperationCanceledException) CANCELLED else Result.failure(e))
+      }
+      return
+    }
     val id = assetId.toLong()
 
     signal.throwIfCanceled()
@@ -275,6 +286,37 @@ class LocalImagesImpl(context: Context) : LocalImageApi {
       Images.Thumbnails.getThumbnail(resolver, id, Images.Thumbnails.MINI_KIND, OPTIONS)
     }
     return bitmap to orientation
+  }
+
+  private fun privateFile(assetId: String): File? =
+    if (assetId.startsWith(PRIVATE_PREFIX)) File(assetId.removePrefix(PRIVATE_PREFIX)) else null
+
+  private fun decodePrivate(file: File, target: Size, isVideo: Boolean, signal: CancellationSignal): Bitmap {
+    signal.throwIfCanceled()
+    if (!file.exists()) throw IOException("Private file missing: ${file.name}")
+    if (isVideo) {
+      val size = if (target.width > 0 && target.height > 0) target else Size(768, 768)
+      return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+        ThumbnailUtils.createVideoThumbnail(file, size, signal)
+      } else {
+        @Suppress("DEPRECATION")
+        ThumbnailUtils.createVideoThumbnail(file.path, Images.Thumbnails.MINI_KIND)
+          ?: throw IOException("Could not read video frame for ${file.name}")
+      }
+    }
+    return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+      ImageDecoder.createSource(file).let { source ->
+        ImageDecoder.decodeBitmap(source) { decoder, info, _ ->
+          decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
+          if (target.width > 0 && target.height > 0) {
+            val sample = max(1, min(info.size.width / target.width, info.size.height / target.height))
+            decoder.setTargetSampleSize(sample)
+          }
+        }
+      }
+    } else {
+      BitmapFactory.decodeFile(file.path) ?: throw IOException("Could not decode ${file.name}")
+    }
   }
 
   private fun isRawMime(uri: Uri): Boolean {

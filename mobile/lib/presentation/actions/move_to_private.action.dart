@@ -5,6 +5,7 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:immich_mobile/constants/enums.dart';
 import 'package:immich_mobile/domain/models/asset/base_asset.model.dart';
 import 'package:immich_mobile/presentation/actions/action.dart';
+import 'package:immich_mobile/presentation/actions/private_files.helpers.dart';
 import 'package:immich_mobile/providers/background_sync.provider.dart';
 import 'package:immich_mobile/providers/private_vault.provider.dart';
 import 'package:immich_mobile/utils/error_handler.dart';
@@ -23,6 +24,9 @@ class MoveToPrivateAction extends AssetActionBuilder {
     if (assets == null) {
       return null;
     }
+    if (allPrivateAssets(assets)) {
+      return .new(icon: Icons.lock_open_outlined, label: 'Unhide', onAction: () => _unhideFiles(context, ref, assets));
+    }
     final privateIds = ref.watch(privateIdsProvider);
     final allPrivate = assets.every((asset) => privateIds.contains(asset.id));
     return .new(
@@ -30,6 +34,18 @@ class MoveToPrivateAction extends AssetActionBuilder {
       label: allPrivate ? 'Unhide' : 'Private',
       onAction: () => _toggle(context, ref, assets, makePrivate: !allPrivate),
     );
+  }
+
+  Future<void> _unhideFiles(BuildContext context, WidgetRef ref, List<LocalAsset> assets) async {
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    final clearSelection = ref.read(clearSelectionProvider(source));
+    try {
+      final restored = await unhidePrivateAssets(ref, assets);
+      clearSelection();
+      messenger?.showSnackBar(SnackBar(content: Text('Moved $restored back to the gallery')));
+    } catch (error, stack) {
+      handleError(error, stack: stack, description: 'Failed to unhide private items');
+    }
   }
 
   Future<void> _toggle(

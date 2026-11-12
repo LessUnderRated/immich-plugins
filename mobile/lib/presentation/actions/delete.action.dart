@@ -5,6 +5,7 @@ import 'package:immich_mobile/domain/models/asset/base_asset.model.dart';
 import 'package:immich_mobile/extensions/platform_extensions.dart';
 import 'package:immich_mobile/generated/translations.g.dart';
 import 'package:immich_mobile/presentation/actions/action.dart';
+import 'package:immich_mobile/presentation/actions/private_files.helpers.dart';
 import 'package:immich_mobile/providers/infrastructure/asset.provider.dart';
 import 'package:immich_mobile/providers/infrastructure/store.provider.dart';
 import 'package:immich_mobile/providers/infrastructure/toast.provider.dart';
@@ -52,6 +53,14 @@ class DeleteAction extends AssetActionBuilder {
 
   @override
   ActionItem? create(BuildContext context, WidgetRef ref) {
+    final assets = ref.watch(assetsActionProvider(source));
+    if (allPrivateAssets(assets)) {
+      return .new(
+        icon: Icons.delete_outline,
+        label: context.t.delete,
+        onAction: () => _deletePrivate(context, ref, assets.toList(growable: false)),
+      );
+    }
     final trash = ref.watch(_stateProvider(source).select((state) => state?.trash));
     if (trash == null) {
       return null;
@@ -62,6 +71,20 @@ class DeleteAction extends AssetActionBuilder {
       label: trash ? context.t.trash : context.t.delete,
       onAction: () => _delete(context, ref),
     );
+  }
+
+  Future<void> _deletePrivate(BuildContext context, WidgetRef ref, List<BaseAsset> assets) async {
+    final toastService = ref.read(toastServiceProvider);
+    final clearSelection = ref.read(clearSelectionProvider(source));
+    try {
+      final deleted = await deletePrivateAssets(context, ref, assets);
+      if (deleted != null) {
+        toastService.success('Deleted $deleted item${deleted == 1 ? '' : 's'}');
+        clearSelection();
+      }
+    } catch (error, stack) {
+      handleError(error, stack: stack, description: "Failed to delete private items");
+    }
   }
 
   Future<void> _delete(BuildContext context, WidgetRef ref) async {

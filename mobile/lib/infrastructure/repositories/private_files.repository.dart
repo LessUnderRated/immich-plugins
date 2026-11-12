@@ -7,6 +7,12 @@ import 'package:immich_mobile/domain/models/asset/base_asset.model.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
+const privateAssetIdPrefix = 'private:';
+
+bool isPrivateAssetId(String id) => id.startsWith(privateAssetIdPrefix);
+
+String privateFilePathOf(String id) => id.substring(privateAssetIdPrefix.length);
+
 class PrivateFile {
   final String file;
   final String? thumb;
@@ -45,6 +51,21 @@ class PrivateFile {
     isVideo: json['video'] == true,
   );
 
+  String get assetId => '$privateAssetIdPrefix$file';
+
+  LocalAsset toAsset() => LocalAsset(
+    id: assetId,
+    name: name,
+    type: isVideo ? AssetType.video : AssetType.image,
+    createdAt: takenAt,
+    updatedAt: takenAt,
+    width: width,
+    height: height,
+    durationMs: durationMs,
+    playbackStyle: isVideo ? AssetPlaybackStyle.video : AssetPlaybackStyle.image,
+    isEdited: false,
+  );
+
   Map<String, dynamic> toJson() => {
     'file': file,
     'thumb': thumb,
@@ -66,6 +87,16 @@ class PrivateFilesRepository {
   final _changes = StreamController<void>.broadcast();
 
   Stream<void> get changes => _changes.stream;
+
+  void notifyChanged() => _changes.add(null);
+
+  Future<List<PrivateFile>> forAssets(Iterable<BaseAsset> assets) async {
+    final paths = {
+      for (final asset in assets)
+        if (asset is LocalAsset && isPrivateAssetId(asset.id)) privateFilePathOf(asset.id),
+    };
+    return (await list()).where((file) => paths.contains(file.file)).toList();
+  }
 
   Future<bool> hasAccess() async =>
       Platform.isAndroid && (await _channel.invokeMethod<bool>('privateHasAccess') ?? false);
