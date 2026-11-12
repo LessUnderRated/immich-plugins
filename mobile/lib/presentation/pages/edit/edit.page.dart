@@ -1098,7 +1098,12 @@ class _MosaicCanvasState extends ConsumerState<_MosaicCanvas> {
               setState(() => _effects[key] = image);
             })
             .catchError((Object error, StackTrace stack) {
-              _pending.remove(key);
+              if (mounted) {
+                setState(() => _pending.remove(key));
+                ScaffoldMessenger.maybeOf(
+                  context,
+                )?.showSnackBar(SnackBar(content: Text('Censor style failed: $error')));
+              }
               handleError(error, stack: stack, description: 'Censor style failed');
             }),
       );
@@ -1188,29 +1193,50 @@ class _MosaicCanvasState extends ConsumerState<_MosaicCanvas> {
         return Center(
           child: SizedBox.fromSize(
             size: size,
-            child: Listener(
-              behavior: HitTestBehavior.opaque,
-              onPointerDown: (event) => _onPointerDown(event, size),
-              onPointerMove: (event) => _onPointerMove(event, size),
-              onPointerUp: _onPointerEnd,
-              onPointerCancel: _onPointerEnd,
-              child: CustomPaint(
-                size: size,
-                painter: _MosaicPainter(
-                  source: source,
-                  effects: Map.unmodifiable(_effects),
-                  originalWidth: width,
-                  originalHeight: height,
-                  strokes: editorState.mosaicStrokes,
-                  activePoints: _activePoints,
-                  activeStroke: activeStroke,
-                  repaint: _repaint,
-                ),
-              ),
+            child: Stack(
+              children: [
+                Positioned.fill(child: _buildCanvas(editorState, source, width, height, activeStroke, size)),
+                if (_pending.isNotEmpty)
+                  const Positioned(
+                    top: 8,
+                    right: 8,
+                    child: SizedBox.square(dimension: 20, child: CircularProgressIndicator(strokeWidth: 2)),
+                  ),
+              ],
             ),
           ),
         );
       },
+    );
+  }
+
+  Widget _buildCanvas(
+    EditorState editorState,
+    ui.Image source,
+    int width,
+    int height,
+    MosaicStrokeDraft activeStroke,
+    Size size,
+  ) {
+    return Listener(
+      behavior: HitTestBehavior.opaque,
+      onPointerDown: (event) => _onPointerDown(event, size),
+      onPointerMove: (event) => _onPointerMove(event, size),
+      onPointerUp: _onPointerEnd,
+      onPointerCancel: _onPointerEnd,
+      child: CustomPaint(
+        size: size,
+        painter: _MosaicPainter(
+          source: source,
+          effects: Map.unmodifiable(_effects),
+          originalWidth: width,
+          originalHeight: height,
+          strokes: editorState.mosaicStrokes,
+          activePoints: _activePoints,
+          activeStroke: activeStroke,
+          repaint: _repaint,
+        ),
+      ),
     );
   }
 }

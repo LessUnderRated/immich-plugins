@@ -9,7 +9,7 @@ void main() {
     final json = jsonDecode(File('assets/plugins/immich-plugin-core/manifest.json').readAsStringSync()) as Map;
     final plugin = DevicePlugin.fromManifest(
       Map<String, dynamic>.from(json),
-      wasmPath: 'plugin.wasm',
+      codePath: 'plugin.wasm',
       enabled: true,
       bundled: true,
     );

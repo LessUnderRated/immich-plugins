@@ -11,6 +11,7 @@ class DevicePluginMethod {
   final List<String> allowedHosts;
   final List<String> uiHints;
   final Map<String, dynamic> schema;
+  final bool pixels;
 
   const DevicePluginMethod({
     required this.name,
@@ -21,6 +22,7 @@ class DevicePluginMethod {
     required this.allowedHosts,
     required this.uiHints,
     required this.schema,
+    this.pixels = false,
   });
 
   factory DevicePluginMethod.fromJson(Map<String, dynamic> json) => DevicePluginMethod(
@@ -32,6 +34,7 @@ class DevicePluginMethod {
     allowedHosts: _strings(json['allowedHosts']),
     uiHints: _strings(json['uiHints']),
     schema: _map(json['schema']),
+    pixels: json['pixels'] == true,
   );
 
   bool get isFilter => uiHints.contains('Filter');
@@ -43,13 +46,17 @@ class DevicePluginMethod {
   bool get isAssetAction => uiHints.contains('AssetAction') || types.contains('AssetActionV1');
 }
 
+enum DevicePluginRuntime { wasm, dex }
+
 class DevicePlugin {
   final String name;
   final String version;
   final String title;
   final String description;
   final String author;
-  final String wasmPath;
+  final String codePath;
+  final DevicePluginRuntime runtime;
+  final String? entry;
   final List<DevicePluginMethod> methods;
   final List<Map<String, dynamic>> templates;
   final bool enabled;
@@ -61,7 +68,9 @@ class DevicePlugin {
     required this.title,
     required this.description,
     required this.author,
-    required this.wasmPath,
+    required this.codePath,
+    this.runtime = DevicePluginRuntime.wasm,
+    this.entry,
     required this.methods,
     required this.templates,
     required this.enabled,
@@ -70,7 +79,7 @@ class DevicePlugin {
 
   factory DevicePlugin.fromManifest(
     Map<String, dynamic> json, {
-    required String wasmPath,
+    required String codePath,
     required bool enabled,
     required bool bundled,
   }) => DevicePlugin(
@@ -79,7 +88,9 @@ class DevicePlugin {
     title: json['title'] as String? ?? json['name'] as String,
     description: json['description'] as String? ?? '',
     author: json['author'] as String? ?? '',
-    wasmPath: wasmPath,
+    codePath: codePath,
+    runtime: json['runtime'] == 'dex' ? DevicePluginRuntime.dex : DevicePluginRuntime.wasm,
+    entry: json['entry'] as String?,
     methods: (json['methods'] as List? ?? const [])
         .whereType<Map>()
         .map((method) => DevicePluginMethod.fromJson(Map<String, dynamic>.from(method)))
