@@ -8,9 +8,7 @@ import 'package:logging/logging.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
-const _bundledPlugins = ['immich-plugin-core'];
 const _manifestFile = 'manifest.json';
-const _wasmFile = 'plugin.wasm';
 const _dexFile = 'plugin.dex';
 final _validName = RegExp(r'^[A-Za-z0-9._-]+$');
 
@@ -77,9 +75,7 @@ class DevicePluginStore {
     final plugins = <DevicePlugin>[];
     for (final entry in directory.listSync().whereType<Directory>()) {
       final manifest = File(p.join(entry.path, _manifestFile));
-      final wasm = File(p.join(entry.path, _wasmFile));
-      final dex = File(p.join(entry.path, _dexFile));
-      final code = wasm.existsSync() ? wasm : dex;
+      final code = File(p.join(entry.path, _dexFile));
       if (!manifest.existsSync() || !code.existsSync()) {
         continue;
       }
@@ -87,12 +83,7 @@ class DevicePluginStore {
         final json = Map<String, dynamic>.from(jsonDecode(await manifest.readAsString()) as Map);
         final name = json['name'] as String;
         plugins.add(
-          DevicePlugin.fromManifest(
-            json,
-            codePath: code.path,
-            enabled: !disabled.contains(name),
-            bundled: _bundledPlugins.contains(name),
-          ),
+          DevicePlugin.fromManifest(json, codePath: code.path, enabled: !disabled.contains(name), bundled: false),
         );
       } catch (error) {
         _log.warning('Skipping invalid plugin in ${entry.path}', error);
@@ -100,26 +91,6 @@ class DevicePluginStore {
     }
     plugins.sort((a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()));
     return plugins;
-  }
-
-  Future<void> installBundled() async {
-    for (final name in _bundledPlugins) {
-      try {
-        final manifestText = await rootBundle.loadString('assets/plugins/$name/$_manifestFile');
-        final manifest = Map<String, dynamic>.from(jsonDecode(manifestText) as Map);
-        final installed = File(p.join((await root).path, name, _manifestFile));
-        if (installed.existsSync()) {
-          final current = jsonDecode(await installed.readAsString()) as Map;
-          if (current['version'] == manifest['version']) {
-            continue;
-          }
-        }
-        final wasm = await rootBundle.load('assets/plugins/$name/$_wasmFile');
-        await _write(name, manifestText, wasm.buffer.asUint8List(wasm.offsetInBytes, wasm.lengthInBytes), _wasmFile);
-      } catch (error, stack) {
-        _log.severe('Unable to install bundled plugin $name', error, stack);
-      }
-    }
   }
 
   Future<List<String>> installFromDropFolder() async {
@@ -156,34 +127,31 @@ class DevicePluginStore {
     }
 
     final base = p.posix.dirname(manifestEntry.name);
-    if (manifest['runtime'] == 'dex') {
-      if (manifest['entry'] is! String) {
-        throw const FormatException('A dex plugin manifest needs an "entry" class name');
-      }
-      final declaredDex = manifest['dexPath'] as String?;
-      final dexName = declaredDex == null
-          ? null
-          : p.posix.normalize(p.posix.join(base == '.' ? '' : base, declaredDex));
-      final dexEntry =
-          archive.files.where((file) => file.isFile && file.name == dexName).firstOrNull ??
-          archive.files.where((file) => file.isFile && file.name.toLowerCase().endsWith('.dex')).firstOrNull;
-      if (dexEntry == null) {
-        throw const FormatException('The zip does not contain a .dex file');
-      }
-      await _write(name, manifestText, dexEntry.content, _dexFile);
-      return name;
+    if (manifest['runtime'] != 'dex') {
+      throw const FormatException('Only native plugins are supported: the manifest needs "runtime": "dex"');
     }
-
-    final declared = manifest['wasmPath'] as String?;
-    final wasmName = declared == null ? null : p.posix.normalize(p.posix.join(base == '.' ? '' : base, declared));
-    final wasmEntry =
-        archive.files.where((file) => file.isFile && file.name == wasmName).firstOrNull ??
-        archive.files.where((file) => file.isFile && file.name.toLowerCase().endsWith('.wasm')).firstOrNull;
-    if (wasmEntry == null) {
-      throw const FormatException('The zip does not contain a .wasm file');
+    if (manifest['entry'] is! String) {
+      throw const FormatException('A dex plugin manifest needs an "entry" class name');
     }
-
-    await _write(name, manifestText, wasmEntry.content, _wasmFile);
+    final declaredDex = manifest['dexPath'] as String?;
+    final dexName = declaredDex == null ? null : p.posix.normalize(p.posix.join(base == '.' ? '' : base, declaredDex));
+    final dexEntry =
+        archive.files.where((file) => file.isFile && file.name == dexName).firstOrNull ??
+        archive.files.where((file) => file.isFile && file.name.toLowerCase().endsWith('.dex')).firstOrNull;
+    if (dexEntry == null) {
+      throw const FormatException('The zip does not contain a .dex file');
+    }
+    final prefix = base == '.' ? '' : '$base/';
+    final extras = <String, List<int>>{
+      for (final file in archive.files)
+        if (file.isFile &&
+            file != manifestEntry &&
+            file != dexEntry &&
+            file.name.startsWith(prefix) &&
+            !p.posix.normalize(file.name.substring(prefix.length)).startsWith('..'))
+          p.posix.normalize(file.name.substring(prefix.length)): file.content,
+    };
+    await _write(name, manifestText, dexEntry.content, _dexFile, extras: extras);
     return name;
   }
 
@@ -197,7 +165,13 @@ class DevicePluginStore {
     }
   }
 
-  Future<void> _write(String name, String manifest, List<int> code, String codeFile) async {
+  Future<void> _write(
+    String name,
+    String manifest,
+    List<int> code,
+    String codeFile, {
+    Map<String, List<int>> extras = const {},
+  }) async {
     final directory = Directory(p.join((await root).path, name));
     final staging = Directory('${directory.path}.staging');
     if (staging.existsSync()) {
@@ -206,6 +180,11 @@ class DevicePluginStore {
     await staging.create(recursive: true);
     await File(p.join(staging.path, _manifestFile)).writeAsString(manifest, flush: true);
     await File(p.join(staging.path, codeFile)).writeAsBytes(code, flush: true);
+    for (final MapEntry(key: path, value: bytes) in extras.entries) {
+      final target = File(p.join(staging.path, 'files', path));
+      await target.parent.create(recursive: true);
+      await target.writeAsBytes(bytes, flush: true);
+    }
     if (directory.existsSync()) {
       await directory.delete(recursive: true);
     }

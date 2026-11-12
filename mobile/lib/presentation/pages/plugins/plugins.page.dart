@@ -5,6 +5,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:immich_mobile/domain/models/device_plugin.model.dart';
+import 'package:immich_mobile/presentation/plugins/plugin_ui.dart';
 import 'package:immich_mobile/providers/device_plugins.provider.dart';
 import 'package:immich_mobile/routing/router.dart';
 import 'package:uuid/uuid.dart';
@@ -85,6 +86,16 @@ class _PluginList extends ConsumerWidget {
       data: (plugins) => ListView(
         padding: const EdgeInsets.all(12),
         children: [
+          for (final page in ref.watch(pluginSurfacesProvider).slot('plugins.page'))
+            Card(
+              child: ListTile(
+                leading: PluginIcon(plugin: page.plugin, icon: page.icon),
+                title: Text(page.title),
+                subtitle: Text(page.plugin),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () => runPluginContribution(ref, page),
+              ),
+            ),
           for (final plugin in plugins) _PluginCard(plugin: plugin),
           const _DropFolderHint(),
         ],
@@ -101,7 +112,7 @@ class _DropFolderHint extends ConsumerWidget {
     return Padding(
       padding: const EdgeInsets.all(8),
       child: Text(
-        'Install a plugin with + (a zip containing manifest.json and a .wasm file), or copy zips into '
+        'Install a plugin with + (a zip containing manifest.json and classes.dex), or copy zips into '
         'Android/data/<app>/files/plugins and tap the folder button.',
         style: Theme.of(context).textTheme.bodySmall,
       ),

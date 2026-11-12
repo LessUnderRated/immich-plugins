@@ -24,8 +24,11 @@ import 'package:immich_mobile/pages/common/splash_screen.page.dart';
 import 'package:immich_mobile/platform/background_worker_lock_api.g.dart';
 import 'package:immich_mobile/platform/native_sync_api.g.dart';
 import 'package:immich_mobile/platform/permission_api.g.dart';
+import 'package:immich_mobile/presentation/pages/picker/picker_app.dart';
+import 'package:immich_mobile/presentation/plugins/plugin_ui.dart';
 import 'package:immich_mobile/providers/app_life_cycle.provider.dart';
 import 'package:immich_mobile/providers/asset_viewer/share_intent_upload.provider.dart';
+import 'package:immich_mobile/providers/device_plugins.provider.dart';
 import 'package:immich_mobile/providers/infrastructure/platform.provider.dart';
 import 'package:immich_mobile/providers/infrastructure/settings.provider.dart';
 import 'package:immich_mobile/providers/locale_provider.dart';
@@ -47,7 +50,6 @@ import 'package:immich_mobile/utils/migration.dart';
 import 'package:immich_mobile/wm_executor.dart';
 import 'package:immich_ui/immich_ui.dart';
 import 'package:intl/date_symbol_data_local.dart';
-import 'package:immich_mobile/presentation/pages/picker/picker_app.dart';
 import 'package:logging/logging.dart';
 import 'package:maplibre_gl/maplibre_gl.dart';
 import 'package:timezone/data/latest.dart';
@@ -143,6 +145,8 @@ class ImmichApp extends ConsumerStatefulWidget {
 }
 
 class ImmichAppState extends ConsumerState<ImmichApp> with WidgetsBindingObserver {
+  StreamSubscription<void>? _pluginChanges;
+
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     switch (state) {
@@ -261,6 +265,11 @@ class ImmichAppState extends ConsumerState<ImmichApp> with WidgetsBindingObserve
       }
     });
 
+    final pluginEngine = ref.read(deviceWorkflowEngineProvider);
+    pluginEngine.uiHandler = (plugin, action) => performPluginUiAction(ref.read(appRouterProvider), plugin, action);
+    _pluginChanges = pluginEngine.changes.listen((_) => unawaited(pluginSurfaces.refresh(pluginEngine)));
+    unawaited(pluginEngine.ensureReady().then((_) => pluginSurfaces.refresh(pluginEngine)));
+
     ref.read(viewIntentHandlerProvider).init();
     ref.read(shareIntentUploadProvider.notifier).init();
     unawaited(ref.read(assetMediaRepositoryProvider).cleanupStaleShareFiles());
@@ -268,6 +277,7 @@ class ImmichAppState extends ConsumerState<ImmichApp> with WidgetsBindingObserve
 
   @override
   void dispose() {
+    unawaited(_pluginChanges?.cancel());
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
@@ -303,7 +313,10 @@ class ImmichAppState extends ConsumerState<ImmichApp> with WidgetsBindingObserve
             password: context.t.password,
             undo: context.t.undo,
           ),
-          child: ImmichThemeProvider(colorScheme: context.colorScheme, child: child!),
+          child: ImmichThemeProvider(
+            colorScheme: context.colorScheme,
+            child: PluginOverlayLayer(child: child!),
+          ),
         ),
         routerConfig: router.config(
           deepLinkBuilder: _deepLinkBuilder,

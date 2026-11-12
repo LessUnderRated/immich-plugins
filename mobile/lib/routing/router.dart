@@ -6,11 +6,13 @@ import 'package:immich_mobile/domain/models/album/album.model.dart';
 import 'package:immich_mobile/domain/models/album/local_album.model.dart';
 import 'package:immich_mobile/domain/models/asset/base_asset.model.dart';
 import 'package:immich_mobile/domain/models/asset_edit.model.dart';
+import 'package:immich_mobile/domain/models/device_plugin.model.dart';
 import 'package:immich_mobile/domain/models/log.model.dart';
 import 'package:immich_mobile/domain/models/memory.model.dart';
 import 'package:immich_mobile/domain/models/person.model.dart';
 import 'package:immich_mobile/domain/models/user.model.dart';
 import 'package:immich_mobile/domain/services/timeline.service.dart';
+import 'package:immich_mobile/infrastructure/repositories/private_vault.repository.dart';
 import 'package:immich_mobile/models/folder/recursive_folder.model.dart';
 import 'package:immich_mobile/models/shared_link/shared_link.model.dart';
 import 'package:immich_mobile/models/upload/share_intent_attachment.model.dart';
@@ -38,6 +40,7 @@ import 'package:immich_mobile/pages/share_intent/share_intent.page.dart';
 import 'package:immich_mobile/presentation/pages/activities.page.dart';
 import 'package:immich_mobile/presentation/pages/album.page.dart';
 import 'package:immich_mobile/presentation/pages/album_options.page.dart';
+import 'package:immich_mobile/presentation/pages/app_album.page.dart';
 import 'package:immich_mobile/presentation/pages/archive.page.dart';
 import 'package:immich_mobile/presentation/pages/asset_selection_timeline.page.dart';
 import 'package:immich_mobile/presentation/pages/asset_troubleshoot.page.dart';
@@ -47,14 +50,6 @@ import 'package:immich_mobile/presentation/pages/dev/main_timeline.page.dart';
 import 'package:immich_mobile/presentation/pages/dev/media_stat.page.dart';
 import 'package:immich_mobile/presentation/pages/download_info.page.dart';
 import 'package:immich_mobile/presentation/pages/edit/edit.page.dart';
-import 'package:immich_mobile/presentation/pages/plugins/device_workflow_editor.page.dart';
-import 'package:immich_mobile/presentation/pages/plugins/plugins.page.dart';
-import 'package:immich_mobile/presentation/pages/app_album.page.dart';
-import 'package:immich_mobile/presentation/pages/private/private_gallery.page.dart';
-import 'package:immich_mobile/presentation/pages/trash/device_trash.page.dart';
-import 'package:immich_mobile/presentation/pages/private/private_viewer.page.dart';
-import 'package:immich_mobile/infrastructure/repositories/private_vault.repository.dart';
-import 'package:immich_mobile/domain/models/device_plugin.model.dart';
 import 'package:immich_mobile/presentation/pages/favorite.page.dart';
 import 'package:immich_mobile/presentation/pages/feature_message/whats_new.page.dart';
 import 'package:immich_mobile/presentation/pages/library.page.dart';
@@ -69,6 +64,10 @@ import 'package:immich_mobile/presentation/pages/people_collection.page.dart';
 import 'package:immich_mobile/presentation/pages/person.page.dart';
 import 'package:immich_mobile/presentation/pages/place.page.dart';
 import 'package:immich_mobile/presentation/pages/place_detail.page.dart';
+import 'package:immich_mobile/presentation/pages/plugins/device_workflow_editor.page.dart';
+import 'package:immich_mobile/presentation/pages/plugins/plugins.page.dart';
+import 'package:immich_mobile/presentation/pages/private/private_gallery.page.dart';
+import 'package:immich_mobile/presentation/pages/private/private_viewer.page.dart';
 import 'package:immich_mobile/presentation/pages/profile/profile_picture_crop.page.dart';
 import 'package:immich_mobile/presentation/pages/recently_added.page.dart';
 import 'package:immich_mobile/presentation/pages/recently_taken.page.dart';
@@ -76,8 +75,10 @@ import 'package:immich_mobile/presentation/pages/remote_album.page.dart';
 import 'package:immich_mobile/presentation/pages/search/search.page.dart';
 import 'package:immich_mobile/presentation/pages/slideshow.page.dart';
 import 'package:immich_mobile/presentation/pages/trash.page.dart';
+import 'package:immich_mobile/presentation/pages/trash/device_trash.page.dart';
 import 'package:immich_mobile/presentation/pages/user_selection.page.dart';
 import 'package:immich_mobile/presentation/pages/video.page.dart';
+import 'package:immich_mobile/presentation/plugins/plugin_ui.dart';
 import 'package:immich_mobile/presentation/widgets/asset_viewer/asset_viewer.page.dart';
 import 'package:immich_mobile/providers/api.provider.dart';
 import 'package:immich_mobile/routing/auth_guard.dart';
@@ -120,6 +121,9 @@ class AppRouter extends RootStackRouter {
 
   @override
   RouteType get defaultRouteType => const RouteType.material();
+
+  @override
+  List<AutoRouteGuard> get guards => const [PluginRouteGuard()];
 
   @override
   late final List<AutoRoute> routes = [

@@ -2,13 +2,14 @@ import 'package:auto_route/auto_route.dart';
 import 'package:flutter/material.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:immich_mobile/domain/models/timeline.model.dart';
+import 'package:immich_mobile/presentation/plugins/plugin_ui.dart';
 import 'package:immich_mobile/presentation/widgets/bottom_sheet/device_library_bottom_sheet.widget.dart';
 import 'package:immich_mobile/presentation/widgets/gallery_view/gallery_view_button.widget.dart';
 import 'package:immich_mobile/presentation/widgets/timeline/timeline.widget.dart';
 import 'package:immich_mobile/providers/app_album.provider.dart';
 import 'package:immich_mobile/providers/gallery_view.provider.dart';
-import 'package:immich_mobile/providers/private_vault.provider.dart';
 import 'package:immich_mobile/providers/infrastructure/timeline.provider.dart';
+import 'package:immich_mobile/providers/private_vault.provider.dart';
 import 'package:immich_mobile/widgets/common/mesmerizing_sliver_app_bar.dart';
 
 @RoutePage()
@@ -80,6 +81,7 @@ class AppAlbumPage extends ConsumerWidget {
         appBar: MesmerizingSliverAppBar(
           title: album.name,
           actions: [
+            const PluginSlotButtons(slot: 'album.appBar', color: Colors.white),
             GalleryViewButton(scope: album.id, color: Colors.white),
             PopupMenuButton<String>(
               iconColor: Colors.white,

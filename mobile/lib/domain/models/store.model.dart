@@ -21,6 +21,8 @@ enum StoreKey<T> {
 
   // Gallery view plugin selection per scope, as JSON
   galleryViews<String>._(2000),
+  viewerCensor<bool>._(2001),
+  viewerCensorConfig<String>._(2002),
 
   syncMigrationStatus<String>._(1013),
 

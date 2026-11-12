@@ -51,7 +51,7 @@ class CensorStyles {
         title: method.title,
         description: method.description,
         schema: method.schema,
-        pixels: method.pixels && plugin.runtime == DevicePluginRuntime.dex,
+        pixels: method.pixels,
       ),
   ];
 
