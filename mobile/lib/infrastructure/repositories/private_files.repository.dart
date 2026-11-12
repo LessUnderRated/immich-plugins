@@ -177,6 +177,37 @@ class PrivateFilesRepository {
     return entry.copyWith(takenAt: takenAt);
   }
 
+  Future<void> addCopy(
+    String sourceAssetId, {
+    required String file,
+    required String name,
+    required String mime,
+    required int width,
+    required int height,
+  }) async {
+    final files = await list();
+    final source = files.where((entry) => entry.assetId == sourceAssetId).firstOrNull;
+    if (source == null) {
+      return;
+    }
+    await _save([
+      ...files,
+      PrivateFile(
+        file: file,
+        thumb: null,
+        originalPath: p.join(p.dirname(source.originalPath), name),
+        name: name,
+        mime: mime,
+        takenAt: source.takenAt,
+        width: width,
+        height: height,
+        durationMs: null,
+        isVideo: false,
+        isFavorite: source.isFavorite,
+      ),
+    ]);
+  }
+
   Future<void> setFavorite(Iterable<String> paths, bool favorite) async {
     final targets = paths.toSet();
     await _save([

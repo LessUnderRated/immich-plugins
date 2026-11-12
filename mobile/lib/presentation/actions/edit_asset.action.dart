@@ -10,6 +10,7 @@ import 'package:immich_mobile/domain/models/asset_edit.model.dart';
 import 'package:immich_mobile/domain/models/exif.model.dart';
 import 'package:immich_mobile/domain/models/server_capability.model.dart';
 import 'package:immich_mobile/generated/translations.g.dart';
+import 'package:immich_mobile/infrastructure/repositories/private_files.repository.dart';
 import 'package:immich_mobile/presentation/actions/action.dart';
 import 'package:immich_mobile/presentation/pages/edit/editor.provider.dart';
 import 'package:immich_mobile/presentation/widgets/images/image_provider.dart';
@@ -17,6 +18,7 @@ import 'package:immich_mobile/providers/background_sync.provider.dart';
 import 'package:immich_mobile/providers/device_plugins.provider.dart';
 import 'package:immich_mobile/providers/infrastructure/asset.provider.dart';
 import 'package:immich_mobile/providers/infrastructure/db.provider.dart';
+import 'package:immich_mobile/providers/private_vault.provider.dart';
 import 'package:immich_mobile/providers/server_info.provider.dart';
 import 'package:immich_mobile/providers/websocket.provider.dart';
 import 'package:immich_mobile/routing/router.dart';
@@ -42,6 +44,10 @@ final _deviceStateProvider = Provider.family.autoDispose<LocalAsset?, ActionSour
   }
   return asset;
 }, dependencies: [assetsActionProvider]);
+
+final deviceEditedProvider = FutureProvider.autoDispose.family<bool, String>(
+  (ref, localId) => ref.watch(deviceEditRepositoryProvider).hasOriginal(localId),
+);
 
 bool isDeviceEditable(LocalAsset asset) {
   final name = asset.name.toLowerCase();
@@ -123,7 +129,11 @@ class EditAssetAction extends AssetActionBuilder {
       ref.read(editorStateProvider.notifier).init(existing, exif);
       unawaited(
         context.pushRoute(
-          EditImageRoute(image: Image.memory(bytes), applyEdits: (edits) => applyDeviceEdits(ref, asset, edits)),
+          EditImageRoute(
+            image: Image.memory(bytes),
+            applyEdits: (edits) => applyDeviceEdits(ref, asset, edits),
+            saveAsCopy: (edits) => saveDeviceEditsAsCopy(ref, asset, edits),
+          ),
         ),
       );
     } catch (error, stack) {
@@ -147,5 +157,81 @@ Future<void> applyEdits(WidgetRef ref, String remoteId, List<AssetEdit> edits) a
 Future<void> applyDeviceEdits(WidgetRef ref, LocalAsset asset, List<AssetEdit> edits) async {
   final backgroundSync = ref.read(backgroundSyncProvider);
   await ref.read(deviceEditRepositoryProvider).applyEdits(asset, edits);
-  unawaited(backgroundSync.syncLocal());
+  ref.invalidate(deviceEditedProvider(asset.id));
+  if (isPrivateAssetId(asset.id)) {
+    ref.read(privateFilesRepositoryProvider).notifyChanged();
+  } else {
+    unawaited(backgroundSync.syncLocal());
+  }
+}
+
+Future<void> saveDeviceEditsAsCopy(WidgetRef ref, LocalAsset asset, List<AssetEdit> edits) async {
+  final backgroundSync = ref.read(backgroundSyncProvider);
+  final privateFiles = ref.read(privateFilesRepositoryProvider);
+  final copy = await ref.read(deviceEditRepositoryProvider).saveEditsAsCopy(asset, edits);
+  if (isPrivateAssetId(asset.id)) {
+    await privateFiles.addCopy(
+      asset.id,
+      file: copy.id,
+      name: copy.name,
+      mime: copy.mime,
+      width: copy.width,
+      height: copy.height,
+    );
+  } else {
+    await backgroundSync.syncLocal();
+  }
+}
+
+final _revertStateProvider = Provider.family.autoDispose<LocalAsset?, ActionSource>((ref, source) {
+  final asset = ref.watch(assetsActionProvider(source)).whereType<LocalAsset>().singleOrNull;
+  if (asset == null || asset.type != AssetType.image) {
+    return null;
+  }
+  return ref.watch(deviceEditedProvider(asset.id)).valueOrNull == true ? asset : null;
+}, dependencies: [assetsActionProvider]);
+
+class RevertEditsAction extends AssetActionBuilder {
+  const RevertEditsAction({required super.source});
+
+  @override
+  ActionItem? create(BuildContext context, WidgetRef ref) {
+    final asset = ref.watch(_revertStateProvider(source));
+    if (asset == null) {
+      return null;
+    }
+    return .new(icon: Icons.restore, label: 'Revert to original', onAction: () => _revert(context, ref, asset));
+  }
+
+  Future<void> _revert(BuildContext context, WidgetRef ref, LocalAsset asset) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      useRootNavigator: false,
+      builder: (context) => AlertDialog(
+        title: const Text('Revert to original?'),
+        content: const Text('All edits to this photo are undone, including edits made by plugins.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+          TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('Revert')),
+        ],
+      ),
+    );
+    if (confirmed != true || !context.mounted) {
+      return;
+    }
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    final backgroundSync = ref.read(backgroundSyncProvider);
+    try {
+      await ref.read(deviceEditRepositoryProvider).removeEdits(asset);
+      ref.invalidate(deviceEditedProvider(asset.id));
+      if (isPrivateAssetId(asset.id)) {
+        ref.read(privateFilesRepositoryProvider).notifyChanged();
+      } else {
+        unawaited(backgroundSync.syncLocal());
+      }
+      messenger?.showSnackBar(const SnackBar(content: Text('Reverted to the original')));
+    } catch (error, stack) {
+      handleError(error, stack: stack, description: 'Failed to revert the edits');
+    }
+  }
 }

@@ -29,8 +29,9 @@ import 'package:openapi/api.dart' show MirrorAxis, MirrorParameters, RotateParam
 class EditImagePage extends ConsumerStatefulWidget {
   final Image image;
   final Future<void> Function(List<AssetEdit> edits) applyEdits;
+  final Future<void> Function(List<AssetEdit> edits)? saveAsCopy;
 
-  const EditImagePage({super.key, required this.image, required this.applyEdits});
+  const EditImagePage({super.key, required this.image, required this.applyEdits, this.saveAsCopy});
 
   @override
   ConsumerState<EditImagePage> createState() => _EditImagePageState();
@@ -64,7 +65,7 @@ class _EditImagePageState extends ConsumerState<EditImagePage> with TickerProvid
 
   void _onPinchEnd() => _restoreCropBeforeGesture();
 
-  Future<void> _saveEditedImage() async {
+  Future<void> _saveEditedImage({bool asCopy = false}) async {
     ref.read(editorStateProvider.notifier).setIsEditing(true);
 
     final editorState = ref.read(editorStateProvider);
@@ -103,7 +104,8 @@ class _EditImagePageState extends ConsumerState<EditImagePage> with TickerProvid
     }
 
     try {
-      await widget.applyEdits(edits);
+      final saveAsCopy = widget.saveAsCopy;
+      await (asCopy && saveAsCopy != null ? saveAsCopy(edits) : widget.applyEdits(edits));
       if (!mounted) {
         return;
       }
@@ -166,7 +168,12 @@ class _EditImagePageState extends ConsumerState<EditImagePage> with TickerProvid
             titleSpacing: 0,
             title: Text(context.t.edit, style: const TextStyle(fontSize: 16)),
             leading: ImmichCloseButton(onPressed: () => Navigator.of(context).maybePop()),
-            actions: [_SaveEditsButton(onSave: _saveEditedImage)],
+            actions: [
+              _SaveEditsButton(
+                onSave: _saveEditedImage,
+                onSaveCopy: widget.saveAsCopy == null ? null : () => _saveEditedImage(asCopy: true),
+              ),
+            ],
           ),
           backgroundColor: Colors.black,
           body: SafeArea(
@@ -359,8 +366,9 @@ class _TransformControls extends ConsumerWidget {
 
 class _SaveEditsButton extends ConsumerWidget {
   final VoidCallback onSave;
+  final VoidCallback? onSaveCopy;
 
-  const _SaveEditsButton({required this.onSave});
+  const _SaveEditsButton({required this.onSave, this.onSaveCopy});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -372,12 +380,32 @@ class _SaveEditsButton extends ConsumerWidget {
             padding: EdgeInsets.all(8.0),
             child: SizedBox(width: 28, height: 28, child: CircularProgressIndicator(strokeWidth: 2.5)),
           )
-        : ImmichIconButton(
+        : onSaveCopy == null
+        ? ImmichIconButton(
             icon: Icons.done_rounded,
             color: ImmichColor.primary,
             variant: ImmichVariant.ghost,
             disabled: !hasUnsavedEdits,
             onPressed: onSave,
+          )
+        : PopupMenuButton<bool>(
+            enabled: hasUnsavedEdits,
+            tooltip: 'Save',
+            icon: Icon(
+              Icons.done_rounded,
+              color: hasUnsavedEdits ? Theme.of(context).colorScheme.primary : Theme.of(context).disabledColor,
+            ),
+            onSelected: (asCopy) => asCopy ? onSaveCopy!() : onSave(),
+            itemBuilder: (context) => const [
+              PopupMenuItem(
+                value: false,
+                child: ListTile(leading: Icon(Icons.save_outlined), title: Text('Save'), dense: true),
+              ),
+              PopupMenuItem(
+                value: true,
+                child: ListTile(leading: Icon(Icons.copy_outlined), title: Text('Save as copy'), dense: true),
+              ),
+            ],
           );
   }
 }

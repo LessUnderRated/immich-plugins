@@ -48,6 +48,27 @@ class DeviceMediaWriter(private val activity: ComponentActivity, messenger: Bina
         overwrite(uri, source, exifSource, width, height, result, allowPrompt = true)
       }
 
+      "saveImageCopy" -> background(result) {
+        saveImageCopy(
+          originalId = call.argument<String>("originalId")!!,
+          source = File(call.argument<String>("sourcePath")!!),
+          exifSource = call.argument<String>("exifSourcePath")?.let(::File),
+          name = call.argument<String>("name")!!,
+          mime = call.argument<String>("mime")!!,
+          takenAt = call.argument<Number>("takenAt")?.toLong(),
+          width = call.argument<Int>("width"),
+          height = call.argument<Int>("height"),
+        )
+      }
+
+      "copyExif" -> background(result) {
+        val exifSource = File(call.argument<String>("exifSourcePath")!!)
+        val target = File(call.argument<String>("targetPath")!!)
+        runCatching {
+          copyExif(ExifInterface(exifSource), ExifInterface(target), call.argument<Int>("width"), call.argument<Int>("height"))
+        }.isSuccess
+      }
+
       "moveToFolder" -> {
         val items = call.argument<List<Map<String, Any>>>("items") ?: emptyList()
         val relativePath = call.argument<String>("relativePath")!!
@@ -333,17 +354,75 @@ class DeviceMediaWriter(private val activity: ComponentActivity, messenger: Bina
     }
     val original = ExifInterface(exifSource)
     resolver.openFileDescriptor(uri, "rw")?.use { descriptor ->
-      val target = ExifInterface(descriptor.fileDescriptor)
-      for (tag in COPIED_TAGS) {
-        original.getAttribute(tag)?.let { target.setAttribute(tag, it) }
-      }
-      target.setAttribute(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL.toString())
-      if (width != null && height != null) {
-        target.setAttribute(ExifInterface.TAG_PIXEL_X_DIMENSION, width.toString())
-        target.setAttribute(ExifInterface.TAG_PIXEL_Y_DIMENSION, height.toString())
-      }
-      target.saveAttributes()
+      copyExif(original, ExifInterface(descriptor.fileDescriptor), width, height)
     }
+  }
+
+  private fun copyExif(original: ExifInterface, target: ExifInterface, width: Int?, height: Int?) {
+    for (tag in COPIED_TAGS) {
+      original.getAttribute(tag)?.let { target.setAttribute(tag, it) }
+    }
+    target.setAttribute(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL.toString())
+    if (width != null && height != null) {
+      target.setAttribute(ExifInterface.TAG_PIXEL_X_DIMENSION, width.toString())
+      target.setAttribute(ExifInterface.TAG_PIXEL_Y_DIMENSION, height.toString())
+    }
+    target.saveAttributes()
+  }
+
+  private fun saveImageCopy(
+    originalId: String,
+    source: File,
+    exifSource: File?,
+    name: String,
+    mime: String,
+    takenAt: Long?,
+    width: Int?,
+    height: Int?,
+  ): String {
+    val resolver = activity.contentResolver
+    val collection = MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+    val original = ContentUris.withAppendedId(collection, originalId.toLong())
+    val relativePath = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+      resolver.query(original, arrayOf(MediaStore.MediaColumns.RELATIVE_PATH), null, null, null)?.use {
+        if (it.moveToFirst()) it.getString(0) else null
+      }
+    } else {
+      null
+    }
+    val values = ContentValues().apply {
+      put(MediaStore.MediaColumns.DISPLAY_NAME, name)
+      put(MediaStore.MediaColumns.MIME_TYPE, mime)
+      takenAt?.let { put(MediaStore.MediaColumns.DATE_TAKEN, it) }
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+        put(MediaStore.MediaColumns.RELATIVE_PATH, relativePath ?: "Pictures/")
+        put(MediaStore.MediaColumns.IS_PENDING, 1)
+      }
+    }
+    val uri = resolver.insert(collection, values) ?: throw IllegalStateException("Unable to create the copy")
+    try {
+      resolver.openOutputStream(uri, "w")?.use { output ->
+        source.inputStream().use { it.copyTo(output) }
+      } ?: throw IllegalStateException("Unable to write the copy")
+      if (exifSource != null && exifSource.exists()) {
+        runCatching {
+          resolver.openFileDescriptor(uri, "rw")?.use { descriptor ->
+            copyExif(ExifInterface(exifSource), ExifInterface(descriptor.fileDescriptor), width, height)
+          }
+        }
+      }
+      val finished = ContentValues().apply {
+        takenAt?.let { put(MediaStore.MediaColumns.DATE_TAKEN, it) }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+          put(MediaStore.MediaColumns.IS_PENDING, 0)
+        }
+      }
+      resolver.update(uri, finished, null, null)
+    } catch (error: Throwable) {
+      resolver.delete(uri, null, null)
+      throw error
+    }
+    return ContentUris.parseId(uri).toString()
   }
 
   companion object {

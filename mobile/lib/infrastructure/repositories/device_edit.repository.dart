@@ -17,6 +17,8 @@ enum DeviceEditOutcome { editedInPlace, savedCopy, restored, unchanged }
 
 typedef DeviceEditResult = ({DeviceEditOutcome outcome, String? createdId});
 
+typedef DeviceEditCopy = ({String id, String name, String mime, int width, int height});
+
 const _inPlaceFormats = {'.jpg': RenderFormat.jpeg, '.jpeg': RenderFormat.jpeg, '.png': RenderFormat.png};
 
 class DeviceEditRepository {
@@ -152,6 +154,67 @@ class DeviceEditRepository {
   String _backupKey(String localId) =>
       isPrivateAssetId(localId) ? 'private_${p.basename(privateFilePathOf(localId)).hashCode.toUnsigned(32)}' : localId;
 
+  Future<bool> hasOriginal(String localId) async => await _backupIfExists(_backupKey(localId)) != null;
+
+  Future<DeviceEditCopy> saveEditsAsCopy(LocalAsset asset, List<AssetEdit> edits) async {
+    final original = await readOriginal(asset.id);
+    if (original == null) {
+      throw StateError('Original file not found');
+    }
+    final extension = p.extension(asset.name).toLowerCase();
+    final format = _inPlaceFormats[extension] ?? RenderFormat.jpeg;
+    final rendered = await renderAssetEdits(original, edits, format: format, censorEffects: censorEffects);
+    final outExtension = format == RenderFormat.png ? '.png' : (extension == '.jpeg' ? '.jpeg' : '.jpg');
+    final mime = format == RenderFormat.png ? 'image/png' : 'image/jpeg';
+    final baseName = '${p.basenameWithoutExtension(asset.name)}_edited';
+    final exifSource = await _backupIfExists(_backupKey(asset.id)) ?? await _sourceFile(asset.id);
+
+    if (isPrivateAssetId(asset.id)) {
+      final source = File(privateFilePathOf(asset.id));
+      var name = '$baseName$outExtension';
+      var suffix = 1;
+      while (File(p.join(source.parent.path, '$name.private')).existsSync()) {
+        name = '${baseName}_$suffix$outExtension';
+        suffix++;
+      }
+      final target = File(p.join(source.parent.path, '$name.private'));
+      await target.writeAsBytes(rendered.bytes, flush: true);
+      if (exifSource != null && format == RenderFormat.jpeg) {
+        await _copyExif(exifSource, target, rendered.width, rendered.height);
+      }
+      target.setLastModifiedSync(source.lastModifiedSync());
+      return (id: target.path, name: name, mime: mime, width: rendered.width, height: rendered.height);
+    }
+
+    final name = '$baseName$outExtension';
+    final temp = File(p.join((await getTemporaryDirectory()).path, 'copy_${asset.id}$outExtension'));
+    await temp.writeAsBytes(rendered.bytes, flush: true);
+    try {
+      final id = await _channel.invokeMethod<String>('saveImageCopy', {
+        'originalId': asset.id,
+        'sourcePath': temp.path,
+        'exifSourcePath': format == RenderFormat.jpeg ? exifSource?.path : null,
+        'name': name,
+        'mime': mime,
+        'takenAt': asset.createdAt.millisecondsSinceEpoch,
+        'width': rendered.width,
+        'height': rendered.height,
+      });
+      return (id: id!, name: name, mime: mime, width: rendered.width, height: rendered.height);
+    } finally {
+      if (temp.existsSync()) {
+        await temp.delete();
+      }
+    }
+  }
+
+  Future<void> _copyExif(File source, File target, int? width, int? height) => _channel.invokeMethod('copyExif', {
+    'exifSourcePath': source.path,
+    'targetPath': target.path,
+    'width': width,
+    'height': height,
+  });
+
   Future<DeviceEditResult> removeEdits(LocalAsset asset) async {
     final backup = await _backupIfExists(_backupKey(asset.id));
     final state = await _readState();
@@ -186,6 +249,11 @@ class DeviceEditRepository {
       final staged = File('${target.path}.tmp');
       await staged.writeAsBytes(bytes, flush: true);
       await staged.rename(target.path);
+      if (exifSource != null &&
+          _inPlaceFormats[p.extension(privateFilePathOf(localId).replaceAll('.private', '')).toLowerCase()] ==
+              RenderFormat.jpeg) {
+        await _copyExif(exifSource, target, width, height);
+      }
       target.setLastModifiedSync(modified);
       PaintingBinding.instance.imageCache
         ..clear()
