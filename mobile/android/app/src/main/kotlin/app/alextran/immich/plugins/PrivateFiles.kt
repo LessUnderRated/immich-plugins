@@ -67,7 +67,7 @@ class PrivateFiles(private val context: Context) {
           continue
         }
       }
-      target.setLastModified(info.modified)
+      if (info.modified > 0) target.setLastModified(info.modified)
       removedPaths.add(source.absolutePath)
       hidden.add(
         mapOf(
@@ -131,6 +131,7 @@ class PrivateFiles(private val context: Context) {
       MediaStore.MediaColumns.DATE_MODIFIED,
       MediaStore.MediaColumns.WIDTH,
       MediaStore.MediaColumns.HEIGHT,
+      MediaStore.MediaColumns.DATE_ADDED,
     )
     if (video) {
       columns.add(MediaStore.Video.VideoColumns.DURATION)
@@ -141,14 +142,17 @@ class PrivateFiles(private val context: Context) {
       }
       fun long(index: Int) = if (cursor.isNull(index)) null else cursor.getLong(index)
       fun int(index: Int) = if (cursor.isNull(index)) null else cursor.getInt(index)
+      val modified = (long(3) ?: 0L) * 1000
+      val added = (long(6) ?: 0L) * 1000
+      val fallback = if (modified <= 0) added else if (added <= 0) modified else minOf(modified, added)
       Info(
         path = cursor.getString(0) ?: return@use null,
         mime = cursor.getString(1),
-        takenAt = long(2),
-        modified = (long(3) ?: 0L) * 1000,
+        takenAt = long(2)?.takeIf { it > 0 } ?: fallback.takeIf { it > 0 },
+        modified = modified,
         width = int(4),
         height = int(5),
-        durationMs = if (video) long(6) else null,
+        durationMs = if (video) long(7) else null,
       )
     }
   }

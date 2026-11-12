@@ -182,9 +182,11 @@ class DeviceEditRepository {
   Future<void> _overwrite(String localId, Uint8List bytes, {File? exifSource, int? width, int? height}) async {
     if (isPrivateAssetId(localId)) {
       final target = File(privateFilePathOf(localId));
+      final modified = target.lastModifiedSync();
       final staged = File('${target.path}.tmp');
       await staged.writeAsBytes(bytes, flush: true);
       await staged.rename(target.path);
+      target.setLastModifiedSync(modified);
       PaintingBinding.instance.imageCache
         ..clear()
         ..clearLiveImages();

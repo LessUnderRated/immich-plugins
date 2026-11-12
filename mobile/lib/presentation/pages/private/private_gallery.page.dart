@@ -9,6 +9,7 @@ import 'package:immich_mobile/domain/models/timeline.model.dart';
 import 'package:immich_mobile/infrastructure/repositories/private_vault.repository.dart';
 import 'package:immich_mobile/presentation/actions/action.widget.dart';
 import 'package:immich_mobile/presentation/actions/delete.action.dart';
+import 'package:immich_mobile/presentation/actions/device_album.actions.dart';
 import 'package:immich_mobile/presentation/actions/move_to_private.action.dart';
 import 'package:immich_mobile/presentation/actions/share.action.dart';
 import 'package:immich_mobile/presentation/widgets/bottom_sheet/base_bottom_sheet.widget.dart';
@@ -142,6 +143,8 @@ class _MigratingPrivateFilesState extends ConsumerState<_MigratingPrivateFiles> 
   Widget build(BuildContext context) => _PrivateFilesTimeline(onLock: widget.onLock, legacyCount: widget.legacyCount);
 }
 
+final _privateFavoritesOnlyProvider = StateProvider<bool>((ref) => false);
+
 class _PrivateFilesTimeline extends ConsumerWidget {
   final VoidCallback onLock;
   final int legacyCount;
@@ -150,6 +153,7 @@ class _PrivateFilesTimeline extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final favoritesOnly = ref.watch(_privateFavoritesOnlyProvider);
     return ProviderScope(
       overrides: [
         timelineServiceProvider.overrideWith((ref) {
@@ -157,12 +161,17 @@ class _PrivateFilesTimeline extends ConsumerWidget {
           var assets = <BaseAsset>[];
           final counts = StreamController<int>.broadcast();
           Future<void> reload() async {
-            assets = [for (final file in await repository.list()) file.toAsset()];
+            final favoritesOnly = ref.read(_privateFavoritesOnlyProvider);
+            assets = [
+              for (final file in await repository.list())
+                if (!favoritesOnly || file.isFavorite) file.toAsset(),
+            ];
             if (!counts.isClosed) {
               counts.add(assets.length);
             }
           }
 
+          ref.listen(_privateFavoritesOnlyProvider, (_, _) => unawaited(reload()));
           final subscription = repository.changes.listen((_) => unawaited(reload()));
           unawaited(reload());
           final timelineService = ref
@@ -181,8 +190,13 @@ class _PrivateFilesTimeline extends ConsumerWidget {
           floating: true,
           snap: true,
           centerTitle: true,
-          title: const Text('Private'),
+          title: Text(favoritesOnly ? 'Private favorites' : 'Private'),
           actions: [
+            IconButton(
+              tooltip: favoritesOnly ? 'Show all' : 'Show favorites',
+              icon: Icon(favoritesOnly ? Icons.favorite_rounded : Icons.favorite_border_rounded),
+              onPressed: () => ref.read(_privateFavoritesOnlyProvider.notifier).state = !favoritesOnly,
+            ),
             if (legacyCount > 0)
               TextButton(
                 onPressed: () => context.pushRoute(const PrivateLegacyRoute()),
@@ -253,6 +267,7 @@ class _PrivateBottomSheet extends StatelessWidget {
       resizeOnScroll: false,
       actions: <ActionColumnButton>[
         .new(action: ShareAction(source: .timeline)),
+        .new(action: DeviceFavoriteAction(source: .timeline)),
         .new(action: MoveToPrivateAction(source: .timeline)),
         .new(action: DeleteAction(source: .timeline)),
       ],

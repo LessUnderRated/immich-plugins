@@ -8,7 +8,9 @@ import 'package:immich_mobile/infrastructure/repositories/device_album.repositor
 import 'package:immich_mobile/infrastructure/repositories/private_files.repository.dart';
 import 'package:immich_mobile/presentation/actions/action.dart';
 import 'package:immich_mobile/providers/app_album.provider.dart';
+import 'package:immich_mobile/providers/asset_viewer/asset_viewer.provider.dart';
 import 'package:immich_mobile/providers/background_sync.provider.dart';
+import 'package:immich_mobile/providers/private_vault.provider.dart';
 import 'package:immich_mobile/utils/error_handler.dart';
 
 const _folders = DeviceAlbumRepository();
@@ -175,11 +177,41 @@ class RemoveFromAppAlbumAction extends AssetActionBuilder {
   }
 }
 
+final _privateAssetsProvider = Provider.family.autoDispose<List<LocalAsset>?, ActionSource>((ref, source) {
+  final local = ref.watch(assetsActionProvider(source)).whereType<LocalAsset>().toList(growable: false);
+  return local.isNotEmpty && local.every((asset) => isPrivateAssetId(asset.id)) ? local : null;
+}, dependencies: [assetsActionProvider]);
+
 class DeviceFavoriteAction extends AssetActionBuilder {
   const DeviceFavoriteAction({required super.source});
 
+  ActionItem _privateFavorite(BuildContext context, WidgetRef ref, List<LocalAsset> assets) {
+    final favorite = assets.any((asset) => !asset.isFavorite);
+    return .new(
+      icon: favorite ? Icons.favorite_border_rounded : Icons.favorite_rounded,
+      label: favorite ? 'Favorite' : 'Unfavorite',
+      onAction: () async {
+        final viewer = ref.read(assetViewerProvider.notifier);
+        final current = ref.read(assetViewerProvider).currentAsset;
+        await _run(context, ref, source, resync: false, () async {
+          await ref.read(privateFilesRepositoryProvider).setFavorite([
+            for (final asset in assets) privateFilePathOf(asset.id),
+          ], favorite);
+          return favorite ? 'Added ${_count(assets.length)} to favorites' : 'Removed from favorites';
+        });
+        if (source == ActionSource.viewer && current is LocalAsset && assets.any((asset) => asset.id == current.id)) {
+          viewer.setAsset(current.copyWith(isFavorite: favorite));
+        }
+      },
+    );
+  }
+
   @override
   ActionItem? create(BuildContext context, WidgetRef ref) {
+    final privateAssets = ref.watch(_privateAssetsProvider(source));
+    if (privateAssets != null) {
+      return _privateFavorite(context, ref, privateAssets);
+    }
     final assets = ref.watch(_localAssetsProvider(source));
     if (assets == null) {
       return null;

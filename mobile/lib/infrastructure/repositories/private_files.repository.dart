@@ -9,6 +9,30 @@ import 'package:path_provider/path_provider.dart';
 
 const privateAssetIdPrefix = 'private:';
 
+const _plausibleDateFloor = 86400000 * 365;
+
+final _nameDatePattern = RegExp(r'((?:19|20)\d{2})-?(\d{2})-?(\d{2})(?:[ _.\-T]?(\d{2})[.\-:]?(\d{2})[.\-:]?(\d{2}))?');
+
+DateTime? privateDateFromName(String name) {
+  for (final match in _nameDatePattern.allMatches(name)) {
+    final year = int.parse(match.group(1)!);
+    final month = int.parse(match.group(2)!);
+    final day = int.parse(match.group(3)!);
+    if (month < 1 || month > 12 || day < 1 || day > 31) {
+      continue;
+    }
+    final hour = int.tryParse(match.group(4) ?? '') ?? 0;
+    final minute = int.tryParse(match.group(5) ?? '') ?? 0;
+    final second = int.tryParse(match.group(6) ?? '') ?? 0;
+    if (hour > 23 || minute > 59 || second > 59) {
+      return DateTime(year, month, day);
+    }
+    return DateTime(year, month, day, hour, minute, second);
+  }
+  final millis = RegExp(r'(1[3-9]\d{11})').firstMatch(name)?.group(1);
+  return millis == null ? null : DateTime.fromMillisecondsSinceEpoch(int.parse(millis));
+}
+
 bool isPrivateAssetId(String id) => id.startsWith(privateAssetIdPrefix);
 
 String privateFilePathOf(String id) => id.substring(privateAssetIdPrefix.length);
@@ -24,6 +48,7 @@ class PrivateFile {
   final int? height;
   final int? durationMs;
   final bool isVideo;
+  final bool isFavorite;
 
   const PrivateFile({
     required this.file,
@@ -36,7 +61,22 @@ class PrivateFile {
     required this.height,
     required this.durationMs,
     required this.isVideo,
+    this.isFavorite = false,
   });
+
+  PrivateFile copyWith({DateTime? takenAt, bool? isFavorite}) => PrivateFile(
+    file: file,
+    thumb: thumb,
+    originalPath: originalPath,
+    name: name,
+    mime: mime,
+    takenAt: takenAt ?? this.takenAt,
+    width: width,
+    height: height,
+    durationMs: durationMs,
+    isVideo: isVideo,
+    isFavorite: isFavorite ?? this.isFavorite,
+  );
 
   factory PrivateFile.fromJson(Map<String, dynamic> json) => PrivateFile(
     file: json['file'] as String,
@@ -49,6 +89,7 @@ class PrivateFile {
     height: (json['height'] as num?)?.toInt(),
     durationMs: (json['durationMs'] as num?)?.toInt(),
     isVideo: json['video'] == true,
+    isFavorite: json['favorite'] == true,
   );
 
   String get assetId => '$privateAssetIdPrefix$file';
@@ -63,6 +104,7 @@ class PrivateFile {
     height: height,
     durationMs: durationMs,
     playbackStyle: isVideo ? AssetPlaybackStyle.video : AssetPlaybackStyle.image,
+    isFavorite: isFavorite,
     isEdited: false,
   );
 
@@ -77,6 +119,7 @@ class PrivateFile {
     'height': height,
     'durationMs': durationMs,
     'video': isVideo,
+    'favorite': isFavorite,
   };
 }
 
@@ -115,11 +158,30 @@ class PrivateFilesRepository {
           .whereType<Map>()
           .map((entry) => PrivateFile.fromJson(Map<String, dynamic>.from(entry)))
           .where((entry) => File(entry.file).existsSync())
+          .map(_withFallbackDate)
           .toList();
       return files..sort((a, b) => b.takenAt.compareTo(a.takenAt));
     } catch (_) {
       return [];
     }
+  }
+
+  PrivateFile _withFallbackDate(PrivateFile entry) {
+    if (entry.takenAt.millisecondsSinceEpoch > _plausibleDateFloor) {
+      return entry;
+    }
+    final modified = File(entry.file).lastModifiedSync();
+    final takenAt =
+        privateDateFromName(entry.name) ??
+        (modified.millisecondsSinceEpoch > _plausibleDateFloor ? modified : entry.takenAt);
+    return entry.copyWith(takenAt: takenAt);
+  }
+
+  Future<void> setFavorite(Iterable<String> paths, bool favorite) async {
+    final targets = paths.toSet();
+    await _save([
+      for (final entry in await list()) targets.contains(entry.file) ? entry.copyWith(isFavorite: favorite) : entry,
+    ]);
   }
 
   Future<void> _save(List<PrivateFile> files) async {
