@@ -539,18 +539,17 @@ Methods with `types: ["AssetV1"]` are workflow steps (`uiHints: ["Filter"]` for 
 
 ## Catalog
 
-<!-- Phase 3 merges docs/plugins/<area>.md here. -->
+Every slot, built-in id, hook, event and host function is listed per area. `kernel.slots`, `kernel.hooks`,
+`kernel.events` and `plugins.list` return the same information at runtime.
 
-* **Viewer** (viewer, video, images, memories, slideshow): _to be merged from `docs/plugins/viewer.md`._
-* **Editor**: _to be merged from `docs/plugins/editor.md`._
-* **Timeline** (timeline, selection, actions, tabs): _to be merged from `docs/plugins/timeline.md`._
-* **Library** (albums, people, places, map, search, folders, partners, shared links, locked folder): _to be merged
-  from `docs/plugins/library.md`._
-* **Shell** (app shell, settings, backup / sync UI, auth, theme, strings, logs, share intent, profile): _to be merged
-  from `docs/plugins/shell.md`._
-* **Data** (services, repositories, sync, upload, network, database, store): _to be merged from
-  `docs/plugins/data.md`._
-* **Native** (Android host: lifecycle, intents, permissions, notifications, background work, MediaStore): _to be
-  merged from `docs/plugins/native.md`._
+| Area | Covers | Catalog |
+| --- | --- | --- |
+| Viewer | photo/video viewer bars and menu, info sheet, gestures, image pipeline (`image.thumbnail/preview/full`), video sessions, frame capture and overlays, slideshow, memories | [docs/plugins/viewer.md](docs/plugins/viewer.md) |
+| Editor | plugin editor tools of any output size (`EditorToolV1`), panels, preview/apply with tasks, save as copy or replace | [docs/plugins/editor.md](docs/plugins/editor.md) |
+| Timeline | every asset action (`action.<id>` hooks, ids, rules), selection sheets, tiles (badge/wrap/replace), headers, scrubber, `timeline.query`, bottom-navigation tabs, app menu | [docs/plugins/timeline.md](docs/plugins/timeline.md) |
+| Library | albums, people, places, map (plugin layers), search (result providers), folders, partners, shared links, private and locked folder | [docs/plugins/library.md](docs/plugins/library.md) |
+| Shell | settings menu and pages, plugin settings, theme and strings, navigation (`nav.push`), login, splash, backup UI, share intent, logs, lifecycle | [docs/plugins/shell.md](docs/plugins/shell.md) |
+| Data | hooks and events on every data mutation and query, database, settings store, assets, albums, tags, people, files and downloads, network, media writes, sync and upload | [docs/plugins/data.md](docs/plugins/data.md) |
+| Native | Android host: lifecycle, intents, permissions, notifications, background work, media, video, views, crash isolation | [docs/plugins/native.md](docs/plugins/native.md) |
 
 Everything Android offers can still be used directly from plugin code.

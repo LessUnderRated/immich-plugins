@@ -2,6 +2,8 @@ import 'dart:async';
 
 import 'package:immich_mobile/domain/utils/plugin_hooks.dart';
 import 'package:immich_mobile/infrastructure/plugins/plugin_api/library/library_ids.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/timeline/builtin_rules.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_kernel.dart';
 
 /// A built-in item of a library slot with its catalog id (`libraryBuiltins`).
 typedef LibrarySlotItem<T> = ({String id, T item});
@@ -105,5 +107,23 @@ abstract final class LibraryPluginHooks {
   ///
   /// Phase B applies the slot's built-in rules (hide, order, rename) and places plugin items among them; until a
   /// kernel is bound the built-in order is kept.
-  static List<T> arrange<T>(String slot, List<LibrarySlotItem<T>> items) => [for (final entry in items) entry.item];
+  /// [items] in the order plugin rules give for [slot] (`builtins` hide / order in the manifest), built-in order
+  /// when no plugin has rules for it.
+  static List<T> arrange<T>(String slot, List<LibrarySlotItem<T>> items) {
+    final builtins = [for (final entry in items) entry.item];
+    final kernel = PluginKernel.current;
+    if (kernel == null) {
+      return builtins;
+    }
+    final rules = kernel.builtins(slot);
+    if (rules.hide.isEmpty && rules.order.isEmpty) {
+      return builtins;
+    }
+    final ids = {for (final entry in items) identityHashCode(entry.item): entry.id};
+    return arrangeSlotItems<T>(
+      builtins,
+      (item) => ids[identityHashCode(item)],
+      rules: BuiltinItemRules(hide: rules.hide, order: rules.order),
+    );
+  }
 }

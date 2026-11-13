@@ -543,6 +543,9 @@ class PluginKernel extends ChangeNotifier {
   }
 
   /// String overrides for [locale] (`en`, `en_US`, `pt-BR`): language entries, then region entries over them.
+  /// Every string override of the enabled plugins, by locale (`*` for any locale).
+  Map<String, Map<String, String>> get stringOverrides => _strings;
+
   Map<String, String> strings(String locale) {
     if (_strings.isEmpty) {
       return const {};

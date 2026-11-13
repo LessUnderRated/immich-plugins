@@ -1,8 +1,9 @@
 # Plugin platform plan: plugins can do everything
 
-Status: plan for rebuilding the mobile app around its plugin system. Plugins stay Aliucord-style native dex plugins
-(see `PLUGINS.md`); this plan changes the **app** so that every surface, action, data path and setting is reachable,
-changeable or replaceable from a plugin.
+Status: implemented (kernel, all seven areas, native host) and analyzer-clean; not yet built into an APK or run on a
+device. `PLUGINS.md` is the reference and `docs/plugins/*.md` the per-area catalogs; each catalog ends with what is
+not wired yet. Plugins stay Aliucord-style native dex plugins; this plan changed the **app** so that every surface,
+action, data path and setting is reachable, changeable or replaceable from a plugin.
 
 ## 1. The honest constraint, and what "everything" means here
 

@@ -1,9 +1,37 @@
+import 'dart:async';
+
 import 'package:hooks_riverpod/hooks_riverpod.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/data/data_host.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/data/data_host_registry.dart';
 import 'package:immich_mobile/infrastructure/plugins/plugin_kernel.dart';
 
-/// Plugin API of the **data** area (data: services, repositories, sync, upload, network, database, store (`asset.*`, `album.*`, `settings.*`, `db.*`, `files.*`, `net.*` hooks, events and host functions)).
-///
-/// Called once when the kernel is created (`registerAllPluginApis`). Register host functions with
-/// `kernel.registerHost`, declare slots / hooks / events for `kernel.slots` / `kernel.hooks` / `kernel.events`, add
-/// legacy slot aliases with `kernel.aliasSlot` and app toggles with `kernel.toggles.define`. Keep it cheap: no I/O here.
-void registerDataPluginApi(PluginKernel kernel, Ref ref) {}
+/// Plugin API of the **data** area: services, repositories, sync, upload, network, database and store
+/// (`db.*`, `settings.*`, `assets.*`, `albums.*`, `tags.*`, `people.*`, `files.*`, `net.*`, `media.*`, `downloads.*`,
+/// `sync.*`, `upload.*` host functions; the data hooks and events run through `PluginHooks`).
+void registerDataPluginApi(PluginKernel kernel, Ref ref) {
+  final services = DataPluginServices.build(ref, pluginDir: kernel.pluginDataDir);
+  final docs = services.docs;
+  for (final MapEntry(key: name, value: function) in services.functions.entries) {
+    kernel.registerHost(
+      name,
+      (plugin, args) async {
+        try {
+          return await function(plugin, args);
+        } on DataHostException catch (error) {
+          throw HostFunctionException(error.status, error.message);
+        }
+      },
+      doc: docs[name],
+      area: 'data',
+    );
+  }
+
+  // Plugins' database change subscriptions follow the installed plugins; downloads stop with their plugin.
+  kernel.addListener(services.watcher.refresh);
+  final unloaded = kernel.pluginUnloaded.listen((plugin) => unawaited(services.downloader.cancelAll(plugin)));
+  ref.onDispose(() {
+    kernel.removeListener(services.watcher.refresh);
+    unawaited(unloaded.cancel());
+    unawaited(services.dispose());
+  });
+}

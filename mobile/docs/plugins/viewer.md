@@ -235,16 +235,13 @@ style to hand back a whole image can instead hook `image.full` / `image.preview`
 session; plugins can push such items themselves with `video.overlay.set`, capture frames with `video.capture` and
 attach native views with `video.nativeOverlay.attach`, instead of searching the view tree for the player.
 
-## Implementation status (phase A, remove when merging into PLUGINS.md)
+## Status
 
-Done in Dart, working without plugins and free when unused: ids for every built-in item above, with rules and plugin
-actions merged through the timeline area's plugin bridge (`arrangeActionWidgets`, `arrangeActions`, `arrangeButtons`,
-`arrangeViewerSlot`) and the `viewer` action surface; every action resolved through `action.<id>`; all events;
-`viewer.gesture`, `video.source`, `video.control`; the image pipeline in every image provider (plugin hooks plus Dart
-transformers, cache, placeholders, invalidation); video sessions with clock, frame rect, controls and the
-`immich/plugin_video` client; the declarative overlay layer; `image.load`; every host function's logic
-(`ViewerHostApi.functions`). Phase B: binding to the kernel (`ViewerPlugins.bind`, `ImagePipeline.subjectJson`,
-`ImagePipeline.invalidate` on plugin changes, host function registration, rebuilding gesture call sites when hooks
-change), content and decoration slots (`viewer.info.sections`, `viewer.bottomPanels`, `viewer.title`, overlays,
-memory and slideshow slots), the `toggle`-based censor shield with its pipeline transformer
-(`ViewerFilterTransformer`), the `ViewerFilterV1` video path as overlay items; native: the channel methods above.
+Wired: ids, rules and plugin actions in every viewer bar and menu, `action.<id>` for every action, all events,
+`viewer.gesture`, `video.source`, `video.control`, the image pipeline in every image provider, video sessions and the
+declarative overlay layer, `image.load`, every host function (registered with the kernel), `ViewerPlugins` and
+`ImagePipeline` bound to the kernel (cache invalidated when image hooks change).
+Not yet: content and decoration slots `viewer.info.sections`, `viewer.bottomPanels`, `viewer.title` and the memory
+and slideshow slots render nothing yet; the built-in censor shield still uses its own setting (not the generic
+`toggle`); `ViewerFilterV1` video results are not yet turned into overlay items; plugin `toggle` and JSON UI buttons
+are not merged into `viewer.topBar` (actions are).

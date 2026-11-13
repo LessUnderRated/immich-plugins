@@ -373,9 +373,10 @@ emit `map.featureTapped` and run through `map.featureTap`. Layer ids are per plu
 Album, asset, person, tag and shared link data operations (create, update, delete, add assets, ...) are data area
 host functions (`data.md`).
 
-## Implementation status (Phase A; remove in Phase B)
+## Status
 
-Done: ids and built-in lists in code, every hook and event above, page-view queries, map layers (rendering, taps,
-camera), host function implementations. Phase B: slot rendering (`PluginSlot` / built-in rules in place of
-`LibraryPluginHooks.arrange`, tile decorations, long press menus, `<page>.appBar.menu` overflow menus), host
-function registration, the map tap handler (`mapPluginActionsProvider`) and kernel introspection entries.
+Wired: ids and built-in lists, every hook and event above, page-view queries, map layers (rendering, taps through the
+plugin that drew the feature, camera), every host function (registered with the kernel), hide and order rules from
+`contributes.builtins` on every arranged list.
+Not yet: plugin items, tile decorations, long-press menus and `<page>.appBar.menu` overflow menus on library pages
+(pages using the shared app bars get `<page>.appBar.actions` through them).

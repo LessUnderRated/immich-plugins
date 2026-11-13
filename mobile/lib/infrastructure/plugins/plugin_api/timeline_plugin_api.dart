@@ -1,9 +1,22 @@
 import 'package:hooks_riverpod/hooks_riverpod.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/timeline/timeline_host_functions.dart';
 import 'package:immich_mobile/infrastructure/plugins/plugin_kernel.dart';
 
-/// Plugin API of the **timeline** area (timeline, selection, actions and tabs: tile badges / wrap / replace, headers, scrubber, group headers, selection bar, empty state, query hooks, `action.<id>` hooks).
-///
-/// Called once when the kernel is created (`registerAllPluginApis`). Register host functions with
-/// `kernel.registerHost`, declare slots / hooks / events for `kernel.slots` / `kernel.hooks` / `kernel.events`, add
-/// legacy slot aliases with `kernel.aliasSlot` and app toggles with `kernel.toggles.define`. Keep it cheap: no I/O here.
-void registerTimelinePluginApi(PluginKernel kernel, Ref ref) {}
+/// Plugin API of the **timeline** area: `timeline.*`, `selection.*`, `actions.list/run` and `tabs.*` host functions.
+/// Slots, rules, decorations and tabs reach the timeline through `KernelTimelinePluginBridge`.
+void registerTimelinePluginApi(PluginKernel kernel, Ref ref) {
+  for (final MapEntry(key: name, value: function) in TimelineHostFunctions.all.entries) {
+    kernel.registerHost(
+      name,
+      (plugin, args) async {
+        try {
+          return await function(plugin, args);
+        } on TimelineHostError catch (error) {
+          throw HostFunctionException(400, error.message);
+        }
+      },
+      doc: TimelineHostFunctions.docs[name],
+      area: 'timeline',
+    );
+  }
+}
