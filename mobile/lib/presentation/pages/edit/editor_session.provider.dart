@@ -7,6 +7,8 @@ import 'package:collection/collection.dart';
 import 'package:flutter/painting.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:immich_mobile/domain/models/asset/base_asset.model.dart';
+import 'package:immich_mobile/domain/utils/plugin_hooks.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/editor/editor_ids.dart';
 import 'package:immich_mobile/infrastructure/plugins/plugin_api/editor/editor_image_pipeline.dart';
 import 'package:immich_mobile/infrastructure/plugins/plugin_api/editor/editor_media_writer.dart';
 import 'package:immich_mobile/infrastructure/plugins/plugin_api/editor/editor_tool.dart';
@@ -41,6 +43,18 @@ final editorToolRunnerProvider = Provider<EditorToolRunner>(
 );
 
 final editorSessionProvider = NotifierProvider<EditorSessionNotifier, EditorSession>(EditorSessionNotifier.new);
+
+/// What only the open editor page can do (it owns navigation and the save dialogs): plugins reach it through
+/// `editor.save` and `editor.close`. The page sets [EditorPageHandle.current] while it is mounted.
+abstract class EditorPageHandle {
+  static EditorPageHandle? current;
+
+  /// Saves like the ✓ button (asking for copy / replace when a tool changed the image, unless [target] is given).
+  Future<Map<String, dynamic>> save({String? target});
+
+  /// Closes the editor; asks about unsaved edits unless [discard].
+  Future<bool> close({bool discard = false});
+}
 
 /// A tool result that replaced the working image, with the edits that were pending before it (restored on undo).
 class EditorGeneration {
@@ -443,14 +457,37 @@ class EditorSessionNotifier extends Notifier<EditorSession> {
     }
   }
 
-  /// The plugin call of `apply` (the `editor.tool.apply` hook wraps this).
+  /// The plugin call of `apply`, wrapped by the `editor.tool.apply` hook: `before` may change `state`, `instead`
+  /// produces the image itself, `after` may replace the result.
   Future<EditorToolResponse> runApply(
     EditorTool tool,
     EditorToolContext context,
     EditorImageRef source,
     Map<String, dynamic> toolState,
     String runId,
-  ) => ref.read(editorToolRunnerProvider).apply(tool, context, source, toolState, taskId: runId);
+  ) {
+    Future<EditorToolResponse> call(Map<String, dynamic> values) =>
+        ref.read(editorToolRunnerProvider).apply(tool, context, source, values, taskId: runId);
+    return PluginHooks.run<EditorToolResponse>(
+      EditorPluginIds.toolApplyHook,
+      () => {
+        'session': context.session,
+        'tool': tool.id,
+        'state': toolState,
+        'source': source.toJson(),
+        if (context.asset != null) 'asset': context.asset,
+      },
+      () => call(toolState),
+      withArgs: (args) => call(args['state'] is Map ? Map<String, dynamic>.from(args['state'] as Map) : toolState),
+      encode: (response) => {
+        if (response.image != null) 'image': response.image!.toJson(),
+        if (response.unchanged) 'unchanged': true,
+        if (response.pending) 'pending': true,
+        if (response.message != null) 'message': response.message,
+      },
+      decode: (json) => EditorToolResponse.fromJson(json is Map ? Map<String, dynamic>.from(json) : null),
+    );
+  }
 
   Future<EditorImageRef?> _resultOf(EditorToolResponse response, String runId) {
     if (response.pending) {

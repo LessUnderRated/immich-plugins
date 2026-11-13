@@ -4,6 +4,7 @@ import 'package:auto_route/auto_route.dart';
 import 'package:collection/collection.dart';
 import 'package:flutter/material.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
+import 'package:immich_mobile/domain/utils/plugin_hooks.dart';
 import 'package:immich_mobile/infrastructure/plugins/plugin_api/data/media_writer.dart';
 import 'package:immich_mobile/constants/enums.dart';
 import 'package:immich_mobile/domain/models/asset/base_asset.model.dart';
@@ -11,6 +12,7 @@ import 'package:immich_mobile/domain/models/asset_edit.model.dart';
 import 'package:immich_mobile/domain/models/exif.model.dart';
 import 'package:immich_mobile/domain/models/server_capability.model.dart';
 import 'package:immich_mobile/generated/translations.g.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/editor/editor_ids.dart';
 import 'package:immich_mobile/infrastructure/repositories/private_files.repository.dart';
 import 'package:immich_mobile/presentation/actions/action.dart';
 import 'package:immich_mobile/presentation/actions/action_ids.dart';
@@ -105,10 +107,23 @@ class EditAssetAction extends AssetActionBuilder {
 
   Future<void> _open(BuildContext context, WidgetRef ref, BaseAsset asset) async {
     try {
-      final route = await prepareImageEditor(ref.read, asset, isActive: () => context.mounted);
-      if (route != null && context.mounted) {
-        unawaited(context.pushRoute(route));
-      }
+      // `editor.open`: `before` may cancel, `instead` (returning `{ opened: true }`) means a plugin opened its own editor.
+      await PluginHooks.run<bool>(
+        EditorPluginIds.openHook,
+        () => {
+          'asset': {'id': asset.id, 'name': asset.name, 'type': asset.type.name, 'isLocal': asset is LocalAsset},
+        },
+        () async {
+          final route = await prepareImageEditor(ref.read, asset, isActive: () => context.mounted);
+          if (route == null || !context.mounted) {
+            return false;
+          }
+          unawaited(context.pushRoute(route));
+          return true;
+        },
+        encode: (opened) => {'opened': opened},
+        decode: (json) => json is Map ? json['opened'] != false : json != false,
+      );
     } catch (error, stack) {
       handleError(error, stack: stack, description: "Failed to open the editor for the asset");
     }

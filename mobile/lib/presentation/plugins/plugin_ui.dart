@@ -538,10 +538,7 @@ class PluginTaskTile extends ConsumerWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(subtitle, maxLines: 2, overflow: TextOverflow.ellipsis),
-          if (task.isRunning) ...[
-            const SizedBox(height: 4),
-            LinearProgressIndicator(value: task.progress),
-          ],
+          if (task.isRunning) ...[const SizedBox(height: 4), LinearProgressIndicator(value: task.progress)],
         ],
       ),
       trailing: task.isRunning && task.cancellable
@@ -608,7 +605,8 @@ class PluginSlotButtons extends ConsumerWidget {
                       isSelected: on,
                       icon: PluginIcon(plugin: item.plugin, icon: item.icon, color: color),
                       selectedIcon: PluginIcon(plugin: item.plugin, icon: item.activeIcon ?? item.icon, color: color),
-                      onPressed: () => unawaited(runPluginSlotItem(ref, item, slotContext: slotContext, assets: assets)),
+                      onPressed: () =>
+                          unawaited(runPluginSlotItem(ref, item, slotContext: slotContext, assets: assets)),
                     );
                   },
                 )
@@ -652,7 +650,10 @@ class PluginViewerOverlays extends ConsumerStatefulWidget {
   final Rect? frame;
   final bool zoomed;
 
-  const PluginViewerOverlays({super.key, required this.asset, this.frame, this.zoomed = false});
+  /// The overlay slots this layer serves (default [slots]; e.g. `editImage.overlay` in the editor).
+  final List<String> slotIds;
+
+  const PluginViewerOverlays({super.key, required this.asset, this.frame, this.zoomed = false, this.slotIds = slots});
 
   @override
   ConsumerState<PluginViewerOverlays> createState() => _PluginViewerOverlaysState();
@@ -662,7 +663,7 @@ class _PluginViewerOverlaysState extends ConsumerState<PluginViewerOverlays> {
   Map<String, dynamic>? _asset;
   BaseAsset? _loadedFor;
 
-  bool _hasOverlays(PluginKernel kernel) => PluginViewerOverlays.slots.any(kernel.hasSlot);
+  bool _hasOverlays(PluginKernel kernel) => widget.slotIds.any(kernel.hasSlot);
 
   @override
   void initState() {
@@ -701,13 +702,14 @@ class _PluginViewerOverlaysState extends ConsumerState<PluginViewerOverlays> {
     final slotContext = {
       ...PluginKernel.assetContext([widget.asset]),
       'zoomed': widget.zoomed,
-      if (frame != null)
-        'frame': {'left': frame.left, 'top': frame.top, 'width': frame.width, 'height': frame.height},
+      if (frame != null) 'frame': {'left': frame.left, 'top': frame.top, 'width': frame.width, 'height': frame.height},
     };
     final overlays = [
-      for (final slot in PluginViewerOverlays.slots)
+      for (final slot in widget.slotIds)
         for (final item in kernel.slot(slot, context: slotContext))
-          if (item.kind == PluginSlotKind.overlay || item.kind == PluginSlotKind.view || item.kind == PluginSlotKind.wrap)
+          if (item.kind == PluginSlotKind.overlay ||
+              item.kind == PluginSlotKind.view ||
+              item.kind == PluginSlotKind.wrap)
             item,
     ];
     final asset = _asset;
@@ -1189,7 +1191,9 @@ Future<Map<String, dynamic>?> _pickAlbum(BuildContext context, ProviderContainer
       ),
     ),
   );
-  return picked == null ? null : {'id': picked.id, 'name': picked.name, 'kind': picked.kind, 'assetCount': picked.count};
+  return picked == null
+      ? null
+      : {'id': picked.id, 'name': picked.name, 'kind': picked.kind, 'assetCount': picked.count};
 }
 
 Future<bool> _openAlbum(StackRouter router, ProviderContainer container, String id, {String? kind}) async {

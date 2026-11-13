@@ -3,6 +3,7 @@ import 'dart:math';
 import 'dart:ui' as ui;
 
 import 'package:auto_route/auto_route.dart';
+import 'package:collection/collection.dart';
 import 'package:crop_image/crop_image.dart';
 import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/foundation.dart';
@@ -10,6 +11,7 @@ import 'package:flutter/material.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:immich_mobile/constants/aspect_ratios.dart';
 import 'package:immich_mobile/domain/models/asset_edit.model.dart';
+import 'package:immich_mobile/domain/utils/plugin_hooks.dart';
 import 'package:immich_mobile/extensions/build_context_extensions.dart';
 import 'package:immich_mobile/generated/translations.g.dart';
 import 'package:immich_mobile/infrastructure/plugins/censor_styles.dart';
@@ -18,16 +20,26 @@ import 'package:immich_mobile/infrastructure/plugins/plugin_api/editor/editor_me
 import 'package:immich_mobile/infrastructure/plugins/plugin_api/editor/editor_tool.dart';
 import 'package:immich_mobile/infrastructure/plugins/plugin_api/editor/editor_tool_protocol.dart';
 import 'package:immich_mobile/infrastructure/plugins/plugin_api/editor/editor_workspace.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/editor_plugin_api.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_kernel.dart';
+import 'package:immich_mobile/presentation/actions/action_slots.dart';
 import 'package:immich_mobile/presentation/pages/edit/editor.provider.dart';
 import 'package:immich_mobile/presentation/pages/edit/editor_edits.dart';
 import 'package:immich_mobile/presentation/pages/edit/editor_save_dialog.dart';
 import 'package:immich_mobile/presentation/pages/edit/editor_session.provider.dart';
 import 'package:immich_mobile/presentation/pages/edit/editor_tools.provider.dart';
 import 'package:immich_mobile/presentation/pages/plugins/schema_form.widget.dart';
+import 'package:immich_mobile/presentation/plugins/plugin_slot.dart';
+import 'package:immich_mobile/presentation/plugins/plugin_ui.dart';
 import 'package:immich_mobile/presentation/plugins/plugin_ui_renderer.dart';
+import 'package:immich_mobile/presentation/widgets/asset_viewer/viewer_slots.dart';
+import 'package:immich_mobile/presentation/widgets/sliver_app_bar/app_menu.widget.dart';
+import 'package:immich_mobile/presentation/widgets/timeline/plugins/timeline_plugin_bridge.dart';
 import 'package:immich_mobile/providers/background_sync.provider.dart';
 import 'package:immich_mobile/providers/device_plugins.provider.dart';
 import 'package:immich_mobile/providers/theme.provider.dart';
+import 'package:immich_mobile/providers/timeline/timeline_plugins.provider.dart';
+import 'package:immich_mobile/routing/router.dart';
 import 'package:immich_mobile/theme/theme_data.dart';
 import 'package:immich_mobile/utils/error_handler.dart';
 import 'package:immich_mobile/utils/mosaic.utils.dart';
@@ -46,7 +58,9 @@ class EditImagePage extends ConsumerStatefulWidget {
   ConsumerState<EditImagePage> createState() => _EditImagePageState();
 }
 
-class _EditImagePageState extends ConsumerState<EditImagePage> with TickerProviderStateMixin {
+class _EditImagePageState extends ConsumerState<EditImagePage>
+    with TickerProviderStateMixin
+    implements EditorPageHandle {
   final ValueNotifier<int> _pinches = ValueNotifier(0);
   Rect? _cropBeforeGesture;
   late final EditorSessionNotifier _session;
@@ -58,10 +72,14 @@ class _EditImagePageState extends ConsumerState<EditImagePage> with TickerProvid
     super.initState();
     _session = ref.read(editorSessionProvider.notifier);
     _sessionId = ref.read(editorSessionProvider).id;
+    EditorPageHandle.current = this;
   }
 
   @override
   void dispose() {
+    if (identical(EditorPageHandle.current, this)) {
+      EditorPageHandle.current = null;
+    }
     _pinches.dispose();
     _session.endSession(_sessionId);
     super.dispose();
@@ -99,7 +117,64 @@ class _EditImagePageState extends ConsumerState<EditImagePage> with TickerProvid
 
   void _onPinchEnd() => _restoreCropBeforeGesture();
 
-  Future<void> _saveEditedImage({bool asCopy = false}) async {
+  @override
+  Future<Map<String, dynamic>> save({String? target}) async {
+    final parsed = EditorSaveTarget.values.where((value) => value.name == target).firstOrNull;
+    final result = ref.read(editorSessionProvider).isBaked
+        ? await _saveBakedImage(target: parsed)
+        : await _saveEditedImage(asCopy: parsed == EditorSaveTarget.copy);
+    return result ?? {'target': 'cancelled'};
+  }
+
+  @override
+  Future<bool> close({bool discard = false}) async {
+    if (!mounted) {
+      return false;
+    }
+    final navigator = Navigator.of(context);
+    if (discard || !ref.read(editorStateProvider).hasUnsavedEdits) {
+      navigator.pop();
+      return true;
+    }
+    return navigator.maybePop();
+  }
+
+  /// Runs a save through the `editor.save` hook: `before` may set `target`, `instead` saves elsewhere (the editor then
+  /// closes as saved), `after` sees the result. Emits `editor.saved`.
+  Future<Map<String, dynamic>> _runSaveHook(
+    String mode,
+    EditorSaveTarget? target,
+    Future<Map<String, dynamic>> Function(EditorSaveTarget? target) original,
+  ) async {
+    final session = ref.read(editorSessionProvider);
+    final asset = session.asset;
+    final result = await PluginHooks.run<Map<String, dynamic>>(
+      EditorPluginIds.saveHook,
+      () => {
+        'session': session.id,
+        if (asset != null) 'asset': {'id': asset.id, 'name': asset.name},
+        'mode': mode,
+        'edits': editorStateToJson(ref.read(editorStateProvider))['edits'] ?? const [],
+        if (target != null) 'target': target.name,
+      },
+      () => original(target),
+      withArgs: (args) =>
+          original(EditorSaveTarget.values.where((value) => value.name == args['target']).firstOrNull ?? target),
+      encode: (value) => value,
+      decode: (json) => json is Map ? Map<String, dynamic>.from(json) : const {'target': 'edits'},
+    );
+    if (result['target'] != 'cancelled') {
+      EditorPluginEvents.markSaved(session.id);
+      PluginKernel.current?.emit(EditorPluginIds.savedEvent, {
+        'session': session.id,
+        if (asset != null) 'asset': {'id': asset.id},
+        ...result,
+      });
+    }
+    return result;
+  }
+
+  Future<Map<String, dynamic>?> _saveEditedImage({bool asCopy = false}) async {
     if (ref.read(editorSessionProvider).isBaked) {
       return _saveBakedImage();
     }
@@ -109,19 +184,26 @@ class _EditImagePageState extends ConsumerState<EditImagePage> with TickerProvid
 
     try {
       final saveAsCopy = widget.saveAsCopy;
-      await (asCopy && saveAsCopy != null ? saveAsCopy(edits) : widget.applyEdits(edits));
+      final assetId = ref.read(editorSessionProvider).asset?.id;
+      final result = await _runSaveHook('edits', asCopy ? EditorSaveTarget.copy : null, (target) async {
+        final copy = target == EditorSaveTarget.copy && saveAsCopy != null;
+        await (copy ? saveAsCopy(edits) : widget.applyEdits(edits));
+        return {'target': copy ? 'copy' : 'edits', 'assetId': ?assetId};
+      });
       if (!mounted) {
-        return;
+        return result;
       }
 
       ImmichToast.show(context: context, msg: context.t.success, toastType: ToastType.success);
       Navigator.of(context).pop();
+      return result;
     } catch (e) {
       if (!mounted) {
-        return;
+        return null;
       }
 
       ImmichToast.show(context: context, msg: context.t.error_title, toastType: ToastType.error);
+      return null;
     } finally {
       ref.read(editorStateProvider.notifier).setIsEditing(false);
     }
@@ -129,33 +211,43 @@ class _EditImagePageState extends ConsumerState<EditImagePage> with TickerProvid
 
   /// A tool replaced the image (e.g. an upscale): bake everything into a new file, saved as a copy or over the
   /// original, asking every time.
-  Future<void> _saveBakedImage() async {
-    final target = await showEditorSaveTargetDialog(
-      context,
-      canCopy: _session.canSave(EditorSaveTarget.copy),
-      canReplace: _session.canSave(EditorSaveTarget.replace),
-    );
-    if (target == null || !mounted) {
-      return;
-    }
-
+  Future<Map<String, dynamic>?> _saveBakedImage({EditorSaveTarget? target}) async {
     ref.read(editorStateProvider.notifier).setIsEditing(true);
     try {
-      await _session.saveBaked(target);
+      final result = await _runSaveHook('baked', target, (target) async {
+        final chosen =
+            target ??
+            (mounted
+                ? await showEditorSaveTargetDialog(
+                    context,
+                    canCopy: _session.canSave(EditorSaveTarget.copy),
+                    canReplace: _session.canSave(EditorSaveTarget.replace),
+                  )
+                : null);
+        if (chosen == null) {
+          return const {'target': 'cancelled'};
+        }
+        return (await _session.saveBaked(chosen)).toJson();
+      });
+      if (result['target'] == 'cancelled') {
+        return null;
+      }
       unawaited(ref.read(backgroundSyncProvider).syncLocal());
       if (!mounted) {
-        return;
+        return result;
       }
 
       ImmichToast.show(context: context, msg: context.t.success, toastType: ToastType.success);
       Navigator.of(context).pop();
+      return result;
     } catch (error, stack) {
       handleError(error, stack: stack, description: 'Failed to save the edited image');
       if (!mounted) {
-        return;
+        return null;
       }
 
       ImmichToast.show(context: context, msg: context.t.error_title, toastType: ToastType.error);
+      return null;
     } finally {
       ref.read(editorStateProvider.notifier).setIsEditing(false);
     }
@@ -188,6 +280,9 @@ class _EditImagePageState extends ConsumerState<EditImagePage> with TickerProvid
     final working = ref.watch(editorSessionProvider.select((session) => session.working));
     final canUndoTool = ref.watch(editorSessionProvider.select((session) => session.isBaked && session.run == null));
     final image = _imageFor(working);
+    final asset = ref.watch(editorSessionProvider.select((session) => session.asset));
+    final assets = [?asset];
+    final slotContext = editorSlotContext(ref);
 
     return PopScope(
       canPop: !hasUnsavedEdits,
@@ -210,76 +305,128 @@ class _EditImagePageState extends ConsumerState<EditImagePage> with TickerProvid
             title: Text(context.t.edit, style: const TextStyle(fontSize: 16)),
             leading: ImmichCloseButton(onPressed: () => Navigator.of(context).maybePop()),
             actions: [
-              if (canUndoTool)
-                ImmichIconButton(icon: Icons.undo, variant: ImmichVariant.ghost, onPressed: _session.undoTool),
-              _SaveEditsButton(
-                onSave: _saveEditedImage,
-                onSaveCopy: widget.saveAsCopy == null || ref.watch(editorSessionProvider).isBaked
-                    ? null
-                    : () => _saveEditedImage(asCopy: true),
-              ),
+              ...arrangeButtons(ref, EditorPluginIds.appBarActions, [
+                if (canUndoTool)
+                  BuiltinSlotItem(
+                    id: EditorBuiltinItemIds.undoTool,
+                    child: ImmichIconButton(
+                      icon: Icons.undo,
+                      variant: ImmichVariant.ghost,
+                      onPressed: _session.undoTool,
+                    ),
+                  ),
+                BuiltinSlotItem(
+                  id: EditorBuiltinItemIds.save,
+                  child: _SaveEditsButton(
+                    onSave: _saveEditedImage,
+                    onSaveCopy: widget.saveAsCopy == null || ref.watch(editorSessionProvider).isBaked
+                        ? null
+                        : () => _saveEditedImage(asCopy: true),
+                  ),
+                ),
+              ], context: slotContext),
+              if (arrangeMenuItems(ref, EditorPluginIds.appBarMenu, const [], context: slotContext) case final entries
+                  when entries.isNotEmpty)
+                AppBarOverflowMenu(children: entries),
             ],
           ),
           backgroundColor: Colors.black,
           body: SafeArea(
-            child: Column(
-              children: [
-                Expanded(
-                  child: _ZoomableEditorArea(
-                    key: ValueKey((tool.id, working?.generation)),
-                    onPointerStart: _onFirstPointer,
-                    onPinchStart: _onPinchStart,
-                    onPinchEnd: _onPinchEnd,
-                    child: switch (tool.id) {
-                      EditorBuiltinToolIds.crop => _EditorPreview(image: image),
-                      EditorBuiltinToolIds.mosaic => _MosaicCanvas(image: image, pinches: _pinches),
-                      _ => _ToolImageView(fallback: image),
-                    },
+            child: PluginReplaceable(
+              slot: EditorPluginIds.body,
+              slotContext: slotContext,
+              child: Column(
+                children: [
+                  ?viewerSlotContent(ref, EditorPluginIds.header, assets: assets, extra: slotContext),
+                  Expanded(
+                    child: Stack(
+                      children: [
+                        Positioned.fill(
+                          child: _ZoomableEditorArea(
+                            key: ValueKey((tool.id, working?.generation)),
+                            onPointerStart: _onFirstPointer,
+                            onPinchStart: _onPinchStart,
+                            onPinchEnd: _onPinchEnd,
+                            child: switch (tool.id) {
+                              EditorBuiltinToolIds.crop => _EditorPreview(image: image),
+                              EditorBuiltinToolIds.mosaic => _MosaicCanvas(image: image, pinches: _pinches),
+                              _ => _ToolImageView(fallback: image),
+                            },
+                          ),
+                        ),
+                        if (asset != null)
+                          Positioned.fill(
+                            child: PluginViewerOverlays(asset: asset, slotIds: const [EditorPluginIds.overlay]),
+                          ),
+                      ],
+                    ),
                   ),
-                ),
-                AnimatedSize(
-                  duration: const Duration(milliseconds: 200),
-                  curve: Curves.easeInOut,
-                  alignment: Alignment.bottomCenter,
-                  clipBehavior: Clip.none,
-                  child: ColoredBox(
-                    color: ref.watch(immichThemeProvider).dark.surface,
-                    child: Padding(
-                      padding: const EdgeInsets.fromLTRB(8, 6, 8, 4),
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          switch (tool.id) {
-                            EditorBuiltinToolIds.crop => const _TransformControls(),
-                            EditorBuiltinToolIds.mosaic => const _MosaicControls(),
-                            _ => _PluginToolControls(key: ValueKey(tool.id), tool: tool),
-                          },
-                          const Row(
-                            children: [
-                              Expanded(
-                                child: Align(
-                                  alignment: Alignment.centerLeft,
-                                  child: SingleChildScrollView(
-                                    scrollDirection: Axis.horizontal,
-                                    child: _EditorToolSelector(),
+                  AnimatedSize(
+                    duration: const Duration(milliseconds: 200),
+                    curve: Curves.easeInOut,
+                    alignment: Alignment.bottomCenter,
+                    clipBehavior: Clip.none,
+                    child: ColoredBox(
+                      color: ref.watch(immichThemeProvider).dark.surface,
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(8, 6, 8, 4),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            switch (tool.id) {
+                              EditorBuiltinToolIds.crop => const _TransformControls(),
+                              EditorBuiltinToolIds.mosaic => const _MosaicControls(),
+                              _ => _PluginToolControls(key: ValueKey(tool.id), tool: tool),
+                            },
+                            const Row(
+                              children: [
+                                Expanded(
+                                  child: Align(
+                                    alignment: Alignment.centerLeft,
+                                    child: SingleChildScrollView(
+                                      scrollDirection: Axis.horizontal,
+                                      child: _EditorToolSelector(),
+                                    ),
                                   ),
                                 ),
-                              ),
-                              _ResetEditsButton(),
-                            ],
-                          ),
-                        ],
+                                _ResetEditsButton(),
+                              ],
+                            ),
+                          ],
+                        ),
                       ),
                     ),
                   ),
-                ),
-              ],
+                  ?viewerSlotContent(ref, EditorPluginIds.footer, assets: assets, extra: slotContext),
+                ],
+              ),
             ),
           ),
         ),
       ),
     );
   }
+}
+
+/// Whether a plugin rule hides built-in [id] of the mosaic controls.
+bool editorSlotHidden(WidgetRef ref, String id) =>
+    ref.watch(timelinePluginBridgeProvider).rules([EditorPluginIds.mosaicControls]).isHidden(id);
+
+/// Context of every editor slot: `route`, `session`, `asset` fields, `tool`, `generation`, `baked`,
+/// `hasUnsavedEdits`.
+Map<String, dynamic> editorSlotContext(WidgetRef ref) {
+  final session = ref.watch(editorSessionProvider);
+  final asset = session.asset;
+  return {
+    'route': EditImageRoute.name,
+    'session': session.id,
+    ...PluginKernel.assetContext([?asset]),
+    if (asset != null) 'asset': {'id': asset.id, 'name': asset.name},
+    'tool': ref.watch(editorActiveToolProvider),
+    'generation': session.generation,
+    'baked': session.isBaked,
+    'hasUnsavedEdits': ref.watch(editorStateProvider.select((state) => state.hasUnsavedEdits)),
+  };
 }
 
 class _AspectRatioChip extends StatelessWidget {
@@ -391,34 +538,57 @@ class _TransformControls extends ConsumerWidget {
     return SizedBox(
       height: 40,
       child: Row(
-        children: [
-          _CompactIconButton(icon: Icons.rotate_left, tooltip: 'Rotate left', onPressed: editorNotifier.rotateCCW),
-          _CompactIconButton(icon: Icons.rotate_right, tooltip: 'Rotate right', onPressed: editorNotifier.rotateCW),
-          _CompactIconButton(icon: Icons.flip, tooltip: 'Flip', onPressed: editorNotifier.flipHorizontally),
-          _CompactIconButton(
-            icon: Icons.flip,
-            tooltip: 'Flip vertically',
-            quarterTurns: 1,
-            onPressed: editorNotifier.flipVertically,
-          ),
-          const VerticalDivider(width: 12, indent: 8, endIndent: 8),
-          Expanded(
-            child: ListView(
-              scrollDirection: Axis.horizontal,
-              children: [
-                for (final ratio in CropAspectRatio.values)
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 4),
-                    child: _AspectRatioChip(
-                      ratio: ratio,
-                      isSelected: aspectRatio == ratio,
-                      onPressed: () => editorNotifier.setAspectRatio(ratio),
-                    ),
-                  ),
-              ],
+        children: arrangeButtons(ref, EditorPluginIds.cropControls, [
+          BuiltinSlotItem(
+            id: EditorBuiltinItemIds.rotateLeft,
+            child: _CompactIconButton(
+              icon: Icons.rotate_left,
+              tooltip: 'Rotate left',
+              onPressed: editorNotifier.rotateCCW,
             ),
           ),
-        ],
+          BuiltinSlotItem(
+            id: EditorBuiltinItemIds.rotateRight,
+            child: _CompactIconButton(
+              icon: Icons.rotate_right,
+              tooltip: 'Rotate right',
+              onPressed: editorNotifier.rotateCW,
+            ),
+          ),
+          BuiltinSlotItem(
+            id: EditorBuiltinItemIds.flipHorizontal,
+            child: _CompactIconButton(icon: Icons.flip, tooltip: 'Flip', onPressed: editorNotifier.flipHorizontally),
+          ),
+          BuiltinSlotItem(
+            id: EditorBuiltinItemIds.flipVertical,
+            child: _CompactIconButton(
+              icon: Icons.flip,
+              tooltip: 'Flip vertically',
+              quarterTurns: 1,
+              onPressed: editorNotifier.flipVertically,
+            ),
+          ),
+          const VerticalDivider(width: 12, indent: 8, endIndent: 8),
+          BuiltinSlotItem(
+            id: EditorBuiltinItemIds.aspectRatios,
+            child: Expanded(
+              child: ListView(
+                scrollDirection: Axis.horizontal,
+                children: [
+                  for (final ratio in CropAspectRatio.values)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 4),
+                      child: _AspectRatioChip(
+                        ratio: ratio,
+                        isSelected: aspectRatio == ratio,
+                        onPressed: () => editorNotifier.setAspectRatio(ratio),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ),
+        ], context: editorSlotContext(ref)),
       ),
     );
   }
@@ -967,29 +1137,41 @@ class _MosaicControls extends ConsumerWidget {
         SizedBox(
           height: 40,
           child: Row(
-            children: [
-              _CompactIconButton(
-                icon: Icons.brush,
-                tooltip: context.t.mosaic_brush,
-                selected: isBrush,
-                onPressed: () => editorNotifier.setMosaicTool(MosaicTool.brush),
+            children: arrangeButtons(ref, EditorPluginIds.mosaicControls, [
+              BuiltinSlotItem(
+                id: EditorBuiltinItemIds.brush,
+                child: _CompactIconButton(
+                  icon: Icons.brush,
+                  tooltip: context.t.mosaic_brush,
+                  selected: isBrush,
+                  onPressed: () => editorNotifier.setMosaicTool(MosaicTool.brush),
+                ),
               ),
-              _CompactIconButton(
-                icon: Icons.auto_fix_normal,
-                tooltip: context.t.mosaic_eraser,
-                selected: !isBrush,
-                onPressed: () => editorNotifier.setMosaicTool(MosaicTool.eraser),
+              BuiltinSlotItem(
+                id: EditorBuiltinItemIds.eraser,
+                child: _CompactIconButton(
+                  icon: Icons.auto_fix_normal,
+                  tooltip: context.t.mosaic_eraser,
+                  selected: !isBrush,
+                  onPressed: () => editorNotifier.setMosaicTool(MosaicTool.eraser),
+                ),
               ),
               const VerticalDivider(width: 12, indent: 8, endIndent: 8),
-              _CompactIconButton(
-                icon: Icons.undo,
-                tooltip: context.t.undo,
-                onPressed: editorState.mosaicStrokes.isEmpty ? null : editorNotifier.undoMosaicStroke,
+              BuiltinSlotItem(
+                id: EditorBuiltinItemIds.undo,
+                child: _CompactIconButton(
+                  icon: Icons.undo,
+                  tooltip: context.t.undo,
+                  onPressed: editorState.mosaicStrokes.isEmpty ? null : editorNotifier.undoMosaicStroke,
+                ),
               ),
-              _CompactIconButton(
-                icon: Icons.redo,
-                tooltip: 'Redo',
-                onPressed: editorState.mosaicRedoStrokes.isEmpty ? null : editorNotifier.redoMosaicStroke,
+              BuiltinSlotItem(
+                id: EditorBuiltinItemIds.redo,
+                child: _CompactIconButton(
+                  icon: Icons.redo,
+                  tooltip: 'Redo',
+                  onPressed: editorState.mosaicRedoStrokes.isEmpty ? null : editorNotifier.redoMosaicStroke,
+                ),
               ),
               const Spacer(),
               Padding(
@@ -1000,32 +1182,34 @@ class _MosaicControls extends ConsumerWidget {
                   erase: !isBrush,
                 ),
               ),
-            ],
+            ], context: editorSlotContext(ref)),
           ),
         ),
-        const _CensorStylePicker(),
-        _SizeControl(
-          icon: Icons.circle_outlined,
-          tooltip: context.t.mosaic_brush_size,
-          value: editorState.mosaicBrushSize,
-          min: minMosaicBrushSize,
-          max: maxMosaicBrushSize,
-          step: mosaicBrushStep,
-          presets: const {'S': 0.02, 'M': 0.05, 'L': 0.1, 'XL': 0.2},
-          valueLabel: '${mosaicBrushPixels(editorState.mosaicBrushSize, width, height)} px',
-          onChanged: editorNotifier.setMosaicBrushSize,
-        ),
-        _SizeControl(
-          icon: Icons.grid_view,
-          tooltip: context.t.mosaic_block_size,
-          value: editorState.mosaicBlockSize,
-          min: minMosaicBlockSize,
-          max: maxMosaicBlockSize,
-          step: mosaicBlockStep,
-          presets: const {'Fine': 0.01, 'Med': 0.025, 'Coarse': 0.05, 'Max': 0.1},
-          valueLabel: '${mosaicBlockPixels(editorState.mosaicBlockSize, width, height)} px',
-          onChanged: editorNotifier.setMosaicBlockSize,
-        ),
+        if (!editorSlotHidden(ref, EditorBuiltinItemIds.styles)) const _CensorStylePicker(),
+        if (!editorSlotHidden(ref, EditorBuiltinItemIds.brushSize))
+          _SizeControl(
+            icon: Icons.circle_outlined,
+            tooltip: context.t.mosaic_brush_size,
+            value: editorState.mosaicBrushSize,
+            min: minMosaicBrushSize,
+            max: maxMosaicBrushSize,
+            step: mosaicBrushStep,
+            presets: const {'S': 0.02, 'M': 0.05, 'L': 0.1, 'XL': 0.2},
+            valueLabel: '${mosaicBrushPixels(editorState.mosaicBrushSize, width, height)} px',
+            onChanged: editorNotifier.setMosaicBrushSize,
+          ),
+        if (!editorSlotHidden(ref, EditorBuiltinItemIds.blockSize))
+          _SizeControl(
+            icon: Icons.grid_view,
+            tooltip: context.t.mosaic_block_size,
+            value: editorState.mosaicBlockSize,
+            min: minMosaicBlockSize,
+            max: maxMosaicBlockSize,
+            step: mosaicBlockStep,
+            presets: const {'Fine': 0.01, 'Med': 0.025, 'Coarse': 0.05, 'Max': 0.1},
+            valueLabel: '${mosaicBlockPixels(editorState.mosaicBlockSize, width, height)} px',
+            onChanged: editorNotifier.setMosaicBlockSize,
+          ),
       ],
     );
   }
