@@ -16,7 +16,6 @@ import 'package:immich_mobile/presentation/actions/action_slots.dart';
 import 'package:immich_mobile/presentation/actions/device_album.actions.dart';
 import 'package:immich_mobile/presentation/actions/favorite.action.dart';
 import 'package:immich_mobile/presentation/actions/plugin.action.dart';
-import 'package:immich_mobile/presentation/plugins/plugin_ui.dart';
 import 'package:immich_mobile/presentation/widgets/action_buttons/motion_photo_action_button.widget.dart';
 import 'package:immich_mobile/presentation/widgets/asset_viewer/viewer_action_surface.dart';
 import 'package:immich_mobile/presentation/widgets/asset_viewer/viewer_censor.widget.dart';
@@ -100,7 +99,6 @@ class ViewerTopAppBar extends ConsumerWidget implements PreferredSizeWidget {
         const ActionIconButton(action: RevertEditsAction(source: .viewer)),
         const ActionIconButton(action: PluginAction(source: .viewer)),
         const BuiltinSlotItem(id: 'censor', child: ViewerCensorButton()),
-        PluginSlotButtons(slot: ViewerSlotIds.topBar, assets: [if (asset is LocalAsset) asset]),
 
         BuiltinSlotItem(
           id: 'menu',
@@ -172,9 +170,16 @@ class ViewerTopAppBar extends ConsumerWidget implements PreferredSizeWidget {
                     trailing: !showingDetails && !isReadonlyModeEnabled
                         ? ImmichColorOverride(
                             color: Colors.white,
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: isInLockedView ? lockedViewActions : actions,
+                            child: ConstrainedBox(
+                              constraints: BoxConstraints(maxWidth: context.width - 64),
+                              child: SingleChildScrollView(
+                                scrollDirection: Axis.horizontal,
+                                reverse: true,
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: isInLockedView ? lockedViewActions : actions,
+                                ),
+                              ),
                             ),
                           )
                         : null,
