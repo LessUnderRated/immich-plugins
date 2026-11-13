@@ -1,6 +1,6 @@
 # Upscale server
 
-Runs the Upscaler plugin's models on your computer instead of the phone. The phone uploads the photo, the PC
+Runs the Upscaler plugin's models on your computer (the plugin has no on-phone engine). The phone uploads the photo, the PC
 upscales it (on the GPU when one is available) and the phone downloads the result into the editor, with progress and
 Cancel as usual.
 
@@ -14,35 +14,29 @@ pip install -r requirements.txt     # NVIDIA: pip install onnxruntime-gpu · Win
 python upscale_server.py
 ```
 
-It prints the addresses to use and a token:
+It prints its name, the ONNX Runtime provider (GPU or CPU) and its addresses (Tailscale first).
 
-```
-Immich upscale server 1.0.0
-  ONNX Runtime providers: CUDAExecutionProvider, CPUExecutionProvider
-  Enter one of these in the Upscale panel (Run on: My PC):
-    100.101.102.103:8765  (Tailscale)
-    192.168.1.20:8765  (LAN)
-  Token: 3vQ…
-```
-
-On the phone (Tailscale connected), open a photo in the editor, pick **Upscale**, set **Run on** to **My PC**, enter
-the address and the token, and tap **Test connection**. The settings are remembered.
+On the phone, open **Settings > Plugins > Upscaler**, enter the PC's Tailscale address (or its Tailscale name) and tap
+**Test connection**. On the same Wi-Fi, **Find on this Wi-Fi** fills it in (it also learns the Tailscale address). Then
+in the editor pick **Upscale**: model, output size, **Upscale**.
 
 Models download from Hugging Face the first time each is used (same files and checksums as the plugin) into
-`~/.immich-upscale/models`. The token is kept in `~/.immich-upscale/token`.
+`~/.immich-upscale/models`.
 
-Options: `--host` (listen only on one address, e.g. your Tailscale IP), `--port` (default 8765), `--tile` (tile size,
-default 256; lower it if the GPU runs out of memory), `--data` (folder for models and the token), `--token`.
+Options: `--host` (listen only on one address), `--port` (default 8765, HTTP and discovery), `--tile` (tile size,
+default 256; lower it if the GPU runs out of memory), `--data` (folder for the models).
+
+There is no password: the server is only reachable from your own network and tailnet. Allow TCP and UDP port 8765 in
+the PC's firewall for the LAN and Tailscale.
 
 Results are PNG. Finished jobs the phone never collects are deleted after an hour.
 
 ## Protocol
 
-Every request needs `X-Token: <token>`.
-
 | Request | Answer |
 | --- | --- |
-| `GET /health` | `{ ok, version, providers, models, busy }` |
+| UDP `IMMICH-UPSCALE?` to port 8765 | `{ service: "immich-upscale", name, port, addresses, version }` |
+| `GET /health` | `{ ok, version, name, addresses, providers, models, busy }` |
 | `POST /jobs?model=&width=&height=&denoise=` with the photo (PNG, JPEG or WebP) as the body | `{ id }` (`width`, `height`: output size) |
 | `GET /jobs/<id>` | `{ state: queued \| running \| done \| failed \| cancelled, progress, message, error? }` |
 | `GET /jobs/<id>/result` | the upscaled photo (PNG) |
