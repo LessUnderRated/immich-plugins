@@ -5,11 +5,12 @@ import 'package:flutter/material.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:immich_mobile/extensions/asyncvalue_extensions.dart';
 import 'package:immich_mobile/generated/translations.g.dart';
-import 'package:immich_mobile/infrastructure/plugins/plugin_api/viewer/viewer_builtins.dart';
 import 'package:immich_mobile/infrastructure/plugins/plugin_api/viewer/viewer_ids.dart';
+import 'package:immich_mobile/presentation/actions/action_slots.dart';
 import 'package:immich_mobile/presentation/pages/memory.page.dart';
 import 'package:immich_mobile/presentation/widgets/images/thumbnail.widget.dart';
 import 'package:immich_mobile/presentation/widgets/memory/memory_title.widget.dart';
+import 'package:immich_mobile/presentation/widgets/timeline/plugins/timeline_plugin_bridge.dart';
 import 'package:immich_mobile/providers/infrastructure/memory.provider.dart';
 import 'package:immich_mobile/routing/router.dart';
 
@@ -33,11 +34,11 @@ class _MemoryListPageState extends ConsumerState<MemoryListPage> {
         return Scaffold(
           appBar: AppBar(
             title: Text(context.t.memories),
-            // Built-in ids: ViewerBuiltinIds.memoryListActions.
-            actions: arrangeViewerItems<Widget>(ViewerSlotIds.memoryListActions, [
-              ViewerSlotItem(
-                'favorites',
-                IconButton(
+            // Built-in ids: ViewerBuiltinIds.memoryListActions; plugin buttons of the slot join them.
+            actions: arrangeButtons(ref, ViewerSlotIds.memoryListActions, [
+              BuiltinSlotItem(
+                id: 'favorites',
+                child: IconButton(
                   icon: Icon(_onlyFavorites ? Icons.favorite : Icons.favorite_outline),
                   onPressed: () {
                     setState(() => _onlyFavorites = !_onlyFavorites);

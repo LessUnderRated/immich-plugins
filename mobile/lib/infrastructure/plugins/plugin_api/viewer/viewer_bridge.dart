@@ -1,17 +1,14 @@
 import 'package:flutter/foundation.dart';
 import 'package:immich_mobile/domain/models/asset/base_asset.model.dart';
-import 'package:immich_mobile/infrastructure/plugins/plugin_api/timeline/builtin_rules.dart';
 
-/// What the viewer area needs from the plugin kernel besides hooks and events (those go through `PluginHooks`).
+/// What the viewer area needs from the plugin kernel besides hooks and events (those go through `PluginHooks`) and
+/// slot rules and items (those come from the timeline area's `TimelinePluginBridge`, shared by every bar and menu).
 ///
 /// The kernel binds an implementation at startup (phase B, `viewer_plugin_api.dart`). Unbound, everything here has
 /// a working default, so the viewer behaves exactly as without plugins.
 abstract interface class ViewerPluginBridge {
   /// AssetV1 JSON for a local or remote asset.
   Future<Map<String, dynamic>> assetJson(BaseAsset asset);
-
-  /// Hide / order / rename rules of the built-in items of [slotId], merged across plugins.
-  BuiltinItemRules builtinRules(String slotId);
 
   /// A string that changes whenever the set or the versions of the plugins handling [hookId] change
   /// (e.g. `"censor@1.2.0:instead,upscale@0.3:after"`). Part of the image pipeline cache keys.
@@ -22,7 +19,7 @@ abstract interface class ViewerPluginBridge {
 abstract final class ViewerPlugins {
   static ViewerPluginBridge? _bridge;
 
-  /// Bumped whenever the binding changes; widgets that read rules rebuild on it.
+  /// Bumped whenever the binding changes.
   static final ValueNotifier<int> changes = ValueNotifier(0);
 
   static void bind(ViewerPluginBridge? bridge) {
@@ -30,7 +27,7 @@ abstract final class ViewerPlugins {
     changes.value++;
   }
 
-  /// Tells listeners that rules or contributions changed (the kernel calls this after a plugin refresh).
+  /// Tells listeners that plugins changed (the kernel calls this after a plugin refresh).
   static void notifyChanged() => changes.value++;
 
   static bool get isBound => _bridge != null;
@@ -46,8 +43,6 @@ abstract final class ViewerPlugins {
       return basicAssetJson(asset);
     }
   }
-
-  static BuiltinItemRules rules(String slotId) => _bridge?.builtinRules(slotId) ?? BuiltinItemRules.none;
 
   static String hookSignature(String hookId) => _bridge?.hookSignature(hookId) ?? '';
 

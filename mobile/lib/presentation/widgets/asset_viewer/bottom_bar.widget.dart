@@ -2,9 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:immich_mobile/domain/services/timeline.service.dart';
 import 'package:immich_mobile/extensions/build_context_extensions.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/timeline/builtin_rules.dart';
 import 'package:immich_mobile/infrastructure/plugins/plugin_api/viewer/viewer_builtins.dart';
 import 'package:immich_mobile/infrastructure/plugins/plugin_api/viewer/viewer_ids.dart';
 import 'package:immich_mobile/presentation/actions/action.dart';
+import 'package:immich_mobile/presentation/actions/action_ids.dart';
+import 'package:immich_mobile/presentation/actions/action_slots.dart';
 import 'package:immich_mobile/presentation/actions/delete.action.dart';
 import 'package:immich_mobile/presentation/actions/edit_asset.action.dart';
 import 'package:immich_mobile/presentation/actions/move_to_private.action.dart';
@@ -12,7 +15,10 @@ import 'package:immich_mobile/presentation/actions/restore.action.dart';
 import 'package:immich_mobile/presentation/actions/share.action.dart';
 import 'package:immich_mobile/presentation/widgets/action_buttons/add_action_button.widget.dart';
 import 'package:immich_mobile/presentation/widgets/asset_viewer/ocr_toggle_button.widget.dart';
+import 'package:immich_mobile/presentation/widgets/asset_viewer/viewer_action_surface.dart';
 import 'package:immich_mobile/presentation/widgets/asset_viewer/viewer_carousel.widget.dart';
+import 'package:immich_mobile/presentation/widgets/asset_viewer/viewer_slots.dart';
+import 'package:immich_mobile/presentation/widgets/timeline/plugins/timeline_plugin_bridge.dart';
 import 'package:immich_mobile/providers/asset_viewer/asset_viewer.provider.dart';
 import 'package:immich_mobile/providers/infrastructure/readonly_mode.provider.dart';
 import 'package:immich_mobile/providers/infrastructure/timeline.provider.dart';
@@ -20,25 +26,35 @@ import 'package:immich_mobile/providers/routes.provider.dart';
 import 'package:immich_mobile/widgets/asset_viewer/video_controls.dart';
 import 'package:immich_ui/immich_ui.dart';
 
-// Resolved here rather than as an ActionColumnButton so a hidden restore
-// takes no slot in the spaceEvenly row below. Each button keeps its catalog id (ViewerBuiltinIds.bottomBar).
-List<ViewerSlotItem<Widget>> _actionColumnButtons(
-  BuildContext context,
-  WidgetRef ref,
-  List<(String, ActionBuilder)> actions,
-) => [
-  for (final (id, action) in actions)
-    if (action.create(context, ref) case final item?)
-      ViewerSlotItem(
-        id,
-        ImmichColumnButton(
-          icon: item.icon,
-          label: item.label,
-          onPressed: item.onAction,
-          onLongPress: item.onSecondaryAction,
+// Resolved here rather than as an ActionColumnButton so a hidden restore takes no slot in the spaceEvenly row
+// below. Each button keeps its action id (ViewerBuiltinIds.bottomBar) for plugin rules and `actions.list`.
+List<Widget> _actionColumnButtons(BuildContext context, WidgetRef ref, List<ActionBuilder> actions) {
+  final surface = ViewerActionSurfaceScope.maybeOf(context);
+  return [
+    for (final action in actions)
+      if (_resolve(context, ref, action, surface) case final item?)
+        _withId(
+          action.id,
+          ImmichColumnButton(
+            icon: item.icon,
+            label: item.label,
+            onPressed: item.onAction,
+            onLongPress: item.onSecondaryAction,
+          ),
         ),
-      ),
-];
+  ];
+}
+
+ActionItem? _resolve(BuildContext context, WidgetRef ref, ActionBuilder action, ViewerActionSurface? surface) {
+  final item = action.resolve(context, ref);
+  final id = action.id;
+  if (id != null) {
+    surface?.record(id, item);
+  }
+  return item;
+}
+
+Widget _withId(String? id, Widget child) => id == null ? child : BuiltinSlotItem(id: id, child: child);
 
 class ViewerBottomBar extends ConsumerWidget {
   const ViewerBottomBar({super.key});
@@ -57,30 +73,35 @@ class ViewerBottomBar extends ConsumerWidget {
 
     final originalTheme = context.themeData;
 
-    final actions = arrangeViewerItems<Widget>(ViewerSlotIds.bottomBar, [
-      ..._actionColumnButtons(context, ref, const [
-        ('restore', RestoreAction(source: .viewer)),
-        ('share', ShareAction(source: .viewer)),
-      ]),
-
-      if (!isInLockedView) ...[
-        if (!isInTrash) ...[
-          ..._actionColumnButtons(context, ref, const [
-            ('edit', EditAssetAction(source: .viewer)),
-            ('moveToPrivate', MoveToPrivateAction(source: .viewer)),
-          ]),
-          if (asset.hasRemote)
-            ViewerSlotItem(
-              'add',
-              ImmichColorOverride(color: null, child: AddActionButton(originalTheme: originalTheme)),
-            ),
-        ],
-        ..._actionColumnButtons(context, ref, const [('delete', DeleteAction(source: .viewer))]),
+    // Built-in ids: ViewerBuiltinIds.bottomBar. Plugin rules of `viewer.bottomBar` apply; its plugin actions join
+    // the row. "Add to" is not an action builder: it keeps its place before "delete" unless rules hide or move it.
+    const slots = [ViewerSlotIds.bottomBar];
+    final rules = viewerSlotRules(ref, ViewerSlotIds.bottomBar);
+    final builders = arrangeActions(ref, slots, [
+      const RestoreAction(source: .viewer),
+      const ShareAction(source: .viewer),
+      if (!isInLockedView && !isInTrash) ...[
+        const EditAssetAction(source: .viewer),
+        const MoveToPrivateAction(source: .viewer),
       ],
-    ]);
+      if (!isInLockedView) const DeleteAction(source: .viewer),
+    ], source: .viewer);
+    var actions = _actionColumnButtons(context, ref, builders);
+    if (!isInLockedView && !isInTrash && asset.hasRemote && !rules.isHidden(ActionIds.addTo)) {
+      final add = BuiltinSlotItem(
+        id: ActionIds.addTo,
+        child: ImmichColorOverride(color: null, child: AddActionButton(originalTheme: originalTheme)),
+      );
+      final deleteIndex = actions.indexWhere((widget) => slotItemId(widget) == ActionIds.delete);
+      actions = [...actions]..insert(deleteIndex < 0 ? actions.length : deleteIndex, add);
+      if (rules.order.isNotEmpty) {
+        actions = reorderByIds(actions, slotItemId, rules.order);
+      }
+    }
+    ViewerActionSurfaceScope.maybeOf(context)?.setBarOrder('bottomBar', actions);
 
     // Rows above the action row (ViewerBuiltinIds.bottomPanels).
-    final panels = arrangeViewerItems<Widget>(ViewerSlotIds.bottomPanels, [
+    final panels = arrangeViewerSlot<Widget>(ref, ViewerSlotIds.bottomPanels, [
       if (asset.isImage) ViewerSlotItem('ocr', OcrToggleButton(asset: asset)),
       if (asset.isVideo) ViewerSlotItem('videoControls', VideoControls(videoPlayerName: asset.id)),
       const ViewerSlotItem('carousel', Padding(padding: EdgeInsets.symmetric(vertical: 6), child: ViewerCarousel())),

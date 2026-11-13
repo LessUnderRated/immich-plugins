@@ -103,6 +103,8 @@ class AssetsHostApi implements DataHostModule {
     'assets.tags': (plugin, args) async => [
       for (final tag in await _tags.forAsset(HostArgs(args).text(0, 'id'))) PluginJson.tag(tag),
     ],
+    'trash.list': (plugin, args) => trashList(HostArgs(args).map(0)),
+    'trash.empty': (plugin, args) => emptyTrash(HostArgs(args).map(0)),
   };
 
   @override
@@ -131,6 +133,9 @@ class AssetsHostApi implements DataHostModule {
     'assets.tag': '[ids, tags] -> { count } (device tags, created when missing)',
     'assets.untag': '[ids, tags] -> { count }',
     'assets.tags': '[id] -> [Tag]',
+    'trash.list': '[{ source: "device" | "remote" = "device" }] -> device: [{ id, name, type, expiresAt, takenAt }], '
+        'remote: [AssetLite]',
+    'trash.empty': '[{ source: "device" | "remote" = "device" }] -> { count } (device: one system confirmation)',
   };
 
   static List<String> _ids(List<dynamic> args) => HostArgs(args).ids(0, 'ids');
@@ -441,6 +446,29 @@ class AssetsHostApi implements DataHostModule {
       result['count'] = (result['ids'] as List).length;
     }
     return result;
+  }
+
+  Future<List<Map<String, dynamic>>> trashList(Map<String, dynamic> options) async {
+    if ((options.text('source') ?? 'device') == 'remote') {
+      return query({'source': 'remote', 'trashed': true, 'visibility': 'any', 'limit': 5000});
+    }
+    return Platform.isAndroid ? [for (final item in await _trash.list()) item.toJson()] : const [];
+  }
+
+  Future<Map<String, dynamic>> emptyTrash(Map<String, dynamic> options) async {
+    if ((options.text('source') ?? 'device') == 'remote') {
+      final userId = _currentUserId();
+      if (userId == null) {
+        throw const DataHostException(401, 'No user is signed in');
+      }
+      return {'count': await _actions.emptyTrash(userId)};
+    }
+    if (!Platform.isAndroid) {
+      throw const DataHostException.unsupported('The device trash is only available on Android');
+    }
+    final items = await _trash.list();
+    final granted = items.isNotEmpty && await _trash.deleteForever(items);
+    return {'count': granted ? items.length : 0};
   }
 
   Future<Map<String, dynamic>> setDate(List<String> ids, String dateTime) {

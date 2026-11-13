@@ -13,13 +13,16 @@ import 'package:immich_mobile/extensions/build_context_extensions.dart';
 import 'package:immich_mobile/extensions/platform_extensions.dart';
 import 'package:immich_mobile/extensions/scroll_extensions.dart';
 import 'package:immich_mobile/generated/translations.g.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/timeline/timeline_registry.dart';
 import 'package:immich_mobile/infrastructure/plugins/plugin_api/viewer/active_viewer.dart';
 import 'package:immich_mobile/infrastructure/plugins/plugin_api/viewer/viewer_events.dart';
 import 'package:immich_mobile/infrastructure/plugins/plugin_api/viewer/viewer_ids.dart';
+import 'package:immich_mobile/presentation/actions/action_slots.dart';
 import 'package:immich_mobile/presentation/widgets/action_buttons/download_status_floating_button.widget.dart';
 import 'package:immich_mobile/presentation/widgets/asset_viewer/asset_page.widget.dart';
 import 'package:immich_mobile/presentation/widgets/asset_viewer/asset_preloader.dart';
 import 'package:immich_mobile/presentation/widgets/asset_viewer/asset_stack.provider.dart';
+import 'package:immich_mobile/presentation/widgets/asset_viewer/viewer_action_surface.dart';
 import 'package:immich_mobile/presentation/widgets/asset_viewer/viewer_bottom_app_bar.widget.dart';
 import 'package:immich_mobile/presentation/widgets/asset_viewer/viewer_carousel.widget.dart';
 import 'package:immich_mobile/presentation/widgets/asset_viewer/viewer_top_app_bar.widget.dart';
@@ -98,6 +101,9 @@ class _AssetViewerState extends ConsumerState<AssetViewer> {
   StreamSubscription? _reloadSubscription;
   KeepAliveLink? _stackChildrenKeepAlive;
   late final _handle = _AssetViewerHandle(this);
+  late final _actionSurface = ViewerActionSurface(
+    isVisible: () => mounted && (ModalRoute.of(context)?.isCurrent ?? true),
+  );
   BaseAsset? _lastAsset;
 
   bool _jumpTo(int index) {
@@ -140,6 +146,7 @@ class _AssetViewerState extends ConsumerState<AssetViewer> {
     unawaited(_setSystemUIMode(assetViewer.showingControls, assetViewer.showingDetails));
 
     ActiveViewers.opened(_handle);
+    TimelineRegistry.registerSurface(_actionSurface.recorder);
     _lastAsset = asset;
     if (ViewerEvents.listens(ViewerEventNames.opened)) {
       final position = _position(widget.initialIndex);
@@ -162,6 +169,7 @@ class _AssetViewerState extends ConsumerState<AssetViewer> {
     _stackChildrenKeepAlive?.close();
 
     ActiveViewers.closed(_handle);
+    TimelineRegistry.unregisterSurface(_actionSurface.recorder);
     ViewerEvents.emitAsset(ViewerEventNames.closed, _lastAsset, () => {'surface': 'viewer', 'index': _currentPage});
 
     unawaited(restoreEdgeToEdge());
@@ -351,56 +359,64 @@ class _AssetViewerState extends ConsumerState<AssetViewer> {
 
     return AnnotatedRegion(
       value: _viewerOverlayStyle,
-      child: Scaffold(
-        backgroundColor: backgroundColor,
-        resizeToAvoidBottomInset: false,
-        appBar: const ViewerTopAppBar(),
-        extendBody: true,
-        extendBodyBehindAppBar: true,
-        floatingActionButton: IgnorePointer(
-          ignoring: !showingControls,
-          child: AnimatedOpacity(
-            opacity: showingControls ? 1.0 : 0.0,
-            duration: Durations.short2,
-            child: const DownloadStatusFloatingButton(),
+      child: _withActionSurface(
+        Scaffold(
+          backgroundColor: backgroundColor,
+          resizeToAvoidBottomInset: false,
+          appBar: const ViewerTopAppBar(),
+          extendBody: true,
+          extendBodyBehindAppBar: true,
+          floatingActionButton: IgnorePointer(
+            ignoring: !showingControls,
+            child: AnimatedOpacity(
+              opacity: showingControls ? 1.0 : 0.0,
+              duration: Durations.short2,
+              child: const DownloadStatusFloatingButton(),
+            ),
           ),
-        ),
-        bottomNavigationBar: const ViewerBottomAppBar(),
-        body: Stack(
-          children: [
-            NotificationListener<ScrollEndNotification>(
-              onNotification: _onScrollEnd,
-              child: PhotoViewGestureDetectorScope(
-                axis: Axis.horizontal,
-                child: PopScope(
-                  onPopInvokedWithResult: (didPop, _) => didPop ? _onClosed() : null,
-                  child: PageView.builder(
-                    controller: _pageController,
-                    physics: isZoomed
-                        ? const NeverScrollableScrollPhysics()
-                        : CurrentPlatform.isIOS
-                        ? const FastScrollPhysics()
-                        : const FastClampingScrollPhysics(),
-                    itemCount: _totalAssets,
-                    itemBuilder: (context, index) =>
-                        AssetPage(index: index, heroOffset: _heroOffset, onTapNavigate: _onTapNavigate),
+          bottomNavigationBar: const ViewerBottomAppBar(),
+          body: Stack(
+            children: [
+              NotificationListener<ScrollEndNotification>(
+                onNotification: _onScrollEnd,
+                child: PhotoViewGestureDetectorScope(
+                  axis: Axis.horizontal,
+                  child: PopScope(
+                    onPopInvokedWithResult: (didPop, _) => didPop ? _onClosed() : null,
+                    child: PageView.builder(
+                      controller: _pageController,
+                      physics: isZoomed
+                          ? const NeverScrollableScrollPhysics()
+                          : CurrentPlatform.isIOS
+                          ? const FastScrollPhysics()
+                          : const FastClampingScrollPhysics(),
+                      itemCount: _totalAssets,
+                      itemBuilder: (context, index) =>
+                          AssetPage(index: index, heroOffset: _heroOffset, onTapNavigate: _onTapNavigate),
+                    ),
                   ),
                 ),
               ),
-            ),
-            if (!CurrentPlatform.isIOS)
-              IgnorePointer(
-                child: AnimatedContainer(
-                  duration: Durations.short2,
-                  color: Colors.black.withValues(alpha: showingDetails ? 0.6 : 0.0),
-                  height: context.padding.top,
+              if (!CurrentPlatform.isIOS)
+                IgnorePointer(
+                  child: AnimatedContainer(
+                    duration: Durations.short2,
+                    color: Colors.black.withValues(alpha: showingDetails ? 0.6 : 0.0),
+                    height: context.padding.top,
+                  ),
                 ),
-              ),
-          ],
+            ],
+          ),
         ),
       ),
     );
   }
+
+  /// The viewer's bars list their actions for plugins (`actions.list` / `actions.run`, surface `viewer`).
+  Widget _withActionSurface(Widget child) => ViewerActionSurfaceScope(
+    surface: _actionSurface,
+    child: ActionSurfaceScope(recorder: _actionSurface.recorder, child: child),
+  );
 }
 
 /// The asset viewer as plugins see it (`viewer.*` host functions).

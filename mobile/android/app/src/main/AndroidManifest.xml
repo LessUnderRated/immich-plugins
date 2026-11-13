@@ -139,6 +139,11 @@
     </activity>
 
 
+    <!-- Taps, action buttons and dismissals of plugin notifications, and task cancels (see docs/plugins/native.md). -->
+    <receiver
+      android:name=".plugins.PluginNotificationReceiver"
+      android:exported="false" />
+
     <provider
       android:name=".plugins.PrivateFileProvider"
       android:authorities="${applicationId}.privatefiles"

@@ -79,11 +79,12 @@ abstract final class ViewerSlotIds {
   ];
 }
 
-/// Built-in item ids per slot, in the order the app shows them.
+/// Built-in item ids per slot, in the order the app shows them. Action entries use the action ids (`ActionIds`), so
+/// one rule covers an action in every bar and menu it appears in.
 abstract final class ViewerBuiltinIds {
-  static const topBar = ['motionPhoto', 'activity', 'favorite', 'deviceFavorite', 'pluginActions', 'censor', 'menu'];
+  static const topBar = ['motionPhoto', 'activity', 'favorite', 'deviceFavorite', 'plugins', 'censor', 'menu'];
 
-  /// The ⋮ menu uses the action button type names; which of them appear depends on the asset and the context.
+  /// `ActionIds.forActionButtonType` of each menu entry; which of them appear depends on the asset and the context.
   static const menu = [
     'openInfo',
     'likeActivity',
@@ -96,14 +97,14 @@ abstract final class ViewerBuiltinIds {
     'slideshow',
     'download',
     'openInBrowser',
-    'unstack',
-    'removeFromLockFolder',
+    'stack',
+    'lock',
     'removeFromAlbum',
     'deleteLocal',
     'advancedInfo',
   ];
 
-  static const bottomBar = ['restore', 'share', 'edit', 'moveToPrivate', 'add', 'delete'];
+  static const bottomBar = ['restoreTrash', 'share', 'edit', 'moveToPrivate', 'addTo', 'delete'];
 
   static const bottomPanels = ['ocr', 'videoControls', 'carousel', 'actions'];
 

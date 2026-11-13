@@ -3,14 +3,17 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:immich_mobile/constants/enums.dart';
 import 'package:immich_mobile/domain/models/asset/base_asset.model.dart';
 import 'package:immich_mobile/extensions/build_context_extensions.dart';
-import 'package:immich_mobile/infrastructure/plugins/plugin_api/viewer/viewer_builtins.dart';
 import 'package:immich_mobile/infrastructure/plugins/plugin_api/viewer/viewer_ids.dart';
+import 'package:immich_mobile/presentation/actions/action.widget.dart';
+import 'package:immich_mobile/presentation/widgets/asset_viewer/viewer_action_surface.dart';
+import 'package:immich_mobile/presentation/widgets/asset_viewer/viewer_slots.dart';
 import 'package:immich_mobile/providers/asset_viewer/asset_viewer.provider.dart';
 import 'package:immich_mobile/providers/cast.provider.dart';
 import 'package:immich_mobile/providers/infrastructure/current_album.provider.dart';
 import 'package:immich_mobile/providers/infrastructure/setting.provider.dart';
 import 'package:immich_mobile/providers/infrastructure/timeline.provider.dart';
 import 'package:immich_mobile/providers/routes.provider.dart';
+import 'package:immich_mobile/providers/timeline/timeline_plugins.provider.dart';
 import 'package:immich_mobile/providers/user.provider.dart';
 import 'package:immich_mobile/utils/action_button.utils.dart';
 import 'package:immich_ui/immich_ui.dart';
@@ -49,7 +52,23 @@ class ViewerKebabMenu extends ConsumerWidget {
       timelineOrigin: timelineOrigin,
     );
 
-    final menuChildren = _menuChildren(actionContext, context);
+    // Entry ids: ViewerBuiltinIds.menu. Plugin rules of `viewer.menu` apply; its plugin actions join the menu.
+    final menuChildren = ActionButtonBuilder.buildViewerKebabMenu(
+      actionContext,
+      context,
+      rules: viewerSlotRules(ref, ViewerSlotIds.menu),
+      extra: ref.watch(timelinePluginBridgeProvider).actions(ViewerSlotIds.menu, source: ActionSource.viewer),
+    );
+    final surface = ViewerActionSurfaceScope.maybeOf(context);
+    if (surface != null) {
+      // The menu builds its entries only when it opens; record them now so plugins can list and run them.
+      for (final child in menuChildren) {
+        if (child is ActionWidget && child.action.id != null) {
+          surface.record(child.action.id!, child.action.resolve(context, ref));
+        }
+      }
+      surface.setBarOrder('menu', menuChildren);
+    }
 
     return ImmichMenu(
       consumeOutsideTap: true,
@@ -82,27 +101,5 @@ class ViewerKebabMenu extends ConsumerWidget {
         );
       },
     );
-  }
-
-  /// `ActionButtonBuilder.buildViewerKebabMenu` with stable ids (the button type names, ViewerBuiltinIds.menu) so
-  /// plugins can hide and reorder the entries. Dividers separate the groups of neighbouring entries.
-  static List<Widget> _menuChildren(ActionButtonContext actionContext, BuildContext buildContext) {
-    final visible = [
-      for (final type in ActionButtonBuilder.defaultViewerKebabMenuOrder)
-        if (!ActionButtonBuilder.defaultViewerBottomBarButtons.contains(type) && type.shouldShow(actionContext))
-          ViewerSlotItem(type.name, type),
-    ];
-    final types = arrangeViewerItems(ViewerSlotIds.menu, visible);
-
-    final result = <Widget>[];
-    int? lastGroup;
-    for (final type in types) {
-      if (lastGroup != null && type.kebabMenuGroup != lastGroup) {
-        result.add(const Divider(height: 1));
-      }
-      result.add(type.buildButton(actionContext, buildContext, false, true));
-      lastGroup = type.kebabMenuGroup;
-    }
-    return result;
   }
 }

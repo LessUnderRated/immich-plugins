@@ -28,7 +28,6 @@ import 'package:immich_mobile/presentation/pages/picker/picker_app.dart';
 import 'package:immich_mobile/presentation/plugins/plugin_ui.dart';
 import 'package:immich_mobile/providers/app_life_cycle.provider.dart';
 import 'package:immich_mobile/providers/asset_viewer/share_intent_upload.provider.dart';
-import 'package:immich_mobile/providers/device_plugins.provider.dart';
 import 'package:immich_mobile/providers/infrastructure/platform.provider.dart';
 import 'package:immich_mobile/providers/infrastructure/settings.provider.dart';
 import 'package:immich_mobile/providers/locale_provider.dart';
@@ -265,10 +264,7 @@ class ImmichAppState extends ConsumerState<ImmichApp> with WidgetsBindingObserve
       }
     });
 
-    final pluginEngine = ref.read(deviceWorkflowEngineProvider);
-    pluginEngine.uiHandler = (plugin, action) => performPluginUiAction(ref.read(appRouterProvider), plugin, action);
-    _pluginChanges = pluginEngine.changes.listen((_) => unawaited(pluginSurfaces.refresh(pluginEngine)));
-    unawaited(pluginEngine.ensureReady().then((_) => pluginSurfaces.refresh(pluginEngine)));
+    _pluginChanges = startPluginKernel(ref);
 
     ref.read(viewIntentHandlerProvider).init();
     ref.read(shareIntentUploadProvider.notifier).init();

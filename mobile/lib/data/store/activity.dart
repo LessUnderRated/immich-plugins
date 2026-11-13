@@ -2,6 +2,8 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:immich_mobile/data/server/activity.dart';
 import 'package:immich_mobile/data/server/errors.dart';
 import 'package:immich_mobile/data/store/util/cache.dart';
+import 'package:immich_mobile/domain/utils/plugin_data_ids.dart';
+import 'package:immich_mobile/domain/utils/plugin_hooks.dart';
 import 'package:immich_mobile/models/activities/activity.model.dart';
 import 'package:logging/logging.dart';
 
@@ -47,8 +49,32 @@ class _ActivityCache extends StoreCache<Activity, ActivityScope> {
 class ActivityMutations extends CachedStoreMutations<Activity, ActivityScope> {
   ActivityMutations._(Ref ref) : super(ref, _cache);
 
+  static Map<String, dynamic> activityJson(Activity activity) => {
+    'id': activity.id,
+    'albumId': activity.albumId,
+    'assetId': activity.assetId,
+    'type': activity.type.name,
+    'comment': activity.comment,
+    'createdAt': activity.createdAt.toUtc().toIso8601String(),
+    'userId': activity.user.id,
+    'userName': activity.user.name,
+  };
+
   /// Add a comment to an album or asset. Providing [assetId] will add to the corresponding asset, otherwise the comment will be added to the album
-  Future<Activity> addComment(String albumId, String comment, {String? assetId}) async {
+  ///
+  /// Runs as `activity.add` (a plugin may change `comment` or cancel) and emits `activity.added`
+  Future<Activity> addComment(String albumId, String comment, {String? assetId}) => PluginHooks.run<Activity>(
+    DataHooks.activityAdd,
+    () => {'albumId': albumId, 'assetId': assetId, 'type': 'comment', 'comment': comment},
+    () => _addComment(albumId, comment, assetId: assetId),
+    withArgs: (args) =>
+        _addComment(albumId, PluginArgs.string(args['comment']) ?? comment, assetId: PluginArgs.string(args['assetId'])),
+    encode: activityJson,
+    event: DataEvents.activityAdded,
+    eventData: (args, activity) => activityJson(activity),
+  );
+
+  Future<Activity> _addComment(String albumId, String comment, {String? assetId}) async {
     try {
       final activity = await read(
         activityApiRepositoryProvider,
@@ -62,7 +88,18 @@ class ActivityMutations extends CachedStoreMutations<Activity, ActivityScope> {
   }
 
   /// Add a like to an album or asset. Providing [assetId] will add to the corresponding asset, otherwise the like will be added to the album
-  Future<Activity> addLike(String albumId, {String? assetId}) async {
+  ///
+  /// Runs as `activity.add` and emits `activity.added`
+  Future<Activity> addLike(String albumId, {String? assetId}) => PluginHooks.run<Activity>(
+    DataHooks.activityAdd,
+    () => {'albumId': albumId, 'assetId': assetId, 'type': 'like'},
+    () => _addLike(albumId, assetId: assetId),
+    encode: activityJson,
+    event: DataEvents.activityAdded,
+    eventData: (args, activity) => activityJson(activity),
+  );
+
+  Future<Activity> _addLike(String albumId, {String? assetId}) async {
     try {
       final activity = await read(activityApiRepositoryProvider).create(albumId, ActivityType.like, assetId: assetId);
       cacheUpsert(activity);
@@ -73,8 +110,15 @@ class ActivityMutations extends CachedStoreMutations<Activity, ActivityScope> {
     }
   }
 
-  /// Remove [activity] from its album
-  Future<void> remove(Activity activity) async {
+  /// Remove [activity] from its album; runs as `activity.remove` and emits `activity.removed`
+  Future<void> remove(Activity activity) => PluginHooks.run<void>(
+    DataHooks.activityRemove,
+    () => activityJson(activity),
+    () => _remove(activity),
+    event: DataEvents.activityRemoved,
+  );
+
+  Future<void> _remove(Activity activity) async {
     try {
       await read(activityApiRepositoryProvider).delete(activity.id);
     } on NoResponseDtoError {

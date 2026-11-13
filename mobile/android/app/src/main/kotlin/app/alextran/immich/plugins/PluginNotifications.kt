@@ -98,6 +98,14 @@ internal object PluginNotifications {
     return id
   }
 
+  private fun silentChannel(context: Context, plugin: String): String {
+    val id = channelId(plugin, "silent")
+    if (manager(context).getNotificationChannel(id) == null) {
+      createChannel(context, plugin, "silent", "$plugin (silent)", NotificationManager.IMPORTANCE_LOW, null)
+    }
+    return id
+  }
+
   private fun ensureAppChannel(context: Context, id: String, name: String) {
     if (manager(context).getNotificationChannel(id) == null) {
       manager(context).createNotificationChannel(NotificationChannel(id, name, NotificationManager.IMPORTANCE_LOW))
@@ -145,8 +153,9 @@ internal object PluginNotifications {
 
   private fun build(context: Context, plugin: String, id: String, spec: JSONObject): Notification {
     val requested = spec.str("channel")
+    val silent = spec.optBoolean("silent", false)
     val channel = requested?.let { channelId(plugin, it) }?.takeIf { manager(context).getNotificationChannel(it) != null }
-      ?: defaultChannel(context, plugin)
+      ?: if (silent) silentChannel(context, plugin) else defaultChannel(context, plugin)
     val builder = Notification.Builder(context, channel)
       .setSmallIcon(R.drawable.notification_icon)
       .setOnlyAlertOnce(spec.optBoolean("onlyAlertOnce", true))
@@ -173,9 +182,6 @@ internal object PluginNotifications {
     }
     spec.longOrNull("when")?.let { builder.setWhen(it).setShowWhen(true) }
     spec.longOrNull("timeoutMs")?.let { builder.setTimeoutAfter(it) }
-    if (spec.optBoolean("silent", false) && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-      builder.setSilent(true)
-    }
     applyProgress(builder, spec.opt("progress"))
 
     val tap = spec.optJSONObject("tap")

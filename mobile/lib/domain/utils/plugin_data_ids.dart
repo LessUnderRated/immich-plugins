@@ -50,6 +50,8 @@ abstract final class DataHooks {
   static const sharedLinkUpdate = 'sharedLink.update';
   static const sharedLinkDelete = 'sharedLink.delete';
   static const userUpdate = 'user.update';
+  static const activityAdd = 'activity.add';
+  static const activityRemove = 'activity.remove';
 
   // ---- private folder, downloads, media writes ----------------------------------------------------------------
   static const privateHide = 'private.hide';
@@ -127,6 +129,8 @@ abstract final class DataHooks {
     sharedLinkUpdate,
     sharedLinkDelete,
     userUpdate,
+    activityAdd,
+    activityRemove,
     privateHide,
     privateUnhide,
     privateDelete,
@@ -203,6 +207,8 @@ abstract final class DataEvents {
   static const sharedLinkUpdated = 'sharedLink.updated';
   static const sharedLinkDeleted = 'sharedLink.deleted';
   static const userUpdated = 'user.updated';
+  static const activityAdded = 'activity.added';
+  static const activityRemoved = 'activity.removed';
 
   static const privateHidden = 'private.hidden';
   static const privateUnhidden = 'private.unhidden';
@@ -277,6 +283,8 @@ abstract final class DataEvents {
     sharedLinkUpdated,
     sharedLinkDeleted,
     userUpdated,
+    activityAdded,
+    activityRemoved,
     privateHidden,
     privateUnhidden,
     privateDeleted,

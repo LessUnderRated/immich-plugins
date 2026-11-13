@@ -14,6 +14,7 @@ import io.flutter.plugin.platform.PlatformViewFactory
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import app.alextran.immich.plugins.api.HostCallback
 import app.alextran.immich.plugins.api.ImmichPlugin
 import app.alextran.immich.plugins.api.PluginHost
 import dalvik.system.DexClassLoader
@@ -26,6 +27,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
 
 class DexPluginHost(private val context: Context, messenger: BinaryMessenger) :
   MethodChannel.MethodCallHandler, PlatformViewFactory(StandardMessageCodec.INSTANCE) {
@@ -114,8 +116,28 @@ class DexPluginHost(private val context: Context, messenger: BinaryMessenger) :
     override val pluginName: String = key
     override val activity: Activity? get() = this@DexPluginHost.activity
 
+    override val hostApiVersion: Int = HOST_API_VERSION
+
     override fun callHost(name: String, argsJson: String): String =
-      invokeHost(key, name, "{\"authToken\":\"\",\"args\":$argsJson}")
+      invokeHost(key, name, hostInput(argsJson))
+
+    override fun callHostAsync(name: String, argsJson: String, callback: HostCallback) {
+      invokeHostAsync(key, name, hostInput(argsJson)) { response ->
+        executor.execute {
+          try {
+            callback.onResult(response)
+          } catch (error: Throwable) {
+            android.util.Log.w("DexPluginHost", "Plugin $key failed handling the result of $name", error)
+          }
+        }
+      }
+    }
+
+    override fun emit(event: String, payloadJson: String) {
+      mainHandler.post {
+        channel.invokeMethod("emit", mapOf("plugin" to key, "event" to event, "payload" to payloadJson.ifBlank { "{}" }))
+      }
+    }
 
     override fun runOnUi(block: Runnable) {
       mainHandler.post(block)
@@ -126,11 +148,22 @@ class DexPluginHost(private val context: Context, messenger: BinaryMessenger) :
     }
   }
 
+  private fun hostInput(argsJson: String): String = "{\"authToken\":\"\",\"args\":${argsJson.ifBlank { "[]" }}}"
+
   override fun create(context: Context, viewId: Int, args: Any?): PlatformView {
     val params = args as? Map<*, *> ?: emptyMap<String, Any>()
     val key = params["plugin"] as? String ?: ""
     val viewType = params["view"] as? String ?: ""
-    val json = params["params"] as? String ?: "{}"
+    val rawJson = params["params"] as? String ?: "{}"
+    // The plugin sees the platform view id (for frame capture and lifecycle) and how the view is composited.
+    val json = try {
+      JSONObject(rawJson)
+        .put("viewId", viewId)
+        .put("composition", params["composition"] as? String ?: "texture")
+        .toString()
+    } catch (error: Throwable) {
+      rawJson
+    }
     val plugin = plugins[key]
     val viewContext = activity ?: context
     val view = try {
@@ -166,41 +199,51 @@ class DexPluginHost(private val context: Context, messenger: BinaryMessenger) :
     }
   }
 
-  private fun invokeHost(key: String, name: String, input: String): String {
-    val latch = CountDownLatch(1)
-    var response: String? = null
+  /** Sends a host call to Dart from any thread; [done] runs on the UI thread with the result envelope. */
+  private fun invokeHostAsync(key: String, name: String, input: String, done: (String) -> Unit) {
     mainHandler.post {
       channel.invokeMethod(
         "host",
         mapOf("plugin" to key, "name" to name, "input" to input),
         object : MethodChannel.Result {
           override fun success(value: Any?) {
-            response = value as? String
-            latch.countDown()
+            done(value as? String ?: errorJson(500, "Host function $name returned nothing"))
           }
 
           override fun error(code: String, message: String?, details: Any?) {
-            response = errorJson(500, message ?: code)
-            latch.countDown()
+            done(errorJson(500, message ?: code))
           }
 
           override fun notImplemented() {
-            response = errorJson(501, "Host function $name is not implemented")
-            latch.countDown()
+            done(errorJson(501, "Host function $name is not implemented"))
           }
         },
       )
+    }
+  }
+
+  private fun invokeHost(key: String, name: String, input: String): String {
+    if (Looper.myLooper() == Looper.getMainLooper()) {
+      // Blocking here would deadlock: the answer is delivered on this thread.
+      return errorJson(409, "callHost($name) cannot block the UI thread; use callHostAsync")
+    }
+    val latch = CountDownLatch(1)
+    val response = AtomicReference<String?>(null)
+    invokeHostAsync(key, name, input) { value ->
+      response.set(value)
+      latch.countDown()
     }
 
     if (!latch.await(HOST_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
       return errorJson(504, "Host function $name timed out")
     }
-    return response ?: errorJson(500, "Host function $name returned nothing")
+    return response.get() ?: errorJson(500, "Host function $name returned nothing")
   }
 
   companion object {
     const val CHANNEL = "immich/dex_plugins"
     const val VIEW_TYPE = "immich/plugin_view"
+    const val HOST_API_VERSION = 2
     private const val HOST_TIMEOUT_SECONDS = 300L
 
     private fun errorJson(status: Int, message: String): String =

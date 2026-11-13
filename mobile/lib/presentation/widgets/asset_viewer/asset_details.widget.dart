@@ -14,6 +14,7 @@ import 'package:immich_mobile/presentation/widgets/asset_viewer/asset_details/pe
 import 'package:immich_mobile/presentation/widgets/asset_viewer/asset_details/rating_details.widget.dart';
 import 'package:immich_mobile/presentation/widgets/asset_viewer/asset_details/tag_details.widget.dart';
 import 'package:immich_mobile/presentation/widgets/asset_viewer/asset_details/technical_details.widget.dart';
+import 'package:immich_mobile/presentation/widgets/asset_viewer/viewer_slots.dart';
 import 'package:immich_mobile/providers/infrastructure/asset_viewer/asset.provider.dart';
 
 class AssetDetails extends ConsumerWidget {
@@ -47,7 +48,7 @@ class AssetDetails extends ConsumerWidget {
           children: [
             const DragHandle(),
             // Section ids: ViewerBuiltinIds.infoSections.
-            ...arrangeViewerItems<Widget>(ViewerSlotIds.infoSections, [
+            ...arrangeViewerSlot<Widget>(ref, ViewerSlotIds.infoSections, [
               ViewerSlotItem('dateTime', DateTimeDetails(asset: asset, exifInfo: exifInfo)),
               ViewerSlotItem('owner', AssetOwnerDetails(asset: asset)),
               ViewerSlotItem('description', SheetAssetDescription(asset: asset, exifInfo: exifInfo)),

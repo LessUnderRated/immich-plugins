@@ -12,13 +12,14 @@ import 'package:immich_mobile/extensions/build_context_extensions.dart';
 import 'package:immich_mobile/extensions/scroll_extensions.dart';
 import 'package:immich_mobile/generated/translations.g.dart';
 import 'package:immich_mobile/infrastructure/plugins/plugin_api/viewer/active_viewer.dart';
-import 'package:immich_mobile/infrastructure/plugins/plugin_api/viewer/viewer_builtins.dart';
 import 'package:immich_mobile/infrastructure/plugins/plugin_api/viewer/viewer_events.dart';
 import 'package:immich_mobile/infrastructure/plugins/plugin_api/viewer/viewer_ids.dart';
 import 'package:immich_mobile/pages/common/settings.page.dart';
+import 'package:immich_mobile/presentation/actions/action_slots.dart';
 import 'package:immich_mobile/presentation/widgets/slideshow/slideshow_controller.dart';
 import 'package:immich_mobile/presentation/widgets/slideshow/slideshow_progress_bar.widget.dart';
 import 'package:immich_mobile/presentation/widgets/slideshow/slideshow_slide.widget.dart';
+import 'package:immich_mobile/presentation/widgets/timeline/plugins/timeline_plugin_bridge.dart';
 import 'package:immich_mobile/providers/asset_viewer/asset_viewer.provider.dart';
 import 'package:immich_mobile/providers/asset_viewer/video_player_provider.dart';
 import 'package:immich_mobile/providers/infrastructure/settings.provider.dart';
@@ -337,18 +338,18 @@ class _SlideshowPageState extends ConsumerState<SlideshowPage>
                     AppBar(
                       backgroundColor: context.scaffoldBackgroundColor,
                       title: Text(context.t.slideshow),
-                      // Built-in ids: ViewerBuiltinIds.slideshowActions.
-                      actions: arrangeViewerItems<Widget>(ViewerSlotIds.slideshowActions, [
-                        ViewerSlotItem(
-                          'playPause',
-                          IconButton(
+                      // Built-in ids: ViewerBuiltinIds.slideshowActions; plugin buttons of the slot join them.
+                      actions: arrangeButtons(ref, ViewerSlotIds.slideshowActions, [
+                        BuiltinSlotItem(
+                          id: 'playPause',
+                          child: IconButton(
                             onPressed: _slideshow.paused ? _slideshow.resume : _slideshow.pause,
                             icon: Icon(_slideshow.paused ? Icons.play_arrow : Icons.pause),
                           ),
                         ),
-                        ViewerSlotItem(
-                          'settings',
-                          IconButton(
+                        BuiltinSlotItem(
+                          id: 'settings',
+                          child: IconButton(
                             onPressed: () {
                               if (!_slideshow.paused) {
                                 _slideshow.pause();

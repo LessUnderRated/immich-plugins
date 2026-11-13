@@ -15,6 +15,7 @@ import 'package:immich_mobile/domain/services/local_album.service.dart';
 import 'package:immich_mobile/domain/services/timeline.service.dart';
 import 'package:immich_mobile/infrastructure/plugins/device_workflow_engine.dart';
 import 'package:immich_mobile/infrastructure/plugins/plugin_kernel.dart';
+import 'package:immich_mobile/presentation/actions/action_hooks.dart';
 import 'package:immich_mobile/presentation/plugins/plugin_icons.dart';
 import 'package:immich_mobile/presentation/plugins/plugin_ui_renderer.dart';
 import 'package:immich_mobile/providers/app_album.provider.dart';
@@ -129,6 +130,25 @@ final pluginSurfaces = PluginSurfaces();
 
 final pluginSurfacesProvider = ChangeNotifierProvider<PluginSurfaces>((ref) => pluginSurfaces);
 
+/// `action.<id>` hooks with full AssetV1 assets (the timeline's [ActionHooks] uses it when bound).
+class _KernelActionHooks implements ActionHookBinding {
+  final PluginKernel _kernel;
+
+  const _KernelActionHooks(this._kernel);
+
+  @override
+  bool hasHook(String hookId) => _kernel.hasHook(hookId);
+
+  @override
+  Future<void> run(String hookId, ActionHookCall call, Future<void> Function() original) async {
+    final args = {
+      ...call.toJson(),
+      'assets': [for (final asset in call.assets) await _kernel.assetJson(asset)],
+    };
+    await _kernel.run<void>(hookId, args, (_) => original());
+  }
+}
+
 /// Wires the plugin kernel to the app UI. Called once from `ImmichApp.initState`; returns the subscription that keeps
 /// the legacy [pluginSurfaces] in sync (cancel it in `dispose`).
 StreamSubscription<void> startPluginKernel(WidgetRef ref) {
@@ -136,6 +156,7 @@ StreamSubscription<void> startPluginKernel(WidgetRef ref) {
   final engine = kernel.engine;
   kernel.commandHandler = (plugin, command, context) =>
       performPluginUiAction(ref.read(appRouterProvider), plugin, command, context: context);
+  ActionHooks.bind(_KernelActionHooks(kernel));
   final subscription = engine.changes.listen((_) => unawaited(pluginSurfaces.refresh(engine)));
   unawaited(kernel.start().then((_) => pluginSurfaces.refresh(engine)));
   return subscription;

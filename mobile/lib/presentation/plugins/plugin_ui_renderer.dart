@@ -537,6 +537,11 @@ class _PluginUiViewState extends ConsumerState<PluginUiView> {
       return;
     }
     final action = _actionOf(spec);
+    final host = action['host'];
+    if (host is String) {
+      await _callHost(host, action, event: event, id: id, value: value);
+      return;
+    }
     final command = action['command'] ?? (action['type'] is String ? action : null);
     if (command is Map) {
       await _command(Map<String, dynamic>.from(command));
@@ -550,6 +555,66 @@ class _PluginUiViewState extends ConsumerState<PluginUiView> {
       return;
     }
     await _send(event, id: id, value: value, action: action);
+  }
+
+  /// Replaces `"$value"` with [value], `"$state"` with the whole input state and `{ "$state": "inputId" }` with one
+  /// input value, anywhere in [args].
+  Object? _substitute(Object? args, Object? value) {
+    if (args == r'$value') {
+      return value;
+    }
+    if (args == r'$state') {
+      return _stateJson();
+    }
+    if (args is Map) {
+      if (args.length == 1 && args.containsKey(r'$state')) {
+        return _values['${args[r'$state']}'];
+      }
+      return {for (final MapEntry(key: name, value: item) in args.entries) '$name': _substitute(item, value)};
+    }
+    if (args is List) {
+      return [for (final item in args) _substitute(item, value)];
+    }
+    return args;
+  }
+
+  /// `"action": { "host": "<name>", "args": [...], "result"?: "inputId", "then"?: action }`: calls a host function
+  /// directly (no plugin round trip); the result can be stored as an input value and handed to a follow-up action.
+  Future<void> _callHost(
+    String name,
+    Map<String, dynamic> action, {
+    required String event,
+    String? id,
+    Object? value,
+  }) async {
+    final rawArgs = _substitute(action['args'] ?? const [], value);
+    setState(() => _busy++);
+    try {
+      final result = await _kernel.callHost(name, rawArgs is List ? rawArgs : [rawArgs], plugin: widget.plugin);
+      if (!mounted) {
+        return;
+      }
+      final target = action['result'];
+      if (target is String) {
+        _surface.pushState({target: result});
+      }
+      final then = action['then'];
+      if (then != null) {
+        await _run(then, event: 'hostResult', id: id, value: result);
+      }
+    } catch (error, stack) {
+      _log.warning('Host function $name from a ${widget.plugin} UI action failed', error, stack);
+      final onError = action['onError'];
+      if (onError != null && mounted) {
+        await _run(onError, event: 'hostError', id: id, value: '$error');
+      } else {
+        unawaited(_kernel.command(widget.plugin, {'type': 'toast', 'message': '$error'}));
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _busy--);
+      }
+    }
   }
 
   Future<void> _command(Map<String, dynamic> command) async {
@@ -1282,6 +1347,8 @@ class _PluginUiViewState extends ConsumerState<PluginUiView> {
               : () => unawaited(_run(n['onLongPress'], event: 'longPress', id: n['id'] as String?)),
           child: _child(n),
         );
+      case 'compare':
+        return _compare(n);
       case 'regionEditor':
         return _regionEditor(n);
       case 'canvas':
@@ -1704,6 +1771,27 @@ class _PluginUiViewState extends ConsumerState<PluginUiView> {
     return radius == null ? sized : ClipRRect(borderRadius: BorderRadius.all(Radius.circular(radius)), child: sized);
   }
 
+  /// `compare`: `before` / `after` (image nodes, or file paths), `mode`: `slider` (drag the split) or `hold` (press to
+  /// see `before`), `value`: initial split 0..1, `aspectRatio`, `labels`: [before, after].
+  Widget _compare(Map<String, dynamic> n) {
+    Widget side(Object? spec) => switch (spec) {
+      final String path => _image({'file': path, 'fit': n['fit'] ?? 'contain'}),
+      final Map map => _build({'type': 'image', 'fit': n['fit'] ?? 'contain', ...Map<String, dynamic>.from(map)}),
+      _ => const SizedBox.shrink(),
+    };
+    final labels = n['labels'] is List ? [for (final label in n['labels'] as List) '$label'] : const ['Before', 'After'];
+    return PluginCompareView(
+      key: ValueKey('compare-${n['id']}'),
+      before: side(n['before']),
+      after: side(n['after']),
+      hold: n['mode'] == 'hold',
+      initial: (_double(n['value']) ?? 0.5).clamp(0.0, 1.0),
+      aspectRatio: _double(n['aspectRatio']),
+      beforeLabel: labels.isNotEmpty ? labels[0] : null,
+      afterLabel: labels.length > 1 ? labels[1] : null,
+    );
+  }
+
   Widget _regionEditor(Map<String, dynamic> n) {
     final raw = _value(n, const []);
     final id = n['id'] as String?;
@@ -1812,6 +1900,117 @@ class _PluginUiViewState extends ConsumerState<PluginUiView> {
       body: SafeArea(top: false, child: body),
     );
   }
+}
+
+/// Before / after comparison: a draggable split, or press-and-hold to see [before].
+class PluginCompareView extends StatefulWidget {
+  final Widget before;
+  final Widget after;
+  final bool hold;
+  final double initial;
+  final double? aspectRatio;
+  final String? beforeLabel;
+  final String? afterLabel;
+
+  const PluginCompareView({
+    super.key,
+    required this.before,
+    required this.after,
+    this.hold = false,
+    this.initial = 0.5,
+    this.aspectRatio,
+    this.beforeLabel,
+    this.afterLabel,
+  });
+
+  @override
+  State<PluginCompareView> createState() => _PluginCompareViewState();
+}
+
+class _PluginCompareViewState extends State<PluginCompareView> {
+  late double _split = widget.initial;
+  var _holding = false;
+
+  Widget _label(String? text, Alignment alignment) => text == null
+      ? const SizedBox.shrink()
+      : Align(
+          alignment: alignment,
+          child: Padding(
+            padding: const EdgeInsets.all(8),
+            child: DecoratedBox(
+              decoration: const BoxDecoration(
+                color: Color(0x99000000),
+                borderRadius: BorderRadius.all(Radius.circular(6)),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                child: Text(text, style: const TextStyle(color: Color(0xFFFFFFFF), fontSize: 12)),
+              ),
+            ),
+          ),
+        );
+
+  @override
+  Widget build(BuildContext context) {
+    final Widget content;
+    if (widget.hold) {
+      content = GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTapDown: (_) => setState(() => _holding = true),
+        onTapUp: (_) => setState(() => _holding = false),
+        onTapCancel: () => setState(() => _holding = false),
+        onLongPressEnd: (_) => setState(() => _holding = false),
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            if (_holding) widget.before else widget.after,
+            _label(_holding ? widget.beforeLabel : widget.afterLabel, Alignment.topLeft),
+          ],
+        ),
+      );
+    } else {
+      content = LayoutBuilder(
+        builder: (context, constraints) {
+          final width = constraints.maxWidth;
+          return GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onHorizontalDragUpdate: (details) =>
+                setState(() => _split = (details.localPosition.dx / width).clamp(0.0, 1.0)),
+            onTapDown: (details) => setState(() => _split = (details.localPosition.dx / width).clamp(0.0, 1.0)),
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                widget.after,
+                ClipRect(clipper: _SplitClipper(_split), child: widget.before),
+                Positioned(
+                  left: (width * _split - 1).clamp(0.0, width),
+                  top: 0,
+                  bottom: 0,
+                  width: 2,
+                  child: const ColoredBox(color: Color(0xFFFFFFFF)),
+                ),
+                _label(widget.beforeLabel, Alignment.topLeft),
+                _label(widget.afterLabel, Alignment.topRight),
+              ],
+            ),
+          );
+        },
+      );
+    }
+    return AspectRatio(aspectRatio: widget.aspectRatio ?? 4 / 3, child: content);
+  }
+}
+
+class _SplitClipper extends CustomClipper<Rect> {
+  final double split;
+
+  const _SplitClipper(this.split);
+
+  @override
+  Rect getClip(Size size) => Rect.fromLTWH(0, 0, size.width * split, size.height);
+
+  @override
+  bool shouldReclip(_SplitClipper oldClipper) => oldClipper.split != split;
 }
 
 class _NodeError extends StatelessWidget {

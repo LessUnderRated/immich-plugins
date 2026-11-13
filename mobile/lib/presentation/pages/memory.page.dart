@@ -9,9 +9,9 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:immich_mobile/domain/models/asset/base_asset.model.dart';
 import 'package:immich_mobile/domain/models/memory.model.dart';
 import 'package:immich_mobile/infrastructure/plugins/plugin_api/viewer/active_viewer.dart';
-import 'package:immich_mobile/infrastructure/plugins/plugin_api/viewer/viewer_bridge.dart';
 import 'package:immich_mobile/infrastructure/plugins/plugin_api/viewer/viewer_events.dart';
 import 'package:immich_mobile/infrastructure/plugins/plugin_api/viewer/viewer_ids.dart';
+import 'package:immich_mobile/presentation/widgets/asset_viewer/viewer_slots.dart';
 import 'package:immich_mobile/presentation/widgets/images/image_provider.dart';
 import 'package:immich_mobile/presentation/widgets/memory/memory_bottom_info.widget.dart';
 import 'package:immich_mobile/presentation/widgets/memory/memory_card.widget.dart';
@@ -372,7 +372,7 @@ class MemoryPage extends HookConsumerWidget {
                               );
                             },
                           ),
-                          if (!ViewerPlugins.rules(ViewerSlotIds.memoryActions).isHidden('close'))
+                          if (!viewerSlotRules(ref, ViewerSlotIds.memoryActions).isHidden('close'))
                             Positioned(
                               top: 8,
                               left: 8,
