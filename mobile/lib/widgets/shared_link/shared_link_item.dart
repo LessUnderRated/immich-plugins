@@ -178,50 +178,54 @@ class SharedLinkItem extends ConsumerWidget {
       );
     }
 
-    return Dismissible(
-      key: ValueKey(sharedLink.id),
-      direction: shown.contains('delete') ? DismissDirection.endToStart : DismissDirection.none,
-      background: Container(
-        color: Theme.of(context).colorScheme.error,
-        alignment: Alignment.centerRight,
-        padding: const EdgeInsets.only(right: 20),
-        child: Icon(Icons.delete, color: Theme.of(context).colorScheme.onError),
-      ),
-      confirmDismiss: (_) async {
-        final confirmed = await showDialog<bool>(
-          context: context,
-          builder: (BuildContext context) => ConfirmDialog(
-            title: context.t.delete_shared_link_dialog_title,
-            content: context.t.confirm_delete_shared_link,
-            onOk: () {},
-          ),
-        );
+    return LibraryTileDecoration(
+      slot: LibrarySlots.sharedLinkTile,
+      slotContext: linkArgs,
+      child: Dismissible(
+        key: ValueKey(sharedLink.id),
+        direction: shown.contains('delete') ? DismissDirection.endToStart : DismissDirection.none,
+        background: Container(
+          color: Theme.of(context).colorScheme.error,
+          alignment: Alignment.centerRight,
+          padding: const EdgeInsets.only(right: 20),
+          child: Icon(Icons.delete, color: Theme.of(context).colorScheme.onError),
+        ),
+        confirmDismiss: (_) async {
+          final confirmed = await showDialog<bool>(
+            context: context,
+            builder: (BuildContext context) => ConfirmDialog(
+              title: context.t.delete_shared_link_dialog_title,
+              content: context.t.confirm_delete_shared_link,
+              onOk: () {},
+            ),
+          );
 
-        if (confirmed == true && context.mounted) {
-          var deleted = false;
-          await runLibraryAction<void>(context, page, 'delete', () async {
-            await ref.read(sharedLinksStateProvider.notifier).deleteLink(sharedLink.id);
-            deleted = true;
-          }, args: linkArgs);
-          return deleted;
-        }
+          if (confirmed == true && context.mounted) {
+            var deleted = false;
+            await runLibraryAction<void>(context, page, 'delete', () async {
+              await ref.read(sharedLinksStateProvider.notifier).deleteLink(sharedLink.id);
+              deleted = true;
+            }, args: linkArgs);
+            return deleted;
+          }
 
-        return false;
-      },
-      child: InkWell(
-        onTap: shown.contains('edit') ? edit : null,
-        onLongPress: shown.contains('copy')
-            ? () => libraryTap(context, page, 'copy', copyShareLinkToClipboard, args: linkArgs)
-            : null,
-        child: Padding(
-          padding: const EdgeInsets.all(12),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              buildThumbnail(),
-              const SizedBox(width: 12),
-              Expanded(child: buildSharedLinkDetails()),
-            ],
+          return false;
+        },
+        child: InkWell(
+          onTap: shown.contains('edit') ? edit : null,
+          onLongPress: shown.contains('copy')
+              ? () => libraryTap(context, page, 'copy', copyShareLinkToClipboard, args: linkArgs)
+              : null,
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                buildThumbnail(),
+                const SizedBox(width: 12),
+                Expanded(child: buildSharedLinkDetails()),
+              ],
+            ),
           ),
         ),
       ),

@@ -106,6 +106,7 @@ class _PeopleCollectionPageState extends ConsumerState<PeopleCollectionPage> {
                       return LibraryTileDecoration(
                         key: ValueKey(person.id),
                         slot: LibrarySlots.peopleCollectionTile,
+                        menuSlot: LibrarySlots.peopleCollectionTileMenu,
                         slotContext: () => {'person': LibraryJson.person(person)},
                         child: Column(
                           children: [

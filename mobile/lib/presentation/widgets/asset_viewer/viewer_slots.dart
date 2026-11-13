@@ -28,3 +28,31 @@ Widget? viewerSlotContent(
   }
   return bridge.content(slot, {...PluginKernel.assetContext(assets), ...extra});
 }
+
+/// [child] with the plugin decorations (`badge`, `wrap`, `replace`) of [slot]; [child] itself without them.
+class ViewerSlotDecoration extends ConsumerWidget {
+  final String slot;
+  final Map<String, dynamic> Function() slotContext;
+  final Widget child;
+
+  const ViewerSlotDecoration({super.key, required this.slot, required this.slotContext, required this.child});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final bridge = ref.watch(timelinePluginBridgeProvider);
+    return bridge.hasDecorations(slot) ? bridge.decorate(slot, slotContext(), child) : child;
+  }
+}
+
+/// The plugin content of [slot] (nothing without plugins).
+class ViewerSlotContentView extends ConsumerWidget {
+  final String slot;
+  final List<BaseAsset> assets;
+  final Map<String, dynamic> extra;
+
+  const ViewerSlotContentView({super.key, required this.slot, this.assets = const [], this.extra = const {}});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) =>
+      viewerSlotContent(ref, slot, assets: assets, extra: extra) ?? const SizedBox.shrink();
+}

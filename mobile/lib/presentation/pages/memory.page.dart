@@ -11,6 +11,8 @@ import 'package:immich_mobile/domain/models/memory.model.dart';
 import 'package:immich_mobile/infrastructure/plugins/plugin_api/viewer/active_viewer.dart';
 import 'package:immich_mobile/infrastructure/plugins/plugin_api/viewer/viewer_events.dart';
 import 'package:immich_mobile/infrastructure/plugins/plugin_api/viewer/viewer_ids.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_kernel.dart';
+import 'package:immich_mobile/presentation/actions/action_slots.dart';
 import 'package:immich_mobile/presentation/widgets/asset_viewer/viewer_slots.dart';
 import 'package:immich_mobile/presentation/widgets/images/image_provider.dart';
 import 'package:immich_mobile/presentation/widgets/memory/memory_bottom_info.widget.dart';
@@ -391,6 +393,32 @@ class MemoryPage extends HookConsumerWidget {
                                 child: const Icon(Icons.close_rounded, color: Colors.white),
                               ),
                             ),
+                          Positioned(
+                            top: 8,
+                            right: 8,
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: arrangeButtons(
+                                ref,
+                                ViewerSlotIds.memoryActions,
+                                const [],
+                                context: {
+                                  ...PluginKernel.assetContext([?currentAsset.value]),
+                                  'memory': memoryJson(memories[mIndex]),
+                                },
+                              ),
+                            ),
+                          ),
+                          Positioned(
+                            top: 64,
+                            left: 0,
+                            right: 0,
+                            child: ViewerSlotContentView(
+                              slot: ViewerSlotIds.memoryOverlay,
+                              assets: [?currentAsset.value],
+                              extra: {'memory': memoryJson(memories[mIndex])},
+                            ),
+                          ),
                           if (currentAsset.value != null && currentAsset.value!.isVideo)
                             Positioned(
                               bottom: 24,
@@ -407,7 +435,18 @@ class MemoryPage extends HookConsumerWidget {
                         if (assetController.hasClients) {
                           assetIndex = (assetController.page ?? 0).round().clamp(0, memories[mIndex].assets.length - 1);
                         }
-                        return MemoryBottomInfo(memory: memories[mIndex], asset: memories[mIndex].assets[assetIndex]);
+                        final asset = memories[mIndex].assets[assetIndex];
+                        return Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            MemoryBottomInfo(memory: memories[mIndex], asset: asset),
+                            ViewerSlotContentView(
+                              slot: ViewerSlotIds.memoryFooter,
+                              assets: [asset],
+                              extra: {'memory': memoryJson(memories[mIndex])},
+                            ),
+                          ],
+                        );
                       },
                     ),
                   ],

@@ -110,11 +110,16 @@ class PartnerSharedByList extends StatelessWidget {
               ),
             ),
           ]);
-          return ListTile(
-            leading: PartnerUserAvatar(userId: partner.id, name: partner.name),
-            title: Text(partner.name),
-            subtitle: Text(partner.email),
-            trailing: actions.length == 1 ? actions.first : Row(mainAxisSize: MainAxisSize.min, children: actions),
+          return LibraryTileDecoration(
+            key: ValueKey(partner.id),
+            slot: LibrarySlots.partnerTile,
+            slotContext: () => {'partner': LibraryJson.partner(partner)},
+            child: ListTile(
+              leading: PartnerUserAvatar(userId: partner.id, name: partner.name),
+              title: Text(partner.name),
+              subtitle: Text(partner.email),
+              trailing: actions.length == 1 ? actions.first : Row(mainAxisSize: MainAxisSize.min, children: actions),
+            ),
           );
         },
       ),

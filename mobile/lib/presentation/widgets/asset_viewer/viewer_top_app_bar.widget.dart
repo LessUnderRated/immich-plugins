@@ -8,6 +8,7 @@ import 'package:immich_mobile/domain/models/asset/base_asset.model.dart';
 import 'package:immich_mobile/extensions/build_context_extensions.dart';
 import 'package:immich_mobile/extensions/datetime_extensions.dart';
 import 'package:immich_mobile/infrastructure/plugins/plugin_api/viewer/viewer_ids.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_kernel.dart';
 import 'package:immich_mobile/presentation/actions/action.widget.dart';
 import 'package:immich_mobile/presentation/actions/action_ids.dart';
 import 'package:immich_mobile/presentation/actions/action_slots.dart';
@@ -19,6 +20,7 @@ import 'package:immich_mobile/presentation/widgets/action_buttons/motion_photo_a
 import 'package:immich_mobile/presentation/widgets/asset_viewer/viewer_action_surface.dart';
 import 'package:immich_mobile/presentation/widgets/asset_viewer/viewer_censor.widget.dart';
 import 'package:immich_mobile/presentation/widgets/asset_viewer/viewer_kebab_menu.widget.dart';
+import 'package:immich_mobile/presentation/widgets/asset_viewer/viewer_slots.dart';
 import 'package:immich_mobile/presentation/widgets/timeline/plugins/timeline_plugin_bridge.dart';
 import 'package:immich_mobile/providers/asset_viewer/asset_viewer.provider.dart';
 import 'package:immich_mobile/providers/device_plugins.provider.dart';
@@ -158,7 +160,13 @@ class ViewerTopAppBar extends ConsumerWidget implements PreferredSizeWidget {
                   child: NavigationToolbar(
                     centerMiddle: true,
                     leading: const _AppBarBackButton(),
-                    middle: showingDetails ? null : _AssetInfoTitle(asset: asset),
+                    middle: showingDetails
+                        ? null
+                        : ViewerSlotDecoration(
+                            slot: ViewerSlotIds.title,
+                            slotContext: () => PluginKernel.assetContext([asset]),
+                            child: _AssetInfoTitle(asset: asset),
+                          ),
                     trailing: !showingDetails && !isReadonlyModeEnabled
                         ? ImmichColorOverride(
                             color: Colors.white,

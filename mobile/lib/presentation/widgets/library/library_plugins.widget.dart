@@ -185,11 +185,40 @@ class LibraryTileDecoration extends ConsumerWidget {
   final Map<String, dynamic> Function() slotContext;
   final Widget child;
 
-  const LibraryTileDecoration({super.key, required this.slot, required this.slotContext, required this.child});
+  /// The slot of the tile's long-press menu (default `<slot>.menu`); plugin entries open on long press.
+  final String? menuSlot;
+
+  const LibraryTileDecoration({
+    super.key,
+    required this.slot,
+    required this.slotContext,
+    required this.child,
+    this.menuSlot,
+  });
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final bridge = ref.watch(timelinePluginBridgeProvider);
-    return bridge.hasDecorations(slot) ? bridge.decorate(slot, slotContext(), child) : child;
+    final menu = menuSlot ?? '$slot.menu';
+    final hasDecorations = bridge.hasDecorations(slot);
+    final entries = bridge.menuItems(menu, const {});
+    if (!hasDecorations && entries.isEmpty) {
+      return child;
+    }
+    final context0 = slotContext();
+    final decorated = hasDecorations ? bridge.decorate(slot, context0, child) : child;
+    if (entries.isEmpty) {
+      return decorated;
+    }
+    final items = bridge.menuItems(menu, context0);
+    return MenuAnchor(
+      consumeOutsideTap: true,
+      menuChildren: [for (final item in items) item.item],
+      builder: (context, controller, child) => GestureDetector(
+        onLongPressStart: (details) => controller.open(position: details.localPosition),
+        child: child,
+      ),
+      child: decorated,
+    );
   }
 }

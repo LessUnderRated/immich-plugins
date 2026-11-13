@@ -380,4 +380,8 @@ plugin that drew the feature, camera), every host function (registered with the 
 `contributes.builtins` on every arranged list.
 Also wired: plugin buttons, menu entries, tiles and sections merged into every arranged widget list (by slot suffix:
 `.actions` buttons, `.menu` entries, else tiles), badge/wrap/replace decorations on album, place and people tiles.
-Not yet: decorations on the remaining tiles (partner, folder, shared link), long-press menus.
+Every tile (album, people, place, partner, shared link, private gallery, folder subfolder and asset) takes
+badge/wrap/replace decorations and a long-press menu: plugin entries of `<tile slot>.menu` (`albumSelector.tile.menu`,
+`peopleCollection.tile.menu`, `place.tile.menu`, `partner.tile.menu`, `sharedLink.tile.menu`, ...) open where the tile
+is pressed. The device trash page goes through the data area's trash repository (`trash.query`, `asset.restore`,
+`asset.delete` with `source: "device"`). Tags stay server objects (tagging needs a server asset) by design.

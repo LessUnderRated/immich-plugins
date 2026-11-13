@@ -178,6 +178,7 @@ class _PlaceList extends ConsumerWidget {
               final place = filtered[index];
               return LibraryTileDecoration(
                 slot: LibrarySlots.placeTile,
+                menuSlot: LibrarySlots.placeTileMenu,
                 slotContext: () => {'place': LibraryJson.place(place)},
                 child: _PlaceTile(place: place),
               );

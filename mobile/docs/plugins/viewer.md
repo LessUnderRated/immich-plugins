@@ -243,5 +243,8 @@ declarative overlay layer, `image.load`, every host function (registered with th
 `ImagePipeline` bound to the kernel (cache invalidated when image hooks change).
 Also wired: `viewer.info.sections` (below the built-in details) and `viewer.bottomPanels` content, the censor shield as
 the generic toggle `app/viewer.shield`, plugin toggles and buttons merged into every action bar next to actions.
-Not yet: `viewer.title` and the memory and slideshow slots render nothing; `ViewerFilterV1` video results are not yet
-turned into overlay items.
+Also wired: `viewer.title` decorations, `slideshow.appBar.menu` and `slideshow.overlay`, `memory.appBar.actions`,
+`memory.overlay` and `memory.footer` (context carries `memory`), `memoryList.appBar.menu`, `memoryList.tile`
+decorations and `memoryList.empty`; the shield's video regions are published as overlay items (owner
+`app/viewer.shield`, target `asset:<id>`), so `video.overlay.get` sees them and they draw in the shared overlay layer.
+Every slot in this document is placed.

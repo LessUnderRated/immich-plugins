@@ -14,11 +14,14 @@ import 'package:immich_mobile/generated/translations.g.dart';
 import 'package:immich_mobile/infrastructure/plugins/plugin_api/viewer/active_viewer.dart';
 import 'package:immich_mobile/infrastructure/plugins/plugin_api/viewer/viewer_events.dart';
 import 'package:immich_mobile/infrastructure/plugins/plugin_api/viewer/viewer_ids.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_kernel.dart';
 import 'package:immich_mobile/pages/common/settings.page.dart';
 import 'package:immich_mobile/presentation/actions/action_slots.dart';
+import 'package:immich_mobile/presentation/widgets/asset_viewer/viewer_slots.dart';
 import 'package:immich_mobile/presentation/widgets/slideshow/slideshow_controller.dart';
 import 'package:immich_mobile/presentation/widgets/slideshow/slideshow_progress_bar.widget.dart';
 import 'package:immich_mobile/presentation/widgets/slideshow/slideshow_slide.widget.dart';
+import 'package:immich_mobile/presentation/widgets/sliver_app_bar/app_menu.widget.dart';
 import 'package:immich_mobile/presentation/widgets/timeline/plugins/timeline_plugin_bridge.dart';
 import 'package:immich_mobile/providers/asset_viewer/asset_viewer.provider.dart';
 import 'package:immich_mobile/providers/asset_viewer/video_player_provider.dart';
@@ -321,6 +324,7 @@ class _SlideshowPageState extends ConsumerState<SlideshowPage>
       listenable: _slideshow,
       builder: (context, _) {
         final currentAsset = _assetAt(_slideshow.currentIndex);
+        final slotContext = PluginKernel.assetContext([?currentAsset]);
         final progressBar = currentAsset != null
             ? SlideshowProgressBar(asset: currentAsset, progress: _slideshow.progress)
             : const SizedBox.shrink();
@@ -359,7 +363,10 @@ class _SlideshowPageState extends ConsumerState<SlideshowPage>
                             icon: const Icon(Icons.settings),
                           ),
                         ),
-                      ]),
+                        if (arrangeMenuItems(ref, ViewerSlotIds.slideshowMenu, const [], context: slotContext)
+                            case final entries when entries.isNotEmpty)
+                          AppBarOverflowMenu(children: entries),
+                      ], context: slotContext),
                     ),
                     progressBar,
                   ],
@@ -388,6 +395,14 @@ class _SlideshowPageState extends ConsumerState<SlideshowPage>
                     child: FadeTransition(opacity: _fadeOut, child: _buildFadingSlide(_fadingSlideIndex!, config.look)),
                   ),
                 ),
+              Positioned(
+                left: 0,
+                right: 0,
+                bottom: 0,
+                child: SafeArea(
+                  child: ViewerSlotContentView(slot: ViewerSlotIds.slideshowOverlay, assets: [?currentAsset]),
+                ),
+              ),
             ],
           ),
         );

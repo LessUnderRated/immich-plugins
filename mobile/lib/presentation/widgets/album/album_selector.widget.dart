@@ -708,6 +708,7 @@ class _AlbumList extends ConsumerWidget {
                 },
                 child: LibraryTileDecoration(
                   slot: LibrarySlots.albumSelectorTile,
+                  menuSlot: LibrarySlots.albumSelectorTileMenu,
                   slotContext: () => {'album': LibraryJson.remoteAlbum(album)},
                   child: AlbumTile(album: album, isOwner: isOwner, onAlbumSelected: onAlbumSelected),
                 ),
@@ -718,6 +719,7 @@ class _AlbumList extends ConsumerWidget {
               padding: const EdgeInsets.only(bottom: 8.0),
               child: LibraryTileDecoration(
                 slot: LibrarySlots.albumSelectorTile,
+                menuSlot: LibrarySlots.albumSelectorTileMenu,
                 slotContext: () => {'album': LibraryJson.remoteAlbum(album)},
                 child: AlbumTile(album: album, isOwner: isOwner, onAlbumSelected: onAlbumSelected),
               ),

@@ -3,9 +3,9 @@ import 'dart:io';
 
 import 'package:auto_route/auto_route.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:immich_mobile/infrastructure/plugins/plugin_api/timeline/timeline_plugin_ids.dart';
+import 'package:immich_mobile/infrastructure/repositories/device_trash.repository.dart';
 import 'package:immich_mobile/presentation/actions/action_hooks.dart';
 import 'package:immich_mobile/presentation/actions/action_ids.dart';
 import 'package:immich_mobile/presentation/actions/action_slots.dart';
@@ -13,34 +13,8 @@ import 'package:immich_mobile/presentation/widgets/sliver_app_bar/app_menu.widge
 import 'package:immich_mobile/presentation/widgets/timeline/plugins/timeline_plugin_bridge.dart';
 import 'package:immich_mobile/presentation/widgets/timeline/plugins/timeline_slots.widget.dart';
 import 'package:immich_mobile/providers/background_sync.provider.dart';
+import 'package:immich_mobile/providers/infrastructure/device_trash.provider.dart';
 import 'package:immich_mobile/providers/timeline/timeline_plugins.provider.dart';
-
-const _channel = MethodChannel('immich/device_media');
-
-class _TrashedItem {
-  final String id;
-  final String name;
-  final bool isVideo;
-  final DateTime? expires;
-
-  const _TrashedItem({required this.id, required this.name, required this.isVideo, required this.expires});
-
-  factory _TrashedItem.fromMap(Map<dynamic, dynamic> map) => _TrashedItem(
-    id: '${map['id']}',
-    name: map['name'] as String? ?? '',
-    isVideo: map['video'] == true,
-    expires: map['expires'] == null ? null : DateTime.fromMillisecondsSinceEpoch((map['expires'] as num).toInt()),
-  );
-
-  Map<String, Object> toArgs() => {'id': id, 'video': isVideo};
-
-  Map<String, dynamic> toJson() => {
-    'id': id,
-    'name': name,
-    'isVideo': isVideo,
-    'expires': expires?.toUtc().toIso8601String(),
-  };
-}
 
 @RoutePage()
 class DeviceTrashPage extends ConsumerStatefulWidget {
@@ -53,7 +27,7 @@ class DeviceTrashPage extends ConsumerStatefulWidget {
 class _DeviceTrashPageState extends ConsumerState<DeviceTrashPage> {
   final Map<String, Future<String?>> _thumbs = {};
   final Set<String> _selected = {};
-  List<_TrashedItem>? _items;
+  List<DeviceTrashedItem>? _items;
   bool _busy = false;
 
   @override
@@ -63,23 +37,21 @@ class _DeviceTrashPageState extends ConsumerState<DeviceTrashPage> {
   }
 
   Future<void> _load() async {
-    final rows = await _channel.invokeListMethod<Map>('listTrashed') ?? const [];
+    final items = await ref.read(deviceTrashRepositoryProvider).list();
     if (mounted) {
       setState(() {
-        _items = rows.map(_TrashedItem.fromMap).toList();
+        _items = items;
         _selected.removeWhere((id) => !_items!.any((item) => item.id == id));
       });
     }
   }
 
-  Future<String?> _thumb(_TrashedItem item) => _thumbs.putIfAbsent(
-    item.id,
-    () => _channel.invokeMethod<String>('trashThumbnail', {'id': item.id, 'video': item.isVideo}),
-  );
+  Future<String?> _thumb(DeviceTrashedItem item) =>
+      _thumbs.putIfAbsent(item.id, () => ref.read(deviceTrashRepositoryProvider).thumbnail(item));
 
-  List<_TrashedItem> get _selection => (_items ?? const []).where((item) => _selected.contains(item.id)).toList();
+  List<DeviceTrashedItem> get _selection => (_items ?? const []).where((item) => _selected.contains(item.id)).toList();
 
-  Future<void> _run(String actionId, String method, List<_TrashedItem> items, String done) async {
+  Future<void> _run(String actionId, String method, List<DeviceTrashedItem> items, String done) async {
     if (items.isEmpty) {
       return;
     }
@@ -95,12 +67,13 @@ class _DeviceTrashPageState extends ConsumerState<DeviceTrashPage> {
     );
   }
 
-  Future<void> _runMethod(String method, List<_TrashedItem> items, String done) async {
+  Future<void> _runMethod(String method, List<DeviceTrashedItem> items, String done) async {
     final messenger = ScaffoldMessenger.of(context);
     setState(() => _busy = true);
     try {
-      final ok = await _channel.invokeMethod<bool>(method, {'items': items.map((item) => item.toArgs()).toList()});
-      if (ok == true) {
+      final repository = ref.read(deviceTrashRepositoryProvider);
+      final ok = method == 'restoreTrashed' ? await repository.restore(items) : await repository.deleteForever(items);
+      if (ok) {
         messenger.showSnackBar(SnackBar(content: Text(done)));
         _selected.clear();
         await ref.read(backgroundSyncProvider).syncLocal();

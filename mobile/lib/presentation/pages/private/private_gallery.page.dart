@@ -340,14 +340,19 @@ class _PrivateGrid extends ConsumerWidget {
             crossAxisSpacing: 2,
           ),
           itemCount: items.length,
-          itemBuilder: (context, index) => _PrivateTile(
-            item: items[index],
-            onTap: () => libraryTap(
-              context,
-              LibraryPages.privateLegacy,
-              'open',
-              () => context.pushRoute(PrivateViewerRoute(items: items, initialIndex: index)),
-              args: () => {'id': items[index].id, 'name': items[index].name, 'isVideo': items[index].isVideo},
+          itemBuilder: (context, index) => LibraryTileDecoration(
+            key: ValueKey(items[index].id),
+            slot: LibrarySlots.privateGalleryTile,
+            slotContext: () => {'id': items[index].id, 'name': items[index].name, 'isVideo': items[index].isVideo},
+            child: _PrivateTile(
+              item: items[index],
+              onTap: () => libraryTap(
+                context,
+                LibraryPages.privateLegacy,
+                'open',
+                () => context.pushRoute(PrivateViewerRoute(items: items, initialIndex: index)),
+                args: () => {'id': items[index].id, 'name': items[index].name, 'isVideo': items[index].isVideo},
+              ),
             ),
           ),
         );

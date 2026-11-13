@@ -8,6 +8,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:immich_mobile/domain/models/asset/base_asset.model.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/viewer/video_overlay_model.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/viewer/video_sessions.dart';
 import 'package:immich_mobile/infrastructure/plugins/viewer_filter.dart';
 import 'package:immich_mobile/presentation/pages/plugins/schema_form.widget.dart';
 import 'package:immich_mobile/presentation/widgets/images/thumbnail.widget.dart';
@@ -134,6 +136,9 @@ class _BlurredPlaceholder extends StatelessWidget {
   }
 }
 
+/// Owner of the shield's items in the video overlay store (`video.overlay.*`).
+const videoShieldOverlayOwner = 'app/viewer.shield';
+
 class VideoCensorOverlay extends ConsumerStatefulWidget {
   final String assetId;
   final NativeVideoPlayerController? controller;
@@ -165,7 +170,37 @@ class _VideoCensorOverlayState extends ConsumerState<VideoCensorOverlay> {
   @override
   void dispose() {
     _timer?.cancel();
+    VideoSessions.instance.overlays.clear(videoShieldOverlayOwner, target: _target);
     super.dispose();
+  }
+
+  String get _target => VideoOverlayStore.assetTarget(widget.assetId);
+
+  /// Publishes the analysed frames as declarative overlay items (one blur item per region and frame window), so they
+  /// draw in the shared video overlay layer and plugins see them with `video.overlay.get`.
+  void _publish() {
+    final items = <VideoOverlayItem>[];
+    for (var i = 0; i < _frames.length; i++) {
+      final frame = _frames[i];
+      final next = i + 1 < _frames.length ? _frames[i + 1].timeMs : frame.timeMs + _stepMs * 2;
+      final toMs = min(next, frame.timeMs + _stepMs * 2);
+      for (var r = 0; r < frame.regions.length; r++) {
+        final region = frame.regions[r];
+        items.add(
+          VideoOverlayItem(
+            id: 'shield-${frame.timeMs}-$r',
+            shape: region.ellipse ? VideoOverlayShape.ellipse : VideoOverlayShape.rect,
+            rect: region.rect,
+            atMs: frame.timeMs,
+            fromMs: frame.timeMs,
+            toMs: toMs,
+            blur: _blurSigma,
+            z: 1000,
+          ),
+        );
+      }
+    }
+    VideoSessions.instance.overlays.set(_target, videoShieldOverlayOwner, items);
   }
 
   VideoCensorFrame? _frameAt(int position) =>
@@ -213,6 +248,7 @@ class _VideoCensorOverlayState extends ConsumerState<VideoCensorOverlay> {
           ..addAll(frames.isEmpty ? [VideoCensorFrame(fromMs, const [])] : frames)
           ..sort((a, b) => a.timeMs.compareTo(b.timeMs));
       });
+      _publish();
     } catch (_) {
       if (mounted) {
         setState(() => _failed = true);
@@ -232,25 +268,7 @@ class _VideoCensorOverlayState extends ConsumerState<VideoCensorOverlay> {
       );
     }
 
-    return LayoutBuilder(
-      builder: (context, constraints) => Stack(
-        children: [
-          for (final region in frame.regions)
-            Positioned(
-              left: region.rect.left * constraints.maxWidth,
-              top: region.rect.top * constraints.maxHeight,
-              width: region.rect.width * constraints.maxWidth,
-              height: region.rect.height * constraints.maxHeight,
-              child: region.ellipse
-                  ? ClipOval(
-                      child: BackdropFilter(filter: blur, child: const SizedBox.expand()),
-                    )
-                  : ClipRect(
-                      child: BackdropFilter(filter: blur, child: const SizedBox.expand()),
-                    ),
-            ),
-        ],
-      ),
-    );
+    // The regions draw in the video overlay layer (see [_publish]).
+    return const SizedBox.shrink();
   }
 }

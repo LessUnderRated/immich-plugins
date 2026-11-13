@@ -184,62 +184,79 @@ class FolderContent extends HookConsumerWidget {
                     children: [
                       if (subfolders.isNotEmpty)
                         ...subfolders.map(
-                          (subfolder) => LargeLeadingTile(
-                            leading: Icon(Icons.folder, color: context.primaryColor, size: 48),
-                            title: Text(
-                              subfolder.name,
-                              softWrap: false,
-                              overflow: TextOverflow.ellipsis,
-                              style: context.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w600),
-                            ),
-                            subtitle: subfolder.subfolders.isNotEmpty
-                                ? Text(
-                                    getSubtitle(subfolder.subfolders.length),
-                                    style: context.textTheme.bodyMedium?.copyWith(
-                                      color: context.colorScheme.onSurfaceSecondary,
-                                    ),
-                                  )
-                                : null,
-                            onTap: () => libraryTap(
-                              context,
-                              _page,
-                              'openFolder',
-                              () => context.pushRoute(FolderRoute(folder: subfolder)),
-                              args: () => {'folder': LibraryJson.folder(subfolder)},
+                          (subfolder) => LibraryTileDecoration(
+                            slot: LibrarySlots.folderSubfolder,
+                            slotContext: () => {'folder': LibraryJson.folder(subfolder)},
+                            child: LargeLeadingTile(
+                              leading: Icon(Icons.folder, color: context.primaryColor, size: 48),
+                              title: Text(
+                                subfolder.name,
+                                softWrap: false,
+                                overflow: TextOverflow.ellipsis,
+                                style: context.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w600),
+                              ),
+                              subtitle: subfolder.subfolders.isNotEmpty
+                                  ? Text(
+                                      getSubtitle(subfolder.subfolders.length),
+                                      style: context.textTheme.bodyMedium?.copyWith(
+                                        color: context.colorScheme.onSurfaceSecondary,
+                                      ),
+                                    )
+                                  : null,
+                              onTap: () => libraryTap(
+                                context,
+                                _page,
+                                'openFolder',
+                                () => context.pushRoute(FolderRoute(folder: subfolder)),
+                                args: () => {'folder': LibraryJson.folder(subfolder)},
+                              ),
                             ),
                           ),
                         ),
                       if (folderAssets.isNotEmpty)
                         ...folderAssets.mapIndexed(
-                          (index, asset) => LargeLeadingTile(
-                            onTap: () => libraryTap(context, _page, 'openAsset', () {
-                              AssetViewer.setAsset(ref, asset);
-                              unawaited(
-                                context.pushRoute(
-                                  AssetViewerRoute(
-                                    initialIndex: index,
-                                    timelineService: ref
-                                        .read(timelineFactoryProvider)
-                                        .fromAssets(folderAssets, TimelineOrigin.folder),
-                                  ),
+                          (index, asset) => LibraryTileDecoration(
+                            slot: LibrarySlots.folderAsset,
+                            slotContext: () => {
+                              'asset': LibraryJson.asset(asset),
+                              'folder': LibraryJson.folder(folder!),
+                            },
+                            child: LargeLeadingTile(
+                              onTap: () => libraryTap(
+                                context,
+                                _page,
+                                'openAsset',
+                                () {
+                                  AssetViewer.setAsset(ref, asset);
+                                  unawaited(
+                                    context.pushRoute(
+                                      AssetViewerRoute(
+                                        initialIndex: index,
+                                        timelineService: ref
+                                            .read(timelineFactoryProvider)
+                                            .fromAssets(folderAssets, TimelineOrigin.folder),
+                                      ),
+                                    ),
+                                  );
+                                },
+                                args: () => {'asset': LibraryJson.asset(asset), 'folder': LibraryJson.folder(folder!)},
+                              ),
+                              leading: ClipRRect(
+                                borderRadius: const BorderRadius.all(Radius.circular(15)),
+                                child: SizedBox(width: 80, height: 80, child: ThumbnailTile(asset)),
+                              ),
+                              title: Text(
+                                asset.name,
+                                maxLines: 2,
+                                softWrap: false,
+                                overflow: TextOverflow.ellipsis,
+                                style: context.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w600),
+                              ),
+                              subtitle: Text(
+                                "${asset.exifInfo.fileSize != null ? "${formatBytes(asset.exifInfo.fileSize ?? 0)} • " : ""}${DateFormat.yMMMd(resolvedDateTimeLocale()).format(asset.createdAt.toLocal())}",
+                                style: context.textTheme.bodyMedium?.copyWith(
+                                  color: context.colorScheme.onSurfaceSecondary,
                                 ),
-                              );
-                            }, args: () => {'asset': LibraryJson.asset(asset), 'folder': LibraryJson.folder(folder!)}),
-                            leading: ClipRRect(
-                              borderRadius: const BorderRadius.all(Radius.circular(15)),
-                              child: SizedBox(width: 80, height: 80, child: ThumbnailTile(asset)),
-                            ),
-                            title: Text(
-                              asset.name,
-                              maxLines: 2,
-                              softWrap: false,
-                              overflow: TextOverflow.ellipsis,
-                              style: context.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w600),
-                            ),
-                            subtitle: Text(
-                              "${asset.exifInfo.fileSize != null ? "${formatBytes(asset.exifInfo.fileSize ?? 0)} • " : ""}${DateFormat.yMMMd(resolvedDateTimeLocale()).format(asset.createdAt.toLocal())}",
-                              style: context.textTheme.bodyMedium?.copyWith(
-                                color: context.colorScheme.onSurfaceSecondary,
                               ),
                             ),
                           ),
