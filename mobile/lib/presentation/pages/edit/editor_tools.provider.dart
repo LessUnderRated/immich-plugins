@@ -2,16 +2,38 @@ import 'package:collection/collection.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:immich_mobile/infrastructure/plugins/plugin_api/editor/editor_ids.dart';
 import 'package:immich_mobile/infrastructure/plugins/plugin_api/editor/editor_tool.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_kernel.dart';
 import 'package:immich_mobile/presentation/pages/edit/editor.provider.dart';
+import 'package:immich_mobile/presentation/pages/edit/editor_session.provider.dart';
+import 'package:immich_mobile/providers/plugin_kernel.provider.dart';
 import 'package:immich_mobile/utils/mosaic.utils.dart';
 
-/// Plugin tools of the `editor.image` surface.
-final editorPluginToolsProvider = Provider<List<EditorTool>>((ref) => const []);
+/// Plugin tools of the `editor.image` surface (`contributes.tools`), filtered by `when` against the edited asset.
+final editorPluginToolsProvider = Provider<List<EditorTool>>((ref) {
+  final kernel = ref.watch(pluginKernelProvider);
+  final asset = ref.watch(editorSessionProvider.select((session) => session.asset));
+  final context = asset == null ? const {'isImage': true, 'assetType': 'IMAGE'} : PluginKernel.assetContext([asset]);
+  return [
+    for (final tool in kernel.tools(EditorPluginIds.toolSurface, context: context))
+      EditorTool.plugin(
+        plugin: tool.plugin,
+        toolId: tool.id,
+        title: tool.title,
+        subtitle: tool.subtitle,
+        icon: tool.icon,
+        method: tool.method,
+        uiMethod: tool.uiMethod,
+        params: tool.params,
+        order: tool.order,
+      ),
+  ];
+});
 
 /// Hide / order rules for the tool selector (`contributes.builtins["editImage.tools"]`).
-final editorToolRulesProvider = Provider<({Set<String> hide, List<String> order})>(
-  (ref) => (hide: const <String>{}, order: const <String>[]),
-);
+final editorToolRulesProvider = Provider<({Set<String> hide, List<String> order})>((ref) {
+  final rules = ref.watch(pluginKernelProvider).builtins(EditorPluginIds.toolsSlot);
+  return (hide: rules.hide, order: rules.order);
+});
 
 /// Every tool of the selector in display order: built-ins (`crop`, `mosaic`) first, then plugin tools.
 final editorToolsProvider = Provider<List<EditorTool>>((ref) {

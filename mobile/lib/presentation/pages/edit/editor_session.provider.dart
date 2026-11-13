@@ -13,6 +13,7 @@ import 'package:immich_mobile/infrastructure/plugins/plugin_api/editor/editor_to
 import 'package:immich_mobile/infrastructure/plugins/plugin_api/editor/editor_tool_protocol.dart';
 import 'package:immich_mobile/infrastructure/plugins/plugin_api/editor/editor_tool_runner.dart';
 import 'package:immich_mobile/infrastructure/plugins/plugin_api/editor/editor_workspace.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_kernel.dart';
 import 'package:immich_mobile/presentation/pages/edit/editor.provider.dart';
 import 'package:immich_mobile/presentation/pages/edit/editor_edits.dart';
 import 'package:immich_mobile/presentation/pages/edit/editor_tools.provider.dart';
@@ -357,11 +358,30 @@ class EditorSessionNotifier extends Notifier<EditorSession> {
     await clearPreview();
     final session = state.id;
     final before = ref.read(editorStateProvider);
-    final runId = 'editor-$session-${_runs++}';
+    // A kernel task when the tool asks for one: app-native progress, the plugin reports with `tasks.update`.
+    final kernel = PluginKernel.current;
+    final task = tool.options.task && kernel != null
+        ? kernel.tasks.start(
+            tool.plugin ?? 'app',
+            tool.options.taskTitle ?? tool.title,
+            cancellable: tool.options.cancellable,
+            onCancel: cancelRun,
+          )
+        : null;
+    final runId = task?.id ?? 'editor-$session-${_runs++}';
     final cancel = _cancel = Completer<EditorImageRef?>();
     state = state.copyWith(
       run: EditorToolRun(tool: tool, id: runId),
     );
+    void onTaskChanged() {
+      final current = kernel?.tasks[runId];
+      if (current != null && current.isRunning) {
+        updateRun(runId, progress: current.progress, message: current.message);
+      }
+    }
+
+    kernel?.tasks.addListener(onTaskChanged);
+    String? taskError;
 
     EditorWorkingImage? current;
     EditorWorkingImage? rendered;
@@ -394,7 +414,18 @@ class EditorSessionNotifier extends Notifier<EditorSession> {
       final adopted = await workspace.adopt(result, generation: state.generation + 1, limits: context.limits);
       _push(tool.id, adopted, before, toolState);
       return (outcome: EditorApplyOutcome.applied, message: message);
+    } catch (error) {
+      taskError = error.toString();
+      rethrow;
     } finally {
+      kernel?.tasks.removeListener(onTaskChanged);
+      if (task != null) {
+        if (cancel.isCompleted) {
+          kernel?.tasks.cancel(runId);
+        } else {
+          kernel?.tasks.finish(runId, error: taskError);
+        }
+      }
       _pending.remove(runId);
       _early.remove(runId);
       if (identical(_cancel, cancel)) {
