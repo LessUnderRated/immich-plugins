@@ -77,24 +77,24 @@ class _VideoOverlayLayerState extends State<VideoOverlayLayer> with SingleTicker
   void initState() {
     super.initState();
     _store.addListener(_onItems);
-    widget.session.addListener(_updateTicker);
-    _onItems();
+    widget.session.addListener(_onSession);
+    _readItems();
   }
 
   @override
   void didUpdateWidget(VideoOverlayLayer oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.session != widget.session) {
-      oldWidget.session.removeListener(_updateTicker);
-      widget.session.addListener(_updateTicker);
-      _onItems();
+      oldWidget.session.removeListener(_onSession);
+      widget.session.addListener(_onSession);
+      _readItems();
     }
   }
 
   @override
   void dispose() {
     _store.removeListener(_onItems);
-    widget.session.removeListener(_updateTicker);
+    widget.session.removeListener(_onSession);
     _ticker.dispose();
     for (final image in _images.values) {
       image.dispose();
@@ -103,12 +103,14 @@ class _VideoOverlayLayerState extends State<VideoOverlayLayer> with SingleTicker
   }
 
   void _onItems() {
-    final items = _store.itemsFor(widget.session.id, widget.session.asset.id);
-    if (!mounted) {
-      return;
+    if (mounted) {
+      setState(_readItems);
     }
-    setState(() => _items = items);
-    for (final item in items) {
+  }
+
+  void _readItems() {
+    _items = _store.itemsFor(widget.session.id, widget.session.asset.id);
+    for (final item in _items) {
       final path = item.imagePath;
       if (path != null && !_images.containsKey(path) && _loading.add(path)) {
         unawaited(_loadImage(path));
@@ -117,18 +119,21 @@ class _VideoOverlayLayerState extends State<VideoOverlayLayer> with SingleTicker
     _updateTicker();
   }
 
+  /// The session's playback state changed: redraw at the new position and start or stop ticking.
+  void _onSession() {
+    if (mounted) {
+      setState(_updateTicker);
+    }
+  }
+
   /// Ticks only while there is something to move: items exist and the video plays. A paused video is drawn once
   /// at its position.
   void _updateTicker() {
-    if (!mounted) {
-      return;
-    }
     final run = _items.isNotEmpty && widget.session.isPlaying;
     if (run && !_ticker.isActive) {
       unawaited(_ticker.start());
     } else if (!run && _ticker.isActive) {
       _ticker.stop();
-      setState(() {});
     }
   }
 

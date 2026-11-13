@@ -294,22 +294,22 @@ abstract final class LibraryHooks {
   /// The hook of a built-in UI action: `action.<page>.<item>` (item = the built-in id in the catalog).
   static String action(String page, String item) => 'action.$page.$item';
 
-  // Queries: `after` filters, sorts or extends what the page shows.
-  static const albumsQuery = 'albums.query';
-  static const albumUsersQuery = 'albumUsers.query';
-  static const appAlbumsQuery = 'appAlbums.query';
-  static const deviceAlbumsQuery = 'deviceAlbums.query';
-  static const peopleQuery = 'people.query';
-  static const placesQuery = 'places.query';
+  // Page views: `after` filters, sorts or extends the list a page is about to show, after the page's own search
+  // text, filters and sort (the data layer's `*.query` hooks run before, at the source).
+  static const albumsQuery = 'albumSelector.list.query';
+  static const albumUsersQuery = 'albumOptions.users.query';
+  static const appAlbumsQuery = 'localAlbums.appAlbums.query';
+  static const deviceAlbumsQuery = 'localAlbums.deviceAlbums.query';
+  static const peopleQuery = 'peopleCollection.list.query';
+  static const placesQuery = 'place.list.query';
   static const mapMarkersQuery = 'map.markers.query';
-  static const searchQuery = 'search.query';
-  static const foldersQuery = 'folders.query';
-  static const folderAssetsQuery = 'folderAssets.query';
-  static const partnersQuery = 'partners.query';
-  static const sharedLinksQuery = 'sharedLinks.query';
-  static const activitiesQuery = 'activities.query';
-  static const userSelectionQuery = 'userSelection.query';
-  static const privateFilesQuery = 'privateFiles.query';
+  static const foldersQuery = 'folder.subfolders.query';
+  static const folderAssetsQuery = 'folder.assets.query';
+  static const partnersQuery = 'partner.list.query';
+  static const sharedLinksQuery = 'sharedLink.list.query';
+  static const activitiesQuery = 'activities.list.query';
+  static const userSelectionQuery = 'userSelection.users.query';
+  static const privateFilesQuery = 'privateGallery.files.query';
 
   // UI flows that are not a single built-in item.
   static const searchApply = 'search.apply';
@@ -325,7 +325,6 @@ abstract final class LibraryHooks {
     peopleQuery,
     placesQuery,
     mapMarkersQuery,
-    searchQuery,
     foldersQuery,
     folderAssetsQuery,
     partnersQuery,

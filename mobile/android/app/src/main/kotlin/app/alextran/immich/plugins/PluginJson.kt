@@ -9,7 +9,7 @@ import org.json.JSONTokener
 internal object PluginJson {
   /** Converts maps, lists, arrays and primitives (method channel values) into org.json values. */
   fun toJson(value: Any?): Any = when (value) {
-    null -> JSONObject.NULL
+    null, JSONObject.NULL -> JSONObject.NULL
     is JSONObject, is JSONArray, is String, is Boolean, is Int, is Long, is Double -> value
     is Float -> value.toDouble()
     is Number -> value.toLong()

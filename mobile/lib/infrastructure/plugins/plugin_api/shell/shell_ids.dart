@@ -308,6 +308,11 @@ abstract final class ShellHooks {
   /// A login attempt from the login form. args `{ method, email?, password?, serverUrl }`; cancellable.
   static const loginSubmit = 'login.submit';
 
+  /// Files shared to the app (Android share sheet), before the share page opens. args `{ files: [{ path, type,
+  /// size }] }`; `before` may cancel or reduce `files`; `instead` handles them (the share page does not open).
+  /// Runs in `share_intent_upload.provider.dart` (viewer area).
+  static const shareIntent = 'share.intent';
+
   /// Upload of shared files from the share intent page. args `{ files: [{ path, type, size }] }`; `before` may cancel
   /// or reduce `files`; `instead` uploads them some other way.
   static const shareIntentUpload = 'shareIntent.upload';
@@ -340,6 +345,7 @@ abstract final class ShellHooks {
     navPush,
     splashNavigate,
     loginSubmit,
+    shareIntent,
     shareIntentUpload,
     intentView,
     logsClear,

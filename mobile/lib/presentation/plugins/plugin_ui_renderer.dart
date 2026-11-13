@@ -248,10 +248,6 @@ double? _double(Object? value) => value is num ? value.toDouble() : (value is St
 
 int? _int(Object? value) => value is num ? value.toInt() : (value is String ? int.tryParse(value) : null);
 
-String? _string(Object? value) => value == null ? null : '$value';
-
-bool _bool(Object? value, [bool fallback = false]) => value is bool ? value : fallback;
-
 Map<String, dynamic> _map(Object? value) => value is Map ? Map<String, dynamic>.from(value) : <String, dynamic>{};
 
 /// `options` of choice inputs: `[{ "value", "label"?, "icon"? }]` or plain values.
@@ -652,10 +648,10 @@ class _PluginUiViewState extends ConsumerState<PluginUiView> {
       return const SizedBox.shrink();
     }
     try {
-      final widget = _buildNode(node);
-      return _parentData.contains(node['type']) ? widget : _decorate(node, widget);
+      final built = _buildNode(node);
+      return _parentData.contains(node['type']) ? built : _decorate(node, built);
     } catch (error, stack) {
-      _log.warning('JSON UI node ${node['type']} of ${this.widget.plugin} failed', error, stack);
+      _log.warning('JSON UI node ${node['type']} of ${widget.plugin} failed', error, stack);
       return _NodeError(type: '${node['type']}', error: error);
     }
   }
@@ -1055,7 +1051,7 @@ class _PluginUiViewState extends ConsumerState<PluginUiView> {
         };
       case 'fab':
         final label = n['label'];
-        final onPressed = () => unawaited(_run(n['action'], id: n['id'] as String?));
+        void onPressed() => unawaited(_run(n['action'], id: n['id'] as String?));
         final icon = _icon(n['icon']) ?? const Icon(Icons.add);
         return label == null
             ? FloatingActionButton(heroTag: null, onPressed: onPressed, tooltip: n['tooltip'] as String?, child: icon)

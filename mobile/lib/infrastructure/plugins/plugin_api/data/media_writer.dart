@@ -1,11 +1,15 @@
+import 'dart:async';
 import 'dart:io';
+import 'dart:isolate';
 
 import 'package:flutter/painting.dart';
 import 'package:flutter/services.dart';
+import 'package:image/image.dart' as img;
 import 'package:immich_mobile/domain/models/asset/base_asset.model.dart';
 import 'package:immich_mobile/domain/utils/plugin_data_ids.dart';
 import 'package:immich_mobile/domain/utils/plugin_hooks.dart';
 import 'package:immich_mobile/infrastructure/repositories/device_edit.repository.dart';
+import 'package:immich_mobile/utils/asset_edit_renderer.utils.dart' show RenderFormat;
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:photo_manager/photo_manager.dart' hide AssetType;
@@ -15,7 +19,7 @@ enum MediaWriteOutcome {
   /// A new item was added to the gallery.
   saved,
 
-  /// The item was overwritten in place (its original is kept for "restore original" when asked).
+  /// The item was overwritten in place; its original is kept and [MediaWriter.restoreOriginal] brings it back.
   replaced,
 
   /// The format cannot be overwritten in place, so the result was saved as a new item next to the original.
@@ -31,8 +35,8 @@ enum MediaWriteOutcome {
 class MediaWriteResult {
   final MediaWriteOutcome outcome;
 
-  /// The asset that was written: the new item for [MediaWriteOutcome.saved] and [MediaWriteOutcome.savedCopy],
-  /// otherwise the asset that was replaced or restored.
+  /// The asset that now holds the result: the new item for [MediaWriteOutcome.saved] and
+  /// [MediaWriteOutcome.savedCopy], otherwise the asset that was replaced or restored.
   final String? assetId;
 
   /// The new gallery item, when one was created.
@@ -65,21 +69,29 @@ class MediaWriteException implements Exception {
   String toString() => message;
 }
 
-/// Writes photos and videos into the device gallery. Used by the editor (save as copy, replace) and by plugins
+/// Writes photos and videos into the device gallery, for the editor (save as copy, replace) and for plugins
 /// (`media.saveImage`, `media.saveVideo`, `media.replace`, `media.restoreOriginal`).
 ///
-/// * Saves go to `Pictures/<folder>/` (photos) or `Movies/<folder>/` (videos) unless [folder] already starts with a
-///   standard root such as `DCIM/`; they run as `media.save` and emit `media.saved`.
-/// * Replacing a JPEG or PNG overwrites it in place on Android and keeps the original (restorable with
-///   [restoreOriginal], the same backup the editor uses); other image formats are saved as a copy. Videos are
-///   overwritten through the native `overwriteMedia` channel method. Runs as `media.replace`, emits
+/// * New items go to `Pictures/<folder>/` (photos) or `Movies/<folder>/` (videos) unless the folder already starts
+///   with a standard root such as `DCIM/`. Saves run as `media.save` and emit `media.saved`.
+/// * Replacing a device photo goes through [DeviceEditRepository.replaceBase]: the original stays backed up and the
+///   result becomes the base for later edits, so the editor and plugins never undo each other. A photo in a format
+///   that cannot be written in place (HEIC, WebP, ...) gets the result as a copy next to it. Videos are overwritten
+///   with the native `overwriteMedia` method and their original is kept the same way. Runs as `media.replace`, emits
 ///   `media.replaced`.
+/// * Every item this writer creates is announced on [created], so device workflows can skip the app's own output.
 ///
-/// Native side (channel `immich/device_media`): `overwriteImage { id, sourcePath, exifSourcePath?, width?, height? }`
-/// (exists) and `overwriteMedia { id, sourcePath, video }` (needed for videos; answers true or throws).
+/// Native side (channel `immich/device_media`): `overwriteImage` (exists, used by the edit repository) and
+/// `overwriteMedia { id, sourcePath, video }` (videos; answers true, throws `write_denied` / `write_failed`).
 class MediaWriter {
   static const _channel = MethodChannel('immich/device_media');
   static const _roots = ['DCIM/', 'Pictures/', 'Movies/', 'Music/', 'Download/', 'Documents/', 'Audiobooks/'];
+  static const copyFolder = 'Gallery Edits';
+
+  static final _created = StreamController<String>.broadcast(sync: true);
+
+  /// Ids of gallery items created by any [MediaWriter] (copies, saves).
+  static Stream<String> get created => _created.stream;
 
   final DeviceEditRepository _edits;
   final Future<LocalAsset?> Function(String id) _resolveAsset;
@@ -87,12 +99,9 @@ class MediaWriter {
   /// Called after the gallery changed (e.g. to rescan the device library so the new item shows up).
   final Future<void> Function()? onLibraryChanged;
 
-  /// Called with every gallery item this writer creates (e.g. so workflows skip the app's own output).
-  final void Function(String createdId)? onCreated;
+  const MediaWriter(this._edits, this._resolveAsset, {this.onLibraryChanged});
 
-  const MediaWriter(this._edits, this._resolveAsset, {this.onLibraryChanged, this.onCreated});
-
-  static String _relativePath(String? folder, {required bool video}) {
+  static String relativePath(String? folder, {required bool video}) {
     final cleaned = (folder ?? '').trim().replaceAll(RegExp(r'^/+|/+$'), '');
     if (cleaned.isEmpty) {
       return video ? 'Movies/' : 'Pictures/';
@@ -120,6 +129,10 @@ class MediaWriter {
     'video/x-matroska': '.mkv',
   };
 
+  static bool _isPng(Uint8List bytes) => bytes.length > 8 && bytes[0] == 0x89 && bytes[1] == 0x50;
+
+  static bool _isJpeg(Uint8List bytes) => bytes.length > 3 && bytes[0] == 0xFF && bytes[1] == 0xD8;
+
   /// The extension for [mimeType], or one guessed from the first bytes of [bytes].
   static String _extension(String? mimeType, Uint8List? bytes, {required bool video}) {
     final known = _extensions[mimeType?.toLowerCase()];
@@ -127,10 +140,10 @@ class MediaWriter {
       return known;
     }
     if (bytes != null && bytes.length > 12) {
-      if (bytes[0] == 0x89 && bytes[1] == 0x50) {
+      if (_isPng(bytes)) {
         return '.png';
       }
-      if (bytes[0] == 0xFF && bytes[1] == 0xD8) {
+      if (_isJpeg(bytes)) {
         return '.jpg';
       }
       if (bytes[0] == 0x47 && bytes[1] == 0x49) {
@@ -149,6 +162,46 @@ class MediaWriter {
         : p.basename(name.trim());
     return p.extension(base).isEmpty ? '$base$extension' : base;
   }
+
+  // ---- new items -----------------------------------------------------------------------------------------------
+
+  /// Saves the file at [path] as a new photo or video next to [source] (its date and location are copied), named
+  /// [name] in [folder] (default `Gallery Edits`). Returns the new asset id. Runs as `media.save`.
+  Future<String> saveCopy({required String path, required String name, String? folder, BaseAsset? source}) async {
+    final local = source is LocalAsset ? source : null;
+    final video = source?.type == AssetType.video || (_mimeOf(path)?.startsWith('video/') ?? false);
+    final result = video
+        ? await saveVideo(
+            path: path,
+            folder: folder ?? copyFolder,
+            name: name,
+            createdAt: source?.createdAt,
+            latitude: local?.latitude,
+            longitude: local?.longitude,
+          )
+        : await saveImage(
+            path: path,
+            folder: folder ?? copyFolder,
+            name: name,
+            createdAt: source?.createdAt,
+            latitude: local?.latitude,
+            longitude: local?.longitude,
+          );
+    final id = result.createdId ?? result.assetId;
+    if (id == null) {
+      throw const MediaWriteException(500, 'The gallery did not return the new item');
+    }
+    return id;
+  }
+
+  static String? _mimeOf(String path) => switch (p.extension(path).toLowerCase()) {
+    '.mp4' || '.m4v' => 'video/mp4',
+    '.mov' => 'video/quicktime',
+    '.webm' => 'video/webm',
+    '.mkv' => 'video/x-matroska',
+    '.3gp' => 'video/3gpp',
+    _ => null,
+  };
 
   /// Saves a photo as a new gallery item from [bytes] or the file at [path].
   Future<MediaWriteResult> saveImage({
@@ -206,7 +259,7 @@ class MediaWriter {
     double? longitude,
     String? description,
   ) async {
-    final relativePath = Platform.isAndroid ? _relativePath(folder, video: false) : null;
+    final relative = Platform.isAndroid ? relativePath(folder, video: false) : null;
     final AssetEntity entity;
     if (bytes != null) {
       final fileName = _fileName(name, _extension(mimeType, bytes, video: false));
@@ -215,7 +268,7 @@ class MediaWriter {
         filename: fileName,
         title: p.basenameWithoutExtension(fileName),
         desc: description,
-        relativePath: relativePath,
+        relativePath: relative,
         latitude: latitude,
         longitude: longitude,
         creationDate: createdAt,
@@ -230,13 +283,13 @@ class MediaWriter {
         await _named(source, fileName),
         title: fileName,
         desc: description,
-        relativePath: relativePath,
+        relativePath: relative,
         latitude: latitude,
         longitude: longitude,
         creationDate: createdAt,
       );
     }
-    return _created(entity.id);
+    return _createdItem(entity.id);
   }
 
   /// Saves a video file as a new gallery item.
@@ -285,12 +338,12 @@ class MediaWriter {
       File(await _named(source, fileName)),
       title: fileName,
       desc: description,
-      relativePath: Platform.isAndroid ? _relativePath(folder, video: true) : null,
+      relativePath: Platform.isAndroid ? relativePath(folder, video: true) : null,
       latitude: latitude,
       longitude: longitude,
       creationDate: createdAt,
     );
-    return _created(entity.id);
+    return _createdItem(entity.id);
   }
 
   /// Gallery apps take the display name from the file, so a source whose name differs is copied to a temporary
@@ -304,29 +357,30 @@ class MediaWriter {
     return (await source.copy(p.join(directory.path, fileName))).path;
   }
 
-  Future<MediaWriteResult> _created(String id) async {
-    onCreated?.call(id);
+  Future<MediaWriteResult> _createdItem(String id) async {
+    _created.add(id);
     await onLibraryChanged?.call();
     return MediaWriteResult(MediaWriteOutcome.saved, assetId: id, createdId: id);
   }
 
-  /// Replaces the content of the device asset [assetId] with [bytes] or the file at [path].
-  ///
-  /// With [backupOriginal] (default) the first replacement keeps the original so [restoreOriginal] can bring it
-  /// back; formats that cannot be written in place are saved as a copy ([MediaWriteOutcome.savedCopy]).
-  Future<MediaWriteResult> replace(String assetId, {Uint8List? bytes, String? path, bool backupOriginal = true}) {
+  // ---- replacing ----------------------------------------------------------------------------------------------
+
+  /// Replaces the content of the device asset [assetId] with [bytes] or the file at [path]; [width] and [height]
+  /// (when known) update the stored pixel size. The original is always kept and [restoreOriginal] brings it back.
+  Future<MediaWriteResult> replace(String assetId, {Uint8List? bytes, String? path, int? width, int? height}) {
     if ((bytes == null) == (path == null)) {
       throw const MediaWriteException(400, 'Give either bytes or a file path');
     }
     return PluginHooks.run<MediaWriteResult>(
       DataHooks.mediaReplace,
-      () => {'assetId': assetId, 'path': path, 'size': bytes?.length, 'backupOriginal': backupOriginal},
-      () => _replace(assetId, bytes, path, backupOriginal),
+      () => {'assetId': assetId, 'path': path, 'size': bytes?.length, 'width': width, 'height': height},
+      () => _replace(assetId, bytes, path, width, height),
       withArgs: (args) => _replace(
         assetId,
         bytes,
         PluginArgs.string(args['path']) ?? path,
-        PluginArgs.boolean(args['backupOriginal']) ?? backupOriginal,
+        PluginArgs.integer(args['width']) ?? width,
+        PluginArgs.integer(args['height']) ?? height,
       ),
       encode: (result) => result.toJson(),
       decode: MediaWriteResult.fromJson,
@@ -335,66 +389,142 @@ class MediaWriter {
     );
   }
 
-  Future<MediaWriteResult> _replace(String assetId, Uint8List? bytes, String? path, bool backupOriginal) async {
+  Future<MediaWriteResult> _replace(String assetId, Uint8List? bytes, String? path, int? width, int? height) async {
     final asset = await _resolveAsset(assetId);
     if (asset == null) {
       throw MediaWriteException(404, 'Asset $assetId is not on this device');
     }
-
     if (asset.type == AssetType.video) {
-      final source = path ?? await _temp(assetId, bytes!);
-      try {
-        await _channel.invokeMethod<bool>('overwriteMedia', {'id': asset.id, 'sourcePath': source, 'video': true});
-      } on MissingPluginException {
-        throw const MediaWriteException(501, 'Replacing videos needs a newer app build');
-      } on PlatformException catch (error) {
-        if (error.code == 'notImplemented') {
-          throw const MediaWriteException(501, 'Replacing videos needs a newer app build');
-        }
-        rethrow;
-      }
-      _clearImageCache();
-      await onLibraryChanged?.call();
-      return MediaWriteResult(MediaWriteOutcome.replaced, assetId: asset.id);
+      return _replaceVideo(asset, path ?? await _temp(asset.id, bytes!));
+    }
+
+    final format = _edits.replaceFormat(asset);
+    if (format == null) {
+      // HEIC, WebP and other formats cannot be written in place: keep the original and save the result next to it.
+      final source = path ?? await _temp(asset.id, bytes!, extension: _extension(null, bytes, video: false));
+      final id = await saveCopy(
+        path: source,
+        name: '${p.basenameWithoutExtension(asset.name)}_edited${p.extension(source)}',
+        source: asset,
+      );
+      return MediaWriteResult(MediaWriteOutcome.savedCopy, assetId: id, createdId: id);
     }
 
     final data = bytes ?? await File(path!).readAsBytes();
-    if (!backupOriginal && _edits.supportsInPlace(asset)) {
-      final source = await _temp(assetId, data);
-      try {
-        await _channel.invokeMethod('overwriteImage', {'id': asset.id, 'sourcePath': source});
-      } finally {
-        await File(source).delete();
+    final encoded = await _encodeAs(data, format);
+    final size = _imageSize(encoded) ?? (width != null && height != null ? (width, height) : null);
+    final file = File(p.join((await getTemporaryDirectory()).path, 'media_replace_${asset.id}${p.extension(asset.name)}'));
+    await file.writeAsBytes(encoded, flush: true);
+    try {
+      await _edits.replaceBase(asset, file, width: size?.$1, height: size?.$2);
+    } finally {
+      if (file.existsSync()) {
+        await file.delete();
       }
-      _clearImageCache();
-      await onLibraryChanged?.call();
-      return MediaWriteResult(MediaWriteOutcome.replaced, assetId: asset.id);
-    }
-
-    final result = await _edits.replaceImage(asset, data);
-    final createdId = result.createdId;
-    if (createdId != null) {
-      onCreated?.call(createdId);
     }
     await onLibraryChanged?.call();
-    return switch (result.outcome) {
-      DeviceEditOutcome.savedCopy => MediaWriteResult(
-        MediaWriteOutcome.savedCopy,
-        assetId: createdId,
-        createdId: createdId,
-      ),
-      _ => MediaWriteResult(MediaWriteOutcome.replaced, assetId: asset.id),
-    };
+    return MediaWriteResult(MediaWriteOutcome.replaced, assetId: asset.id);
   }
 
-  /// Puts back the original of an asset replaced in place (also undoes editor edits). Emits `media.restored`.
+  /// [data] in [format], re-encoded (off the UI isolate) when it is in another format.
+  static Future<Uint8List> _encodeAs(Uint8List data, RenderFormat format) async {
+    final matches = switch (format) {
+      RenderFormat.jpeg => _isJpeg(data),
+      RenderFormat.png => _isPng(data),
+    };
+    if (matches) {
+      return data;
+    }
+    return Isolate.run(() {
+      final image = img.decodeImage(data);
+      if (image == null) {
+        throw const MediaWriteException(415, 'The replacement is not an image the app can read');
+      }
+      return switch (format) {
+        RenderFormat.jpeg => img.encodeJpg(image, quality: 95),
+        RenderFormat.png => img.encodePng(image),
+      };
+    });
+  }
+
+  /// Pixel size from a PNG or JPEG header, without decoding the image.
+  static (int, int)? _imageSize(Uint8List bytes) {
+    if (_isPng(bytes) && bytes.length >= 24) {
+      final data = ByteData.sublistView(bytes);
+      return (data.getUint32(16), data.getUint32(20));
+    }
+    if (!_isJpeg(bytes)) {
+      return null;
+    }
+    final data = ByteData.sublistView(bytes);
+    var offset = 2;
+    while (offset + 9 < bytes.length) {
+      if (bytes[offset] != 0xFF) {
+        offset++;
+        continue;
+      }
+      final marker = bytes[offset + 1];
+      final length = data.getUint16(offset + 2);
+      final isFrame = marker >= 0xC0 && marker <= 0xCF && marker != 0xC4 && marker != 0xC8 && marker != 0xCC;
+      if (isFrame) {
+        return (data.getUint16(offset + 7), data.getUint16(offset + 5));
+      }
+      offset += 2 + length;
+    }
+    return null;
+  }
+
+  Future<File> _videoBackup(LocalAsset asset) async {
+    final directory = Directory(p.join((await getApplicationDocumentsDirectory()).path, 'media_originals'));
+    await directory.create(recursive: true);
+    return File(p.join(directory.path, '${asset.id}${p.extension(asset.name).toLowerCase()}'));
+  }
+
+  Future<MediaWriteResult> _replaceVideo(LocalAsset asset, String source) async {
+    final backup = await _videoBackup(asset);
+    if (!backup.existsSync()) {
+      final original = await (await AssetEntity.fromId(asset.id))?.originFile;
+      if (original == null || !original.existsSync()) {
+        throw const MediaWriteException(404, 'Original video file not found');
+      }
+      await original.copy(backup.path);
+    }
+    await _overwriteVideo(asset.id, source);
+    await onLibraryChanged?.call();
+    return MediaWriteResult(MediaWriteOutcome.replaced, assetId: asset.id);
+  }
+
+  static Future<void> _overwriteVideo(String id, String source) async {
+    try {
+      await _channel.invokeMethod<bool>('overwriteMedia', {'id': id, 'sourcePath': source, 'video': true});
+    } on MissingPluginException {
+      throw const MediaWriteException(501, 'Replacing videos needs a newer app build');
+    } on PlatformException catch (error) {
+      throw MediaWriteException(error.code == 'write_denied' ? 403 : 500, error.message ?? error.code);
+    }
+    PaintingBinding.instance.imageCache
+      ..clear()
+      ..clearLiveImages();
+  }
+
+  /// Puts back the original of an asset replaced through [replace] or the editor (also drops editor edits).
+  /// Emits `media.restored`.
   Future<MediaWriteResult> restoreOriginal(String assetId) async {
     final asset = await _resolveAsset(assetId);
     if (asset == null) {
       throw MediaWriteException(404, 'Asset $assetId is not on this device');
     }
-    final result = await _edits.removeEdits(asset);
-    final restored = result.outcome == DeviceEditOutcome.restored;
+    var restored = false;
+    if (asset.type == AssetType.video) {
+      final backup = await _videoBackup(asset);
+      if (backup.existsSync()) {
+        await _overwriteVideo(asset.id, backup.path);
+        await backup.delete();
+        restored = true;
+      }
+    } else {
+      restored = (await _edits.removeEdits(asset)).outcome == DeviceEditOutcome.restored;
+    }
     if (restored) {
       await onLibraryChanged?.call();
       PluginHooks.emit(DataEvents.mediaRestored, () => {'assetId': assetId});
@@ -402,13 +532,9 @@ class MediaWriter {
     return MediaWriteResult(restored ? MediaWriteOutcome.restored : MediaWriteOutcome.unchanged, assetId: assetId);
   }
 
-  static Future<String> _temp(String assetId, Uint8List bytes) async {
-    final file = File(p.join((await getTemporaryDirectory()).path, 'media_replace_$assetId'));
+  static Future<String> _temp(String assetId, Uint8List bytes, {String extension = ''}) async {
+    final file = File(p.join((await getTemporaryDirectory()).path, 'media_replace_$assetId$extension'));
     await file.writeAsBytes(bytes, flush: true);
     return file.path;
   }
-
-  static void _clearImageCache() => PaintingBinding.instance.imageCache
-    ..clear()
-    ..clearLiveImages();
 }
