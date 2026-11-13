@@ -11,10 +11,13 @@ import 'package:immich_mobile/domain/models/asset/base_asset.model.dart';
 import 'package:immich_mobile/domain/models/device_plugin.model.dart';
 import 'package:immich_mobile/domain/services/offline_user.service.dart';
 import 'package:immich_mobile/infrastructure/plugins/device_plugin_store.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/data/media_writer.dart';
 import 'package:immich_mobile/infrastructure/plugins/plugin_host_extras.dart';
 import 'package:immich_mobile/infrastructure/plugins/plugin_runtime.dart';
 import 'package:immich_mobile/infrastructure/repositories/app_album.repository.dart';
+import 'package:immich_mobile/infrastructure/repositories/device_album.repository.dart';
 import 'package:immich_mobile/infrastructure/repositories/device_edit.repository.dart';
+import 'package:immich_mobile/infrastructure/repositories/device_tag.repository.dart';
 import 'package:logging/logging.dart';
 import 'package:photo_manager/photo_manager.dart' hide AssetType;
 
@@ -50,7 +53,14 @@ class DeviceWorkflowEngine {
   final PluginRuntime _runtime;
   final DeviceEditRepository _edits;
   final AppAlbumRepository _albums;
+
+  /// Replaces device photos for `writeImage` (keeps the original, makes the result the edit base).
+  final MediaWriter? mediaWriter;
+
+  /// Device tags (`bulkTagAssets`, AssetV1 `tags`).
+  final DeviceTagRepository? tagRepository;
   final _log = Logger('DeviceWorkflowEngine');
+  StreamSubscription<String>? _createdSubscription;
 
   final Map<String, DevicePlugin> _loaded = {};
   final List<DeviceWorkflowRun> recentRuns = [];
@@ -59,9 +69,26 @@ class DeviceWorkflowEngine {
   bool _pending = false;
   Future<void>? _ready;
 
-  DeviceWorkflowEngine(this._db, this._store, this._runtime, this._edits, this._albums) {
+  DeviceWorkflowEngine(
+    this._db,
+    this._store,
+    this._runtime,
+    this._edits,
+    this._albums, {
+    this.mediaWriter,
+    this.tagRepository,
+  }) {
     _runtime.hostHandler = _handleHostCall;
     _runtime.eventHandler = (plugin, name, payload) => _performUi(plugin, {'type': name, ...?_decodeMap(payload)});
+    // Items the app itself writes (copies, saves) are not "new photos" for workflows.
+    _createdSubscription = MediaWriter.created.listen((id) => unawaited(_markCreated(id)));
+  }
+
+  /// Stops watching the database and the media writer.
+  Future<void> dispose() async {
+    _debounce?.cancel();
+    await _watch?.cancel();
+    await _createdSubscription?.cancel();
   }
 
   Stream<void> get changes => _changes.stream;
@@ -93,8 +120,29 @@ class DeviceWorkflowEngine {
 
   Future<void> _initialize() async {
     await _store.installFromDropFolder();
+    await _importLegacyTags();
     await reload();
     unawaited(emit('app.start', const {}));
+  }
+
+  /// Moves tags kept in `engine.json` (before device tags existed) into [DeviceTagRepository], once.
+  Future<void> _importLegacyTags() async {
+    final tags = tagRepository;
+    if (tags == null) {
+      return;
+    }
+    try {
+      final state = await _store.readJson(_engineStateFile);
+      final legacy = state['tags'];
+      if (legacy is! Map || legacy.isEmpty) {
+        return;
+      }
+      await tags.importAssetTags({for (final MapEntry(:key, :value) in legacy.entries) '$key': _strings(value)});
+      final latest = await _store.readJson(_engineStateFile)..remove('tags');
+      await _store.writeJson(_engineStateFile, latest);
+    } catch (error, stack) {
+      _log.warning('Unable to import plugin tags', error, stack);
+    }
   }
 
   Future<List<DevicePlugin>> plugins() => _store.list();
@@ -296,6 +344,21 @@ class DeviceWorkflowEngine {
   Future<Map<String, dynamic>> _writeImage(String assetId, Map<String, dynamic> image) async {
     final asset = await _localAsset(assetId);
     final bytes = await PluginHostExtras.decodePixels(image, png: _edits.replacesAsPng(asset));
+    final writer = mediaWriter;
+    if (writer != null) {
+      final pixels = image['encoded'] is! String;
+      try {
+        final written = await writer.replace(
+          assetId,
+          bytes: bytes,
+          width: pixels ? (image['width'] as num?)?.toInt() : null,
+          height: pixels ? (image['height'] as num?)?.toInt() : null,
+        );
+        return {'assetId': written.assetId ?? assetId, 'outcome': written.outcome.name, 'createdId': written.createdId};
+      } on MediaWriteException catch (error) {
+        throw HostFunctionException(error.status, error.message);
+      }
+    }
     final DeviceEditResult result;
     if (_edits.replaceFormat(asset) != null) {
       final temp = File(
@@ -482,7 +545,7 @@ class DeviceWorkflowEngine {
   Future<List<LocalAsset>> _assetsAfter(int watermark) {
     final query = _db.localAssetEntity.select()
       ..where((row) => CustomExpression<bool>('CAST(id AS INTEGER) > $watermark'))
-      ..orderBy([(row) => OrderingTerm.asc(CustomExpression<int>('CAST(id AS INTEGER)'))])
+      ..orderBy([(row) => OrderingTerm.asc(const CustomExpression<int>('CAST(id AS INTEGER)'))])
       ..limit(_batchSize);
     return query.map((row) => row.toDto()).get();
   }
@@ -719,12 +782,8 @@ class DeviceWorkflowEngine {
   Future<void> _applyChanges(LocalAsset asset, Map<String, dynamic> changes) async {
     final favorite = changes['isFavorite'];
     if (favorite is bool && favorite != asset.isFavorite) {
-      final entity = await AssetEntity.fromId(asset.id);
-      if (entity != null) {
-        Platform.isAndroid
-            ? await PhotoManager.editor.android.favoriteAsset(entity: entity, favorite: favorite)
-            : await PhotoManager.editor.darwin.favoriteAsset(entity: entity, favorite: favorite);
-      }
+      // through the data layer so `asset.favorite` hooks and `asset.favorited` events see it
+      await const DeviceAlbumRepository().setFavoriteByIds([asset.id], favorite);
     }
     if (changes['visibility'] != null && changes['visibility'] != 'timeline') {
       _log.info('Visibility "${changes['visibility']}" is not available on the device; ignoring for ${asset.name}');
@@ -854,32 +913,44 @@ class DeviceWorkflowEngine {
   }
 
   Future<List<String>> _tagsFor(String assetId) async {
+    final tags = tagRepository;
+    if (tags != null) {
+      return [for (final tag in await tags.forAsset(assetId)) tag.value];
+    }
     final state = await _store.readJson(_engineStateFile);
-    final tags = state['tags'];
-    return tags is Map ? _strings(tags[assetId]) : const [];
+    final legacy = state['tags'];
+    return legacy is Map ? _strings(legacy[assetId]) : const [];
   }
 
   Future<List<String>> knownTags() async {
+    final tags = tagRepository;
+    if (tags != null) {
+      return [for (final tag in await tags.all()) tag.value];
+    }
     final state = await _store.readJson(_engineStateFile);
-    final tags = state['tags'];
-    if (tags is! Map) {
+    final legacy = state['tags'];
+    if (legacy is! Map) {
       return const [];
     }
-    return tags.values.expand(_strings).toSet().toList()..sort();
+    return legacy.values.expand(_strings).toSet().toList()..sort();
   }
 
   Future<Map<String, dynamic>> _bulkTag(List<String> tagIds, List<String> assetIds) async {
+    final tags = tagRepository;
+    if (tags != null) {
+      return {'count': await tags.assign(assetIds, tagIds)};
+    }
     final state = await _store.readJson(_engineStateFile);
-    final tags = state['tags'] is Map ? Map<String, dynamic>.from(state['tags'] as Map) : <String, dynamic>{};
+    final legacy = state['tags'] is Map ? Map<String, dynamic>.from(state['tags'] as Map) : <String, dynamic>{};
     var count = 0;
     for (final assetId in assetIds) {
-      final current = _strings(tags[assetId]).toSet();
+      final current = _strings(legacy[assetId]).toSet();
       final before = current.length;
       current.addAll(tagIds);
       count += current.length - before;
-      tags[assetId] = current.toList();
+      legacy[assetId] = current.toList();
     }
-    state['tags'] = tags;
+    state['tags'] = legacy;
     await _store.writeJson(_engineStateFile, state);
     return {'count': count};
   }

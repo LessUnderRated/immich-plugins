@@ -21,6 +21,13 @@ import app.alextran.immich.plugins.PluginJson.str
 import org.json.JSONObject
 import java.io.File
 import java.io.IOException
+import java.time.Instant
+import java.time.LocalDateTime
+import java.time.OffsetDateTime
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import java.time.format.DateTimeParseException
+import java.util.Locale
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
@@ -208,6 +215,144 @@ internal object PluginMedia {
       copyExif(context, uri, exifSource, options.intOrNull("width"), options.intOrNull("height"))
     }
     return JSONObject().put("id", id).put("uri", uri.toString()).put("replaced", true).put("backupPath", backup?.absolutePath)
+  }
+
+  /**
+   * Changes the date, location and/or description of device assets [items] (id to isVideo). [fields]: `dateTime`
+   * (ISO 8601; its offset is kept, none means device time zone) or `dateTakenMs`, `latitude` + `longitude`,
+   * `description`. Photos: EXIF (JPEG, PNG, WebP; other formats only get the MediaStore columns), which the gallery
+   * re-reads. Photos and videos: MediaStore DATE_TAKEN and DESCRIPTION where Android accepts the update. Video
+   * locations cannot be changed. Asks the user for write access when needed. [callback] gets the number of items
+   * changed, or the error.
+   */
+  fun updateMetadata(context: Context, items: List<Pair<String, Boolean>>, fields: JSONObject, callback: (Int?, Throwable?) -> Unit) {
+    updateMetadata(context, items, fields, allowPrompt = true, callback)
+  }
+
+  private fun updateMetadata(
+    context: Context,
+    items: List<Pair<String, Boolean>>,
+    fields: JSONObject,
+    allowPrompt: Boolean,
+    callback: (Int?, Throwable?) -> Unit,
+  ) {
+    PluginRuntime.executor.execute {
+      val uris = try {
+        items.map { (id, video) -> uri(id, video) }
+      } catch (error: Throwable) {
+        callback(null, error)
+        return@execute
+      }
+      try {
+        callback(updateMetadataNow(context, items.map { it.second }.zip(uris), fields), null)
+      } catch (error: SecurityException) {
+        if (!allowPrompt) {
+          callback(null, error)
+          return@execute
+        }
+        requestWriteAccess(context, uris, error) { granted ->
+          if (granted) {
+            updateMetadata(context, items, fields, allowPrompt = false, callback)
+          } else {
+            callback(null, SecurityException("Permission to modify the items was denied"))
+          }
+        }
+      } catch (error: Throwable) {
+        callback(null, error)
+      }
+    }
+  }
+
+  private fun updateMetadataNow(context: Context, items: List<Pair<Boolean, Uri>>, fields: JSONObject): Int {
+    val date = exifDate(fields.str("dateTime"), fields.longOrNull("dateTakenMs"))
+    val latitude = if (fields.has("latitude") && !fields.isNull("latitude")) fields.optDouble("latitude") else null
+    val longitude = if (fields.has("longitude") && !fields.isNull("longitude")) fields.optDouble("longitude") else null
+    val location = if (latitude != null && longitude != null && !latitude.isNaN() && !longitude.isNaN()) latitude to longitude else null
+    val description = fields.str("description")
+    val resolver = context.contentResolver
+    var changed = 0
+    for ((video, uri) in items) {
+      var itemChanged = false
+      if (!video && (date != null || location != null || description != null)) {
+        itemChanged = writeExif(context, uri, date, location, description)
+      }
+      val values = ContentValues()
+      if (date != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+        values.put(MediaStore.MediaColumns.DATE_TAKEN, date.third)
+      }
+      if (description != null) {
+        values.put(if (video) MediaStore.Video.VideoColumns.DESCRIPTION else MediaStore.Images.ImageColumns.DESCRIPTION, description)
+      }
+      if (values.size() > 0) {
+        try {
+          if (resolver.update(uri, values, null, null) > 0) {
+            itemChanged = true
+          }
+        } catch (error: SecurityException) {
+          throw error
+        } catch (_: Throwable) {
+          // Columns this Android version does not let apps write.
+        }
+      }
+      if (itemChanged) {
+        changed++
+      }
+    }
+    return changed
+  }
+
+  /** (EXIF local date time, EXIF offset, epoch ms) for [dateTime] (ISO 8601) or [dateTakenMs]. */
+  private fun exifDate(dateTime: String?, dateTakenMs: Long?): Triple<String, String, Long>? {
+    val parsed: OffsetDateTime = dateTime?.let { text ->
+      try {
+        OffsetDateTime.parse(text)
+      } catch (_: DateTimeParseException) {
+        try {
+          LocalDateTime.parse(text).atZone(ZoneId.systemDefault()).toOffsetDateTime()
+        } catch (_: DateTimeParseException) {
+          null
+        }
+      }
+    } ?: dateTakenMs?.let { Instant.ofEpochMilli(it).atZone(ZoneId.systemDefault()).toOffsetDateTime() } ?: return null
+    val offset = parsed.offset.id.let { if (it == "Z") "+00:00" else it }
+    val local = parsed.format(DateTimeFormatter.ofPattern("yyyy:MM:dd HH:mm:ss", Locale.US))
+    return Triple(local, offset, parsed.toInstant().toEpochMilli())
+  }
+
+  /** True when the EXIF was written; false for formats ExifInterface cannot save. Throws SecurityException. */
+  private fun writeExif(
+    context: Context,
+    uri: Uri,
+    date: Triple<String, String, Long>?,
+    location: Pair<Double, Double>?,
+    description: String?,
+  ): Boolean {
+    val descriptor = context.contentResolver.openFileDescriptor(uri, "rw") ?: return false
+    return descriptor.use {
+      try {
+        val exif = ExifInterface(it.fileDescriptor)
+        if (date != null) {
+          for (tag in listOf(ExifInterface.TAG_DATETIME_ORIGINAL, ExifInterface.TAG_DATETIME_DIGITIZED, ExifInterface.TAG_DATETIME)) {
+            exif.setAttribute(tag, date.first)
+          }
+          for (tag in listOf(ExifInterface.TAG_OFFSET_TIME_ORIGINAL, ExifInterface.TAG_OFFSET_TIME_DIGITIZED, ExifInterface.TAG_OFFSET_TIME)) {
+            exif.setAttribute(tag, date.second)
+          }
+        }
+        if (location != null) {
+          exif.setLatLong(location.first, location.second)
+        }
+        if (description != null) {
+          exif.setAttribute(ExifInterface.TAG_IMAGE_DESCRIPTION, description)
+        }
+        exif.saveAttributes()
+        true
+      } catch (_: IOException) {
+        false
+      } catch (_: UnsupportedOperationException) {
+        false
+      }
+    }
   }
 
   /** Asks the user to allow writing [uris] (Android 10+); [callback] on the main thread. */

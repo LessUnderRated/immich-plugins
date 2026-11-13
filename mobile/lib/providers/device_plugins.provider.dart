@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:immich_mobile/domain/models/device_plugin.model.dart';
 import 'package:immich_mobile/infrastructure/plugins/censor_styles.dart';
@@ -7,6 +9,8 @@ import 'package:immich_mobile/infrastructure/plugins/plugin_runtime.dart';
 import 'package:immich_mobile/infrastructure/repositories/device_edit.repository.dart';
 import 'package:immich_mobile/providers/app_album.provider.dart';
 import 'package:immich_mobile/providers/infrastructure/db.provider.dart';
+import 'package:immich_mobile/providers/infrastructure/device_tag.provider.dart';
+import 'package:immich_mobile/providers/infrastructure/media_writer.provider.dart';
 
 final Provider<DeviceEditRepository> deviceEditRepositoryProvider = Provider<DeviceEditRepository>((ref) {
   ref.keepAlive();
@@ -18,13 +22,17 @@ final Provider<DeviceEditRepository> deviceEditRepositoryProvider = Provider<Dev
 
 final Provider<DeviceWorkflowEngine> deviceWorkflowEngineProvider = Provider<DeviceWorkflowEngine>((ref) {
   ref.keepAlive();
-  return DeviceWorkflowEngine(
+  final engine = DeviceWorkflowEngine(
     ref.watch(driftProvider),
     DevicePluginStore(),
     PluginRuntime(),
     ref.watch(deviceEditRepositoryProvider),
     ref.watch(appAlbumRepositoryProvider),
+    mediaWriter: ref.watch(mediaWriterProvider),
+    tagRepository: ref.watch(deviceTagRepositoryProvider),
   );
+  ref.onDispose(() => unawaited(engine.dispose()));
+  return engine;
 });
 
 final Provider<CensorStyles> censorStylesProvider = Provider<CensorStyles>(

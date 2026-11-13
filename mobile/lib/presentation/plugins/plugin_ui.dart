@@ -640,12 +640,19 @@ Future<void> runPluginSlotItem(
   }
 }
 
-/// Overlays over the photo / video viewer (`viewer` slot): native views get `params.asset` (AssetV1), JSON UI gets
-/// the asset as event context.
+/// Overlays over the photo / video viewer: slot `viewer.overlay` and the legacy `viewer` slot. Native views get
+/// `params.asset` (AssetV1); JSON UI gets the asset and the slot context as event context; `when` sees the context. The context has `asset`
+/// fields, `frame` (`{ left, top, width, height }` of the shown image / video frame in logical pixels, when known)
+/// and `zoomed`.
 class PluginViewerOverlays extends ConsumerStatefulWidget {
-  final BaseAsset asset;
+  /// Slot ids served (new first, legacy second).
+  static const slots = ['viewer.overlay', 'viewer'];
 
-  const PluginViewerOverlays({super.key, required this.asset});
+  final BaseAsset asset;
+  final Rect? frame;
+  final bool zoomed;
+
+  const PluginViewerOverlays({super.key, required this.asset, this.frame, this.zoomed = false});
 
   @override
   ConsumerState<PluginViewerOverlays> createState() => _PluginViewerOverlaysState();
@@ -653,6 +660,9 @@ class PluginViewerOverlays extends ConsumerStatefulWidget {
 
 class _PluginViewerOverlaysState extends ConsumerState<PluginViewerOverlays> {
   Map<String, dynamic>? _asset;
+  BaseAsset? _loadedFor;
+
+  bool _hasOverlays(PluginKernel kernel) => PluginViewerOverlays.slots.any(kernel.hasSlot);
 
   @override
   void initState() {
@@ -670,11 +680,13 @@ class _PluginViewerOverlaysState extends ConsumerState<PluginViewerOverlays> {
 
   Future<void> _load() async {
     final kernel = ref.read(pluginKernelProvider);
-    if (!kernel.hasSlot('viewer')) {
+    final asset = widget.asset;
+    if (!_hasOverlays(kernel) || identical(_loadedFor, asset)) {
       return;
     }
-    final json = await kernel.assetJson(widget.asset);
-    if (mounted) {
+    _loadedFor = asset;
+    final json = await kernel.assetJson(asset);
+    if (mounted && identical(widget.asset, asset)) {
       setState(() => _asset = json);
     }
   }
@@ -682,33 +694,43 @@ class _PluginViewerOverlaysState extends ConsumerState<PluginViewerOverlays> {
   @override
   Widget build(BuildContext context) {
     final kernel = ref.watch(pluginKernelProvider);
-    if (!kernel.hasSlot('viewer')) {
+    if (!_hasOverlays(kernel)) {
       return const SizedBox.shrink();
     }
-    final overlays = kernel
-        .slot('viewer', context: PluginKernel.assetContext([widget.asset]))
-        .where((item) => item.kind == PluginSlotKind.overlay)
-        .toList();
+    final frame = widget.frame;
+    final slotContext = {
+      ...PluginKernel.assetContext([widget.asset]),
+      'zoomed': widget.zoomed,
+      if (frame != null)
+        'frame': {'left': frame.left, 'top': frame.top, 'width': frame.width, 'height': frame.height},
+    };
+    final overlays = [
+      for (final slot in PluginViewerOverlays.slots)
+        for (final item in kernel.slot(slot, context: slotContext))
+          if (item.kind == PluginSlotKind.overlay || item.kind == PluginSlotKind.view || item.kind == PluginSlotKind.wrap)
+            item,
+    ];
     final asset = _asset;
     if (overlays.isEmpty) {
       return const SizedBox.shrink();
     }
     if (asset == null) {
-      if (_asset == null) {
-        unawaited(_load());
-      }
+      unawaited(_load());
       return const SizedBox.shrink();
     }
+    final context = {...slotContext, 'asset': asset};
     return Stack(
       children: [
         for (final overlay in overlays)
           if (overlay.view != null)
             Positioned.fill(
+              key: ValueKey('${overlay.key}#view'),
               child: IgnorePointer(
                 ignoring: !overlay.interactive,
                 child: PluginView(
                   plugin: overlay.plugin,
                   view: overlay.view!,
+                  // frame / zoomed change while viewing; they stay out of the params so the view is not recreated
                   params: {...overlay.params, 'asset': asset},
                   composition: overlay.composition,
                   interactive: overlay.interactive,
@@ -717,23 +739,74 @@ class _PluginViewerOverlaysState extends ConsumerState<PluginViewerOverlays> {
             )
           else if (overlay.ui != null || overlay.uiMethod != null)
             Positioned.fill(
+              key: ValueKey('${overlay.key}#ui'),
               child: IgnorePointer(
                 ignoring: !overlay.interactive,
                 child: Material(
                   type: MaterialType.transparency,
-                  child: PluginUiView(
-                    plugin: overlay.plugin,
-                    ui: overlay.ui,
-                    method: overlay.uiMethod,
-                    page: overlay.id,
-                    params: overlay.params,
-                    eventContext: {'asset': asset},
-                    surface: '${overlay.surfaceId}#${asset['id']}',
-                  ),
+                  child: overlay.uiMethod != null && overlay.ui == null
+                      ? _SlotOverlayContent(item: overlay, slotContext: context, asset: widget.asset)
+                      : PluginUiView(
+                          plugin: overlay.plugin,
+                          ui: overlay.ui,
+                          method: overlay.method ?? overlay.uiMethod,
+                          page: overlay.id,
+                          params: overlay.params,
+                          eventContext: context,
+                          surface: PluginKernel.slotSurfaceId(overlay, slotContext),
+                        ),
                 ),
               ),
             ),
       ],
+    );
+  }
+}
+
+/// `uiMethod` overlay content (fetched with `SlotV1` per asset and cached like other slot content).
+class _SlotOverlayContent extends ConsumerStatefulWidget {
+  final SlotContribution item;
+  final Map<String, dynamic> slotContext;
+  final BaseAsset asset;
+
+  const _SlotOverlayContent({required this.item, required this.slotContext, required this.asset});
+
+  @override
+  ConsumerState<_SlotOverlayContent> createState() => _SlotOverlayContentState();
+}
+
+class _SlotOverlayContentState extends ConsumerState<_SlotOverlayContent> {
+  Future<void>? _pending;
+
+  @override
+  Widget build(BuildContext context) {
+    final kernel = ref.watch(pluginKernelProvider);
+    // content is cached per asset, not per frame position or zoom
+    final cacheContext = {...widget.slotContext}
+      ..remove('asset')
+      ..remove('frame')
+      ..remove('zoomed');
+    if (!kernel.isSlotUiResolved(widget.item, context: cacheContext)) {
+      _pending ??= kernel.slotUi(widget.item, context: cacheContext, assets: [widget.asset]).then((_) {
+        _pending = null;
+        if (mounted) {
+          setState(() {});
+        }
+      });
+      return const SizedBox.shrink();
+    }
+    final ui = kernel.cachedSlotUi(widget.item, context: cacheContext);
+    if (ui == null) {
+      return const SizedBox.shrink();
+    }
+    return PluginUiView(
+      plugin: widget.item.plugin,
+      ui: ui,
+      method: widget.item.method ?? widget.item.uiMethod,
+      page: widget.item.id,
+      params: widget.item.params,
+      eventContext: widget.slotContext,
+      surface: PluginKernel.slotSurfaceId(widget.item, cacheContext),
     );
   }
 }

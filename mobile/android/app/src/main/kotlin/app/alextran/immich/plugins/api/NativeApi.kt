@@ -245,6 +245,12 @@ interface NativeMedia {
 
   /** Overwrites device asset [assetId] with [source] (asks the user for write access when needed). See `replaceMedia`. */
   fun replace(assetId: String, video: Boolean, source: File, optionsJson: String, callback: ResultCallback)
+
+  /**
+   * Changes date, location and/or description of device asset [assetId]. [fieldsJson]: `{ dateTime? (ISO 8601) |
+   * dateTakenMs?, latitude?, longitude?, description? }`. Result: the number of items changed (0 or 1).
+   */
+  fun updateMetadata(assetId: String, video: Boolean, fieldsJson: String, callback: ResultCallback)
 }
 
 // ---- platform views ---------------------------------------------------------------------------------------------

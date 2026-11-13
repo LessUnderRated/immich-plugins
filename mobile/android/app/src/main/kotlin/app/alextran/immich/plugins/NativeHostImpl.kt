@@ -200,6 +200,16 @@ class NativeHostImpl internal constructor(override val pluginName: String) : Nat
         }
         guard("media callback") { callback.onResult(envelope) }
       }
+
+    override fun updateMetadata(assetId: String, video: Boolean, fieldsJson: String, callback: ResultCallback) =
+      PluginMedia.updateMetadata(context, listOf(assetId to video), PluginJson.obj(fieldsJson)) { count, error ->
+        val envelope = when {
+          count != null -> PluginJson.ok(count.toString())
+          error is SecurityException -> PluginJson.error(403, error.message ?: error.toString())
+          else -> PluginJson.error(500, error?.message ?: "Changing the metadata failed")
+        }
+        guard("media callback") { callback.onResult(envelope) }
+      }
   }
 
   // ---- video and views ------------------------------------------------------------------------------------------
@@ -212,6 +222,12 @@ class NativeHostImpl internal constructor(override val pluginName: String) : Nat
       PluginVideoSessions.get(sessionId)?.let { ScopedVideoSession(pluginName, it) }
 
     override fun addListener(listener: VideoSessionsListener): Registration = PluginVideoSessions.addListener(pluginName, listener)
+
+    override fun extractFrame(timeMs: Long, optionsJson: String, callback: ResultCallback) =
+      PluginVideoSessions.extractFrame(timeMs, PluginJson.obj(optionsJson)) { json, error ->
+        val envelope = if (json != null) PluginJson.ok(json.toString()) else PluginJson.error(500, error ?: "Frame extraction failed")
+        guard("frame callback") { callback.onResult(envelope) }
+      }
   }
 
   override val views: NativeViews = object : NativeViews {

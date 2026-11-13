@@ -139,14 +139,30 @@ class DeviceMediaWriter(private val activity: ComponentActivity, messenger: Bina
         }
       }
 
-      "replaceMedia" -> {
+      "replaceMedia", "overwriteMedia" -> {
         val id = call.argument<String>("id")!!
         val source = File(call.argument<String>("sourcePath")!!)
         val video = call.argument<Boolean>("video") ?: false
+        val overwrite = call.method == "overwriteMedia"
         PluginMedia.replace(activity.applicationContext, id, video, source, mediaOptions(call)) { replaced, error ->
           mainHandler.post {
             when {
-              replaced != null -> result.success(PluginJson.fromJson(replaced))
+              replaced != null -> result.success(if (overwrite) true else PluginJson.fromJson(replaced))
+              error is SecurityException -> result.error("write_denied", error.message ?: error.toString(), null)
+              else -> result.error("write_failed", error?.message ?: error?.toString() ?: "Unknown error", null)
+            }
+          }
+        }
+      }
+
+      "updateMetadata" -> {
+        val items = (call.argument<List<Map<String, Any?>>>("items") ?: emptyList()).map { item ->
+          (item["id"] as String) to (item["video"] == true)
+        }
+        PluginMedia.updateMetadata(activity.applicationContext, items, mediaOptions(call, "items")) { count, error ->
+          mainHandler.post {
+            when {
+              count != null -> result.success(count)
               error is SecurityException -> result.error("write_denied", error.message ?: error.toString(), null)
               else -> result.error("write_failed", error?.message ?: error?.toString() ?: "Unknown error", null)
             }
@@ -158,10 +174,10 @@ class DeviceMediaWriter(private val activity: ComponentActivity, messenger: Bina
     }
   }
 
-  /** Every argument except the source and id, as the JSON options of [PluginMedia]. */
-  private fun mediaOptions(call: MethodCall): org.json.JSONObject {
+  /** Every argument except the source, id, video flag and [exclude], as the JSON options of [PluginMedia]. */
+  private fun mediaOptions(call: MethodCall, vararg exclude: String): org.json.JSONObject {
     val arguments = call.arguments as? Map<*, *> ?: emptyMap<String, Any?>()
-    val options = arguments.filterKeys { it != "sourcePath" && it != "id" && it != "video" }
+    val options = arguments.filterKeys { it != "sourcePath" && it != "id" && it != "video" && it !in exclude }
     return PluginJson.toJson(options) as org.json.JSONObject
   }
 

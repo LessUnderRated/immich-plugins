@@ -209,6 +209,7 @@ class PluginKernel extends ChangeNotifier {
   /// Bumps whenever the set of hook handlers changes (plugins enabled, disabled, installed, updated).
   final hooksRevision = ValueNotifier<int>(0);
   final _hookChanges = StreamController<Set<String>>.broadcast();
+  final _unloaded = StreamController<String>.broadcast();
   Map<String, int> _hookSignatures = const {};
 
   var _indexed = false;
@@ -244,6 +245,17 @@ class PluginKernel extends ChangeNotifier {
   bool get isReady => _indexed;
 
   Future<Directory> _root() async => Directory(await engine.pluginsRoot());
+
+  /// A plugin's private data folder (created if missing): the folder `readFile` / `writeFile` / `getStorage` and
+  /// `assetData` use; relative plugin paths resolve inside it.
+  Future<Directory> pluginDataDir(String plugin) async {
+    final directory = Directory(p.join((await _root()).path, 'data', plugin));
+    await directory.create(recursive: true);
+    return directory;
+  }
+
+  /// Names of plugins that were disabled, uninstalled or replaced (stop their downloads, timers, ...).
+  Stream<String> get pluginUnloaded => _unloaded.stream;
 
   // ---------------------------------------------------------------------------------------------------------------
   // Index
@@ -339,7 +351,11 @@ class PluginKernel extends ChangeNotifier {
     tools.sort((a, b) => byOrder(a.order, a.plugin, a.index, b.order, b.plugin, b.index));
     tabs.sort((a, b) => byOrder(a.order, a.plugin, a.index, b.order, b.plugin, b.index));
 
-    for (final plugin in _plugins.map((plugin) => plugin.name).where((name) => !names.contains(name))) {
+    final unloaded = [
+      for (final plugin in _plugins)
+        if (!names.contains(plugin.name)) plugin.name,
+    ];
+    for (final plugin in unloaded) {
       tasks.abandon(plugin);
       _runtimeThemes.remove(plugin);
     }
@@ -385,6 +401,7 @@ class PluginKernel extends ChangeNotifier {
       hooksRevision.value++;
       _hookChanges.add(changedHooks);
     }
+    unloaded.forEach(_unloaded.add);
     if (firstIndex) {
       final early = List.of(_earlyEvents);
       _earlyEvents.clear();
@@ -675,7 +692,7 @@ class PluginKernel extends ChangeNotifier {
         'context': slotContext(item.slot, context),
         if (assets.isNotEmpty) 'assets': [for (final asset in assets) await assetJson(asset)],
       }, config: item.params);
-      await perform(item.plugin, response, context: origin?.context);
+      await perform(item.plugin, _withMethod(response, method), context: origin?.context);
       return;
     }
     if (item.isToggle) {
@@ -740,6 +757,19 @@ class PluginKernel extends ChangeNotifier {
 
   /// Hook ids whose handlers changed in the last re-index, each time the set changes (see also [hooksRevision]).
   Stream<Set<String>> get hookChanges => _hookChanges.stream;
+
+  /// Identifies the handlers of [hookId]: `plugin@version:phase` per handler, comma separated, empty without
+  /// handlers. Changes whenever a handler is added, removed or its plugin updated (use it in cache keys).
+  String hookSignature(String hookId) {
+    if (!hasHook(hookId)) {
+      return '';
+    }
+    final versions = {for (final plugin in _plugins) plugin.name: plugin.version};
+    return [
+      for (final handler in _handlersOf(hookId))
+        '${handler.plugin}@${versions[handler.plugin] ?? '?'}:${handler.phase.name}',
+    ].join(',');
+  }
 
   /// Whether a handler of [hookId] applies to a call with [args] (its manifest `when` matches them).
   bool hasHookFor(String hookId, Map<String, dynamic> args) =>
@@ -941,7 +971,7 @@ class PluginKernel extends ChangeNotifier {
         workflow: {'id': 'event', 'stepId': event},
         timeout: defaultEventTimeout,
       );
-      await perform(subscription.plugin, response);
+      await perform(subscription.plugin, _withMethod(response, subscription.method));
     } catch (error, stack) {
       _log.warning('Plugin ${subscription.plugin} failed on $event', error, stack);
     }
@@ -1053,6 +1083,12 @@ class PluginKernel extends ChangeNotifier {
 
   /// Finds a local or remote asset by id.
   Future<BaseAsset?> findAsset(String id) => engine.findAsset(id);
+
+  /// A response whose `ui` opens as a sheet sends that sheet's UI events to [method] unless it names another.
+  static Map<String, dynamic>? _withMethod(Map<String, dynamic>? response, String method) =>
+      response == null || response['ui'] == null || response.containsKey('method')
+      ? response
+      : {...response, 'method': method};
 
   /// Performs a plugin response: `ui` opens as a sheet, `actions` run as commands, `message` shows as a toast.
   Future<void> perform(String plugin, Map<String, dynamic>? response, {BuildContext? context}) async {
@@ -1590,6 +1626,7 @@ class PluginKernel extends ChangeNotifier {
     }
     hooksRevision.dispose();
     unawaited(_hookChanges.close());
+    unawaited(_unloaded.close());
     engine
       ..hostLookup = null
       ..eventBus = null

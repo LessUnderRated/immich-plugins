@@ -6,13 +6,23 @@ import android.graphics.Rect
 import android.view.View
 import android.view.ViewGroup
 
-/** Video sessions: every video the app plays (viewer, memories, slideshow, ...) while it is on screen. */
+/**
+ * Video sessions: the videos the app plays (viewer, memories, slideshow, ...). The app registers a player natively
+ * when something needs it (a capture, a native overlay) and, while any plugin has a [VideoSessionsListener], every
+ * player as soon as it exists.
+ */
 interface NativeVideo {
   val sessions: List<VideoSession>
 
   fun session(sessionId: String): VideoSession?
 
   fun addListener(listener: VideoSessionsListener): Registration
+
+  /**
+   * Decodes the frame at [timeMs] of a video without a player. [optionsJson]: `{ path? | url? + headers? | localId?,
+   * width?, height?, format?: rgba|png|jpeg, quality? }`. Result `{ path, width, height, format, positionMs }`.
+   */
+  fun extractFrame(timeMs: Long, optionsJson: String, callback: ResultCallback)
 }
 
 /** Main thread. */
@@ -29,14 +39,29 @@ interface VideoSessionsListener {
 interface VideoSession {
   val sessionId: String
 
-  /** Asset id (local or remote) of the video, if the app knows it. */
+  /** Asset id of the video (the app's id: remote id for server assets, local id otherwise). */
   val assetId: String?
+
+  /** Device (MediaStore) id, if the video is on the device. */
+  val localId: String?
+
+  /** Server id, if the video is on the server. */
+  val remoteId: String?
+
+  /** The app surface playing it: `viewer`, `slideshow`, `memory`, ... */
+  val appSurface: String?
 
   /** Flutter platform view id of the player. */
   val viewId: Int
 
   /** False after the session ended. */
   val isActive: Boolean
+
+  /** `loading`, `ready`, `playing`, `paused`, `buffering`, `completed` or `error`. */
+  val state: String
+
+  /** 0..1. */
+  val volume: Double
 
   /** Playback position, extrapolated from the last update while playing. */
   val positionMs: Long
@@ -89,7 +114,7 @@ interface VideoSession {
 
   fun addListener(listener: VideoSessionListener): Registration
 
-  /** Playback control, carried out by the app's player. */
+  /** Playback control, carried out by the app's player (the `video.*` host functions); asynchronous. */
   fun play()
 
   fun pause()
@@ -116,9 +141,9 @@ fun interface FrameCallback {
 }
 
 /**
- * Optional interface for the plugin entry class: creates the native views the app attaches over a video (the Dart
- * side's `attachOverlay`, used for plugin overlay contributions on video). Without it, [ImmichViewPlugin.createView]
- * is used with `params.session = { "id", "assetId", "viewId" }`.
+ * Optional interface for the plugin entry class: creates the native views the app attaches over a video
+ * (`video.nativeOverlay.attach`, `videoPlayer.overlay` view items). Without it, [ImmichViewPlugin.createView] is used.
+ * Either way `params` holds the overlay's own params plus `sessionId`, `assetId`, `viewId` and `overlayId`.
  */
 interface ImmichVideoOverlayPlugin {
   fun createVideoOverlay(context: Context, viewType: String, params: String, session: VideoSession, host: PluginHost): View
