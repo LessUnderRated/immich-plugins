@@ -113,6 +113,12 @@ class _DownloadsRuleDialogState extends ConsumerState<_DownloadsRuleDialog> {
                   onChanged: _selectFolder,
                 ),
                 if (_result != null) Padding(padding: const EdgeInsets.only(top: 12), child: Text(_result!)),
+                ShellList(
+                  slot: ShellSlots.downloadsRuleDialogSections,
+                  items: const [],
+                  slotContext: {'enabled': rule.enabled, 'targetName': rule.targetName},
+                  builder: (context, sections) => Column(mainAxisSize: MainAxisSize.min, children: sections),
+                ),
               ],
             ),
       actions: [

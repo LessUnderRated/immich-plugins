@@ -9,6 +9,7 @@ import 'package:immich_mobile/generated/translations.g.dart';
 import 'package:immich_mobile/infrastructure/plugins/plugin_api/shell/shell_ids.dart';
 import 'package:immich_mobile/models/server_info/server_disk_info.model.dart';
 import 'package:immich_mobile/pages/common/settings.page.dart';
+import 'package:immich_mobile/presentation/plugins/plugin_slot.dart';
 import 'package:immich_mobile/presentation/widgets/shell/shell_list.widget.dart';
 import 'package:immich_mobile/providers/auth.provider.dart';
 import 'package:immich_mobile/providers/backup/backup_server.provider.dart';
@@ -285,7 +286,10 @@ class ImmichAppBarDialog extends HookConsumerWidget {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Container(padding: const EdgeInsets.symmetric(horizontal: 8), child: buildTopRow()),
+                PluginReplaceable(
+                  slot: ShellSlots.profileMenuHeader,
+                  child: Container(padding: const EdgeInsets.symmetric(horizontal: 8), child: buildTopRow()),
+                ),
                 ShellList(
                   slot: ShellSlots.profileMenuSections,
                   items: [

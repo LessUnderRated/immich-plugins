@@ -9,7 +9,13 @@ import 'package:immich_mobile/data/store.dart';
 import 'package:immich_mobile/extensions/build_context_extensions.dart';
 import 'package:immich_mobile/generated/translations.g.dart';
 import 'package:immich_mobile/infrastructure/plugins/plugin_api/shell/shell_ids.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/timeline/builtin_rules.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_kernel.dart';
+import 'package:immich_mobile/presentation/actions/action_slots.dart';
+import 'package:immich_mobile/presentation/plugins/plugin_ui.dart';
+import 'package:immich_mobile/presentation/widgets/shell/shell_list.widget.dart';
 import 'package:immich_mobile/providers/auth.provider.dart';
+import 'package:immich_mobile/providers/plugin_kernel.provider.dart';
 import 'package:immich_mobile/routing/router.dart';
 import 'package:immich_mobile/utils/url_helper.dart';
 import 'package:immich_mobile/widgets/common/immich_logo.dart';
@@ -130,8 +136,16 @@ enum SettingSection {
     SettingSection.advanced => const AdvancedSettings(),
     SettingSection.assetViewer => const AssetViewerSettings(),
     SettingSection.backup => const BackupSettings(),
-    SettingSection.freeUpSpace => const FreeUpSpaceSettings(),
-    SettingSection.languages => const LanguageSettings(),
+    SettingSection.freeUpSpace => const _FullPageItems(
+      entry: SettingsEntryIds.freeUpSpace,
+      id: 'cleanup',
+      child: FreeUpSpaceSettings(),
+    ),
+    SettingSection.languages => const _FullPageItems(
+      entry: SettingsEntryIds.languages,
+      id: 'languageList',
+      child: LanguageSettings(),
+    ),
     SettingSection.networking => const NetworkingSettings(),
     SettingSection.notifications => const NotificationSetting(),
     SettingSection.passkeys => const PasskeySettings(),
@@ -230,9 +244,121 @@ class SettingsGroup {
   );
 }
 
+/// The sections and tiles of the Settings page: the built-ins with plugin rules applied (`settings.sections` and
+/// `settings.<section>.tiles`: hide, order, rename), plugin tiles of those slots, plugin sections (`section` items of
+/// `settings.sections`, filled from `settings.<id>.tiles`) and every plugin settings page (`contributes.settings`) as a
+/// tile of the Plugins section.
+List<SettingsGroup> buildSettingsGroups(BuildContext context, WidgetRef ref, {String? appVersion}) {
+  final kernel = ref.watch(pluginKernelProvider);
+  const slotContext = {'route': 'SettingsRoute'};
+  const tileKinds = {PluginSlotKind.tile, PluginSlotKind.page, PluginSlotKind.button, PluginSlotKind.menuItem};
+
+  double orderOf(int order) => order == SlotContribution.defaultOrder ? builtinRulesLast : order.toDouble();
+  Widget? leading(String? icon) {
+    final data = pluginIconData(icon);
+    return data == null ? null : Icon(data);
+  }
+
+  SettingsEntry fromSlot(SlotContribution item) => SettingsEntry(
+    id: '$builtinRulesPluginPrefix${item.plugin}/${item.id}',
+    title: item.title,
+    subtitle: item.subtitle,
+    icon: Icons.extension_outlined,
+    leading: leading(item.icon),
+    onOpen: (context) => unawaited(runPluginSlotItem(ref, item, slotContext: slotContext, context: context)),
+  );
+
+  List<SettingsEntry> arrange(String groupId, List<SettingsEntry> entries) {
+    final slot = ShellSlots.settingsTiles(groupId);
+    final rules = kernel.builtins(slot);
+    final extra = [
+      if (kernel.hasSlot(slot))
+        for (final item in kernel.slot(slot, context: slotContext))
+          if (tileKinds.contains(item.kind))
+            SlotExtraItem(
+              id: '$builtinRulesPluginPrefix${item.plugin}/${item.id}',
+              item: fromSlot(item),
+              order: orderOf(item.order),
+            ),
+      if (groupId == SettingsSectionIds.plugins)
+        for (final page in kernel.settingsPages)
+          SlotExtraItem(
+            id: '$builtinRulesPluginPrefix${page.plugin}/${page.id}',
+            item: SettingsEntry(
+              id: '$builtinRulesPluginPrefix${page.plugin}/${page.id}',
+              title: page.title,
+              subtitle: page.subtitle,
+              icon: Icons.extension_outlined,
+              leading: leading(page.icon),
+              onOpen: (context) => unawaited(kernel.openSettingsPage(page.plugin, page.id, context: context)),
+            ),
+            order: builtinRulesLast,
+          ),
+    ];
+    final arranged = arrangeSlotItems<SettingsEntry>(
+      entries,
+      (entry) => entry.id,
+      rules: BuiltinItemRules(hide: rules.hide, order: rules.order),
+      extra: extra,
+    );
+    if (rules.rename.isEmpty) {
+      return arranged;
+    }
+    return [
+      for (final entry in arranged)
+        switch (rules.rename[entry.id]) {
+          final String title => SettingsEntry(
+            id: entry.id,
+            title: title,
+            subtitle: entry.subtitle,
+            icon: entry.icon,
+            leading: entry.leading,
+            section: entry.section,
+            onOpen: entry.onOpen,
+            keywords: entry.keywords,
+          ),
+          null => entry,
+        },
+    ];
+  }
+
+  final groups = [
+    for (final group in _builtinSettingsGroups(context, ref, appVersion: appVersion))
+      SettingsGroup(id: group.id, title: group.title, entries: arrange(group.id, group.entries)),
+  ];
+  final sectionRules = kernel.builtins(ShellSlots.settingsSections);
+  final pluginSections = [
+    if (kernel.hasSlot(ShellSlots.settingsSections))
+      for (final item in kernel.slot(ShellSlots.settingsSections, context: slotContext))
+        if (item.kind == PluginSlotKind.section)
+          SlotExtraItem(
+            id: '$builtinRulesPluginPrefix${item.plugin}/${item.id}',
+            item: SettingsGroup(
+              id: '$builtinRulesPluginPrefix${item.plugin}/${item.id}',
+              title: item.title,
+              entries: arrange(item.id, const []),
+            ),
+            order: orderOf(item.order),
+          ),
+  ];
+  return [
+    for (final group in arrangeSlotItems<SettingsGroup>(
+      groups,
+      (group) => group.id,
+      rules: BuiltinItemRules(hide: sectionRules.hide, order: sectionRules.order),
+      extra: pluginSections,
+    ))
+      if (group.entries.isNotEmpty)
+        switch (sectionRules.rename[group.id]) {
+          final String title => SettingsGroup(id: group.id, title: title, entries: group.entries),
+          null => group,
+        },
+  ];
+}
+
 /// The built-in sections and tiles of the Settings page, as relevant right now: server, backup and sync settings
 /// show while signed in to a server or while a server is configured.
-List<SettingsGroup> buildSettingsGroups(BuildContext context, WidgetRef ref, {String? appVersion}) {
+List<SettingsGroup> _builtinSettingsGroups(BuildContext context, WidgetRef ref, {String? appVersion}) {
   final t = context.t;
   final isLoggedIn = ref.watch(authProvider).isAuthenticated;
   final isPasskeyEnabled = ref.watch(Store.passkeys.enabled()).valueOrNull ?? false;
@@ -473,6 +599,10 @@ class _MobileLayout extends HookConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    useEffect(() {
+      PluginKernel.current?.emit(ShellEvents.settingsOpened, const {'route': 'SettingsRoute'});
+      return null;
+    }, const []);
     final controller = useTextEditingController();
     final focusNode = useFocusNode();
     final query = useState('');
@@ -503,6 +633,10 @@ class _TabletLayout extends HookConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    useEffect(() {
+      PluginKernel.current?.emit(ShellEvents.settingsOpened, const {'route': 'SettingsRoute'});
+      return null;
+    }, const []);
     final controller = useTextEditingController();
     final focusNode = useFocusNode();
     final query = useState('');
@@ -573,6 +707,33 @@ class SettingsSubPage extends StatelessWidget {
     return Scaffold(
       appBar: AppBar(centerTitle: false, title: Text(section.title(context.t))),
       body: section.widget,
+    );
+  }
+}
+
+/// A settings sub page that is one full-height built-in item ([id]) of `settings.<entry>.items`: plugins can hide or
+/// replace it and add their items below it.
+class _FullPageItems extends StatelessWidget {
+  const _FullPageItems({required this.entry, required this.id, required this.child});
+
+  final String entry;
+  final String id;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return ShellList(
+      slot: ShellSlots.settingsItems(entry),
+      items: [ShellItem(id, child)],
+      builder: (context, items) {
+        if (items.length == 1) {
+          return items.single;
+        }
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [for (final item in items) slotItemId(item) == id ? Expanded(child: item) : item],
+        );
+      },
     );
   }
 }
