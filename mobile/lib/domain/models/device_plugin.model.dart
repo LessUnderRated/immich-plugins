@@ -141,7 +141,7 @@ class DevicePlugin {
   /// Manifest v2 (`contributes.*`). Legacy `buttons`, `pages` and `overlays` also appear in [slots].
   final List<SlotContribution> slots;
   final Map<String, BuiltinRules> builtins;
-  final List<PluginHookBinding> hooks;
+  final List<PluginHookHandler> hooks;
   final Map<String, int> eventThrottleMs;
   final List<ToolContribution> tools;
   final List<TabContribution> tabs;
@@ -191,7 +191,7 @@ class DevicePlugin {
       manifest: json,
       slots: SlotContribution.parseAll(name, contributes),
       builtins: BuiltinRules.parseAll(contributes['builtins']),
-      hooks: parseHookBindings(name, contributes['hooks']),
+      hooks: parseHookHandlers(name, contributes['hooks']),
       eventThrottleMs: {
         for (final MapEntry(:key, :value) in _map(contributes['events']).entries)
           if (value is Map && _int(value['throttleMs']) != null) key: _int(value['throttleMs'])!,
@@ -389,7 +389,18 @@ class SlotContribution {
 
   /// Overlay / badge placement: `left`, `top`, `right`, `bottom`, `width`, `height`.
   final Map<String, double> position;
+
+  /// Badge / overlay alignment: `topLeft`, `topRight`, `bottomLeft`, `bottomRight`, `center`, ...
+  final String? alignment;
   final bool destructive;
+
+  /// `toggle` items: icon and title while on, and the value before the user first changes it.
+  final String? activeIcon;
+  final String? activeTitle;
+  final bool defaultValue;
+
+  /// JSON UI surface id of this item's content (target of `ui.update` / `ui.patch`); default `slot:<slot>/<id>`.
+  final String? surface;
 
   /// `ButtonV1` for items converted from legacy `buttons` / `pages` / `overlays`: they are called exactly as before.
   final String? legacyType;
@@ -417,12 +428,25 @@ class SlotContribution {
     this.when,
     this.interactive = false,
     this.position = const {},
+    this.alignment,
     this.destructive = false,
+    this.activeIcon,
+    this.activeTitle,
+    this.defaultValue = false,
+    this.surface,
     this.legacyType,
     this.index = 0,
   });
 
   bool get isLegacy => legacyType != null;
+
+  bool get isToggle => kind == PluginSlotKind.toggle;
+
+  /// Key of a `toggle` item's state in the kernel's toggle store: `<plugin>/<id>`.
+  String get toggleKey => '$plugin/$id';
+
+  /// The JSON UI surface id of this item's content.
+  String get surfaceId => surface ?? 'slot:$slot/$id';
 
   /// Unique key across all plugins and slots.
   String get key => '$plugin#$slot#$id';
@@ -447,7 +471,11 @@ class SlotContribution {
       return null;
     }
     final resolvedKind =
-        kind ?? PluginSlotKind.parse(json['kind']) ?? (json['view'] != null ? PluginSlotKind.view : PluginSlotKind.button);
+        kind ??
+        PluginSlotKind.parse(json['kind']) ??
+        (json['view'] != null
+            ? PluginSlotKind.view
+            : (json['ui'] != null || json['uiMethod'] != null ? PluginSlotKind.section : PluginSlotKind.button));
     final id = '${json['id'] ?? json['method'] ?? json['uiMethod'] ?? json['view'] ?? (legacyType != null ? resolvedKind.name : 'item$index')}';
     return SlotContribution(
       plugin: plugin,
@@ -469,7 +497,12 @@ class SlotContribution {
       when: json['when'],
       interactive: json['interactive'] == true,
       position: _position(json['position']),
+      alignment: _string(json['alignment']),
       destructive: json['destructive'] == true,
+      activeIcon: _string(json['activeIcon']),
+      activeTitle: _string(json['activeTitle']),
+      defaultValue: (json['default'] ?? json['value']) == true,
+      surface: _string(json['surface']),
       legacyType: legacyType,
       index: index,
     );
@@ -501,8 +534,11 @@ class SlotContribution {
     if (ui != null) 'ui': ui,
     if (view != null) 'view': view,
     if (composition != null) 'composition': composition,
+    if (height != null) 'height': height,
     'order': order,
     if (when != null) 'when': when,
+    if (kind == PluginSlotKind.toggle) 'default': defaultValue,
+    if (activeIcon != null) 'activeIcon': activeIcon,
     if (legacyType != null) 'legacy': true,
   };
 }
@@ -540,12 +576,17 @@ class ContributedSlotEntry<T> extends PluginSlotEntry<T> {
 
 /// `contributes.builtins.<slot>`: hide, reorder, rename and re-icon the built-in items of a slot.
 ///
-/// `order` lists ids (built-in ids or `plugin:<plugin>/<id>`) that move to the front in that order; a `"..."` entry
-/// splits the list: ids after it move to the end. Ids not listed keep their position (built-ins in their original
+/// `order` lists ids (built-in ids or `plugin:<plugin>/<id>`) that move to the front in that order; a `"..."` (or
+/// `"*"`) entry splits the list: ids after it move to the end. Ids not listed keep their position (built-ins in their original
 /// order, plugin items by their `order` number). Rules from several plugins merge: `hide` is the union, `order` lists
 /// are concatenated in plugin order, `rename` / `icons` take the last plugin's value per id.
 class BuiltinRules {
   static const rest = '...';
+
+  /// Alternative spelling of [rest].
+  static const restAlt = '*';
+
+  static bool _isRest(String id) => id == rest || id == restAlt;
   static const empty = BuiltinRules();
 
   final Set<String> hide;
@@ -578,7 +619,7 @@ class BuiltinRules {
     }
     return BuiltinRules(
       hide: {...hide, ...other.hide},
-      order: [...order, ...other.order.where((id) => id == rest || !order.contains(id))],
+      order: [...order, ...other.order.where((id) => _isRest(id) || !order.contains(id))],
       rename: {...rename, ...other.rename},
       icons: {...icons, ...other.icons},
     );
@@ -635,7 +676,7 @@ class BuiltinRules {
       return sorted;
     }
 
-    final split = order.indexOf(rest);
+    final split = order.indexWhere(_isRest);
     final head = split == -1 ? order : order.sublist(0, split);
     final tail = split == -1 ? const <String>[] : order.sublist(split + 1);
     final byId = {for (final entry in sorted) entry.id: entry};
@@ -664,8 +705,8 @@ class BuiltinRules {
 
 /// Parses `contributes.hooks`: `{ "<hook>": { "before"?: m, "instead"?: m, "after"?: m, "priority"?, "timeoutMs"? } }`
 /// (or a list of such objects per hook).
-List<PluginHookBinding> parseHookBindings(String plugin, Object? json) {
-  final bindings = <PluginHookBinding>[];
+List<PluginHookHandler> parseHookHandlers(String plugin, Object? json) {
+  final bindings = <PluginHookHandler>[];
   for (final MapEntry(:key, :value) in _map(json).entries) {
     final specs = value is List ? value.whereType<Map>() : (value is Map ? [value] : const <Map>[]);
     for (final spec in specs) {
@@ -675,7 +716,7 @@ List<PluginHookBinding> parseHookBindings(String plugin, Object? json) {
         final method = _string(spec[phase.name]);
         if (method != null) {
           bindings.add(
-            PluginHookBinding(
+            PluginHookHandler(
               plugin: plugin,
               hook: key,
               phase: phase,

@@ -16,7 +16,10 @@ class PluginCancelled implements Exception {
 }
 
 /// One plugin method registered for one phase of a hook (`contributes.hooks`).
-class PluginHookBinding {
+///
+/// (Named `PluginHookHandler` so it does not clash with the data layer's `PluginHookBinding` interface in
+/// `lib/domain/utils/plugin_hooks.dart`, which the kernel implements.)
+class PluginHookHandler {
   final String plugin;
   final String hook;
   final HookPhase phase;
@@ -28,7 +31,7 @@ class PluginHookBinding {
   /// Per hook timeout from the manifest (`timeoutMs`); null uses the kernel default (10 s).
   final Duration? timeout;
 
-  const PluginHookBinding({
+  const PluginHookHandler({
     required this.plugin,
     required this.hook,
     required this.phase,
@@ -48,10 +51,10 @@ class PluginHookBinding {
 }
 
 /// Calls the plugin for one binding with the `HookV1` data and returns its response.
-typedef PluginHookInvoker = Future<Map<String, dynamic>?> Function(PluginHookBinding binding, Map<String, dynamic> data);
+typedef PluginHookInvoker = Future<Map<String, dynamic>?> Function(PluginHookHandler binding, Map<String, dynamic> data);
 
 /// Receives plugin failures and timeouts; the chain itself always falls back to the original behaviour.
-typedef PluginHookErrorLogger = void Function(PluginHookBinding binding, Object error, StackTrace? stack);
+typedef PluginHookErrorLogger = void Function(PluginHookHandler binding, Object error, StackTrace? stack);
 
 /// The "patch" mechanism: runs an original operation wrapped by plugin hooks.
 ///
@@ -67,21 +70,25 @@ class PluginHookChain {
   static const defaultTimeout = Duration(seconds: 10);
 
   final String hook;
-  final List<PluginHookBinding> bindings;
+  final List<PluginHookHandler> bindings;
   final PluginHookInvoker invoke;
   final PluginHookErrorLogger? onError;
   final Duration timeout;
 
+  /// Whether `{ "cancel": true }` is honoured. Hooks declared non-cancellable log and ignore it.
+  final bool cancellable;
+
   PluginHookChain({
     required this.hook,
-    required Iterable<PluginHookBinding> bindings,
+    required Iterable<PluginHookHandler> bindings,
     required this.invoke,
     this.onError,
     this.timeout = defaultTimeout,
+    this.cancellable = true,
   }) : bindings = sortBindings(bindings);
 
   /// Sorts by priority (high first), keeping registration order for ties.
-  static List<PluginHookBinding> sortBindings(Iterable<PluginHookBinding> bindings) {
+  static List<PluginHookHandler> sortBindings(Iterable<PluginHookHandler> bindings) {
     final indexed = bindings.toList().asMap().entries.toList()
       ..sort((a, b) {
         final byPriority = b.value.priority.compareTo(a.value.priority);
@@ -90,9 +97,9 @@ class PluginHookChain {
     return [for (final entry in indexed) entry.value];
   }
 
-  Iterable<PluginHookBinding> _phase(HookPhase phase) => bindings.where((binding) => binding.phase == phase);
+  Iterable<PluginHookHandler> _phase(HookPhase phase) => bindings.where((binding) => binding.phase == phase);
 
-  Future<Map<String, dynamic>?> _call(PluginHookBinding binding, Map<String, dynamic> data) async {
+  Future<Map<String, dynamic>?> _call(PluginHookHandler binding, Map<String, dynamic> data) async {
     try {
       return await invoke(binding, data).timeout(binding.timeout ?? timeout);
     } catch (error, stack) {
@@ -168,8 +175,12 @@ class PluginHookChain {
     return result;
   }
 
-  void _checkCancel(PluginHookBinding binding, Map<String, dynamic> response) {
+  void _checkCancel(PluginHookHandler binding, Map<String, dynamic> response) {
     if (response['cancel'] == true) {
+      if (!cancellable) {
+        onError?.call(binding, StateError('Hook $hook cannot be cancelled; ignoring the cancel'), null);
+        return;
+      }
       final message = response['message'];
       throw PluginCancelled(
         message: message is String && message.isNotEmpty ? message : null,
@@ -179,7 +190,7 @@ class PluginHookChain {
     }
   }
 
-  (bool, T?) _decode<T>(PluginHookBinding binding, Object? json, T Function(Object? json)? decode) {
+  (bool, T?) _decode<T>(PluginHookHandler binding, Object? json, T Function(Object? json)? decode) {
     try {
       if (decode != null) {
         return (true, decode(json));

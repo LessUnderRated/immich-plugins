@@ -38,7 +38,18 @@ abstract interface class PluginHookBinding {
 /// Hook points and events of the data layer.
 ///
 /// Every call is free when no kernel is bound or no plugin uses the hook: [run] then returns `original()` itself,
-/// [filter] returns the value unchanged and [emit] builds nothing.
+/// [filter] returns the value unchanged and [emit] builds nothing. Hook and event ids are listed in
+/// `plugin_data_ids.dart` and documented in `docs/plugins/data.md`.
+///
+/// Semantics of [run] (the kernel implements the phases, see `PluginKernel.run`):
+/// * `before` may cancel (the returned future fails with an error for which [isCancelled] is true) or change the
+///   arguments; changed arguments reach the built-in operation only through `withArgs`.
+/// * `instead` may replace the built-in operation; its result is decoded with `decode`. The event of the operation
+///   is then not emitted, because the built-in operation did not run.
+/// * `after` sees the encoded result and may replace it (again through `decode`).
+///
+/// The binding is only installed in the main isolate. Code that runs in background isolates (sync, hashing,
+/// background upload) runs unhooked; hook such work where it is started from the main isolate.
 abstract final class PluginHooks {
   static PluginHookBinding? _binding;
 
@@ -127,6 +138,20 @@ abstract final class PluginHooks {
     required Object? Function(T value) encode,
     required T Function(Object? json) decode,
   }) => source.asyncMap((value) => filter<T>(hookId, args, value, encode: encode, decode: decode));
+
+  /// Awaits [operation] and returns [whenCancelled] instead of failing when a plugin cancelled it.
+  ///
+  /// For background paths (upload, sync) where a cancelled hook means "skip this one" rather than an error to show.
+  static Future<T> orSkip<T>(Future<T> operation, T whenCancelled) async {
+    try {
+      return await operation;
+    } catch (error) {
+      if (isCancelled(error)) {
+        return whenCancelled;
+      }
+      rethrow;
+    }
+  }
 
   /// Emits [event]; [data] is only built when a plugin listens.
   static void emit(String event, Map<String, dynamic> Function() data) {
