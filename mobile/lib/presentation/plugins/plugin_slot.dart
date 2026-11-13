@@ -8,6 +8,8 @@ import 'package:immich_mobile/presentation/plugins/plugin_ui.dart';
 import 'package:immich_mobile/presentation/plugins/plugin_ui_renderer.dart';
 import 'package:immich_mobile/providers/plugin_kernel.provider.dart';
 
+export 'package:immich_mobile/domain/plugins/plugin_ids.dart' show PluginSlotKind;
+
 /// How a slot shows its plugin items. The call site decides the presentation; each presentation renders the item
 /// kinds that fit it (override with `kinds`).
 enum PluginSlotPresentation {

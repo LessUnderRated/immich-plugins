@@ -5,8 +5,10 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:immich_mobile/domain/models/device_plugin.model.dart';
+import 'package:immich_mobile/presentation/plugins/plugin_slot.dart';
 import 'package:immich_mobile/presentation/plugins/plugin_ui.dart';
 import 'package:immich_mobile/providers/device_plugins.provider.dart';
+import 'package:immich_mobile/providers/plugin_kernel.provider.dart';
 import 'package:immich_mobile/routing/router.dart';
 import 'package:uuid/uuid.dart';
 
@@ -44,7 +46,7 @@ class PluginsPage extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     return DefaultTabController(
-      length: 3,
+      length: 4,
       child: Scaffold(
         appBar: AppBar(
           title: const Text('Plugins'),
@@ -64,11 +66,12 @@ class PluginsPage extends ConsumerWidget {
             tabs: [
               Tab(text: 'Plugins'),
               Tab(text: 'Workflows'),
+              Tab(text: 'Tasks'),
               Tab(text: 'Activity'),
             ],
           ),
         ),
-        body: const TabBarView(children: [_PluginList(), _WorkflowList(), _ActivityList()]),
+        body: const TabBarView(children: [_PluginList(), _WorkflowList(), _TaskList(), _ActivityList()]),
       ),
     );
   }
@@ -83,23 +86,43 @@ class _PluginList extends ConsumerWidget {
     return plugins.when(
       loading: () => const Center(child: CircularProgressIndicator()),
       error: (error, _) => Center(child: Text('$error')),
-      data: (plugins) => ListView(
-        padding: const EdgeInsets.all(12),
-        children: [
-          for (final page in ref.watch(pluginSurfacesProvider).slot('plugins.page'))
-            Card(
-              child: ListTile(
-                leading: PluginIcon(plugin: page.plugin, icon: page.icon),
-                title: Text(page.title),
-                subtitle: Text(page.plugin),
-                trailing: const Icon(Icons.chevron_right),
-                onTap: () => runPluginContribution(ref, page),
+      data: (plugins) {
+        final kernel = ref.watch(pluginKernelProvider);
+        final settings = kernel.settingsPages;
+        final running = ref.watch(pluginTasksProvider).where((task) => task.isRunning).toList();
+        return ListView(
+          padding: const EdgeInsets.all(12),
+          children: [
+            if (running.isNotEmpty)
+              Card(
+                child: Column(children: [for (final task in running) PluginTaskTile(task: task)]),
               ),
-            ),
-          for (final plugin in plugins) _PluginCard(plugin: plugin),
-          const _DropFolderHint(),
-        ],
-      ),
+            if (kernel.hasSlot('plugins.page'))
+              const Card(
+                child: PluginSlot.tiles(
+                  slot: 'plugins.page',
+                  kinds: {PluginSlotKind.page, PluginSlotKind.tile, PluginSlotKind.button, PluginSlotKind.toggle},
+                ),
+              ),
+            if (kernel.hasSlot('plugins.page')) const PluginSlot.sections(slot: 'plugins.page'),
+            if (settings.isNotEmpty)
+              Card(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+                      child: Text('Plugin settings', style: Theme.of(context).textTheme.titleSmall),
+                    ),
+                    for (final page in settings) PluginSettingsTile(page: page),
+                  ],
+                ),
+              ),
+            for (final plugin in plugins) _PluginCard(plugin: plugin),
+            const _DropFolderHint(),
+          ],
+        );
+      },
     );
   }
 }
@@ -143,7 +166,22 @@ class _PluginCard extends ConsumerWidget {
         expandedCrossAxisAlignment: CrossAxisAlignment.start,
         children: [
           if (plugin.description.isNotEmpty) Text(plugin.description),
+          if (_summary(plugin).isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Text(_summary(plugin), style: Theme.of(context).textTheme.bodySmall),
+            ),
           const SizedBox(height: 8),
+          if (plugin.enabled)
+            for (final page in plugin.settings)
+              ListTile(
+                dense: true,
+                contentPadding: EdgeInsets.zero,
+                leading: PluginIcon(plugin: plugin.name, icon: page.icon ?? 'settings'),
+                title: Text(page.title),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () => ref.read(pluginKernelProvider).openSettingsPage(plugin.name, page.id, context: context),
+              ),
           for (final method in plugin.methods)
             ListTile(
               dense: true,
@@ -163,6 +201,42 @@ class _PluginCard extends ConsumerWidget {
             ),
         ],
       ),
+    );
+  }
+}
+
+String _summary(DevicePlugin plugin) => [
+  if (plugin.slots.isNotEmpty) '${plugin.slots.length} slot items',
+  if (plugin.hooks.isNotEmpty) '${plugin.hooks.length} hooks',
+  if (plugin.events.isNotEmpty) '${plugin.events.length} event subscriptions',
+  if (plugin.tools.isNotEmpty) '${plugin.tools.length} tools',
+  if (plugin.tabs.isNotEmpty) '${plugin.tabs.length} tabs',
+  if (plugin.theme != null) 'theme',
+  if (plugin.strings.isNotEmpty) 'strings',
+  if (plugin.routes.isNotEmpty) '${plugin.routes.length} screens',
+].join(' · ');
+
+class _TaskList extends ConsumerWidget {
+  const _TaskList();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final tasks = ref.watch(pluginTaskHistoryProvider);
+    if (tasks.isEmpty) {
+      return const Center(child: Text('No plugin tasks'));
+    }
+    return ListView(
+      children: [
+        for (final task in tasks) PluginTaskTile(task: task),
+        if (tasks.any((task) => !task.isRunning))
+          Align(
+            alignment: Alignment.centerRight,
+            child: TextButton(
+              onPressed: () => ref.read(pluginKernelProvider).tasks.clearFinished(),
+              child: const Text('Clear finished'),
+            ),
+          ),
+      ],
     );
   }
 }

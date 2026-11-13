@@ -6,15 +6,18 @@ assets); `asset` is `null` when there is none. Coordinates called *normalized* a
 
 ## Slots
 
-Every slot accepts `builtins` rules (`hide`, `order`, `rename`; plugin items are `plugin:<plugin>/<id>`). Common
+Every slot accepts `builtins` rules (`hide`, `order`, `rename`; plugin items are `plugin:<plugin>/<id>`). Action
+entries use the action ids of the timeline catalog (`ActionIds`), so one rule covers an action in every bar and menu,
+and each runs through its `action.<id>` hook; plugin `button` / `menuItem` contributions of an action slot appear
+among them like built-ins. Common
 context fields: `asset` (AssetV1), `surface` (`viewer` | `slideshow` | `memory`), `route`, plus the kernel's derived
 `when` keys (`assetType`, `isVideo`, `isImage`, `isLocal`, `isRemote`, `isFavorite`).
 
 | Slot | Kinds | Extra context | Built-in ids (display order) |
 | --- | --- | --- | --- |
-| `viewer.topBar` (alias `assetViewer.appBar.actions`) | `button`, `toggle` | `index`, `total`, `origin` (timeline origin), `albumId`, `isLocked`, `isReadonly` | `motionPhoto`, `activity`, `favorite`, `deviceFavorite`, `pluginActions`, `censor`, `menu` (locked folder: `menu` only) |
-| `viewer.menu` (alias `assetViewer.appBar.menu`) | `menuItem`, `toggle` | as `viewer.topBar` | `openInfo`, `likeActivity`, `shareLink`, `cast`, `setAlbumCover`, `similarPhotos`, `setProfilePicture`, `viewInTimeline`, `slideshow`, `download`, `openInBrowser`, `unstack`, `removeFromLockFolder`, `removeFromAlbum`, `deleteLocal`, `advancedInfo` (each only where it applies; dividers separate groups) |
-| `viewer.bottomBar` (alias `assetViewer.footer`) | `button` | as `viewer.topBar` | `restore`, `share`, `edit`, `moveToPrivate`, `add`, `delete` |
+| `viewer.topBar` (alias `assetViewer.appBar.actions`) | `button`, `toggle` | `index`, `total`, `origin` (timeline origin), `albumId`, `isLocked`, `isReadonly` | `motionPhoto`, `activity`, `favorite`, `deviceFavorite`, `plugins`, `censor`, `menu` (locked folder: `menu` only) |
+| `viewer.menu` (alias `assetViewer.appBar.menu`) | `menuItem`, `toggle` | as `viewer.topBar` | `openInfo`, `likeActivity`, `shareLink`, `cast`, `setAlbumCover`, `similarPhotos`, `setProfilePicture`, `viewInTimeline`, `slideshow`, `download`, `openInBrowser`, `stack`, `lock`, `removeFromAlbum`, `deleteLocal`, `advancedInfo` (each only where it applies; dividers separate groups; plugin entries join the middle group) |
+| `viewer.bottomBar` (alias `assetViewer.footer`) | `button` | as `viewer.topBar` | `restoreTrash`, `share`, `edit`, `moveToPrivate`, `addTo` (the "Add to" menu, slot `viewer.addMenu`), `delete` |
 | `viewer.bottomPanels` | `section`, `panel`, `view` | as `viewer.topBar` | `ocr`, `videoControls`, `carousel`, `actions` (the `viewer.bottomBar` row) |
 | `viewer.info.sections` | `section`, `tile`, `view` | `exif` (EXIF JSON) | `dateTime`, `owner`, `description`, `people`, `location`, `technical`, `rating`, `appearsIn`, `tags` |
 | `viewer.title` | `replace`, `wrap` | `dateTime` (ISO, asset time zone) | – |
@@ -33,6 +36,10 @@ context fields: `asset` (AssetV1), `surface` (`viewer` | `slideshow` | `memory`)
 | `memoryList.empty` | `replace`, `section` | – | – |
 
 MemoryV1: `{ "id", "type", "year", "personName", "isSaved", "memoryAt", "assetIds": [] }`.
+
+The actions of `viewer.topBar`, `viewer.bottomBar` and `viewer.menu` (in that order) are the action surface `viewer`
+of the timeline catalog's `actions.list` / `actions.run` host functions while a viewer is open; they act on the
+current asset.
 
 Built-in toggle: `viewer.censor` (the viewer censor shield, kernel `toggle` mechanism): read and set it with
 `toggles.get` / `toggles.set`, follow it with `toggle.changed`.
@@ -230,11 +237,14 @@ attach native views with `video.nativeOverlay.attach`, instead of searching the 
 
 ## Implementation status (phase A, remove when merging into PLUGINS.md)
 
-Done in Dart, working without plugins and free when unused: id'd built-in lists for every slot above (rules applied
-through `arrangeViewerItems`), all events, `viewer.gesture`, `video.source`, `video.control`, the image pipeline in
-every image provider (plugin hooks plus Dart transformers, cache, placeholders, invalidation), video sessions with
-clock, frame rect, controls and the `immich/plugin_video` client, the declarative overlay layer, `image.load`, and
-every host function's logic (`ViewerHostApi.functions`). Phase B: binding to the kernel (`PluginHooks` binding,
-`ViewerPlugins.bind`, `ImagePipeline.subjectJson`, registering host functions, rebuilding on plugin changes), plugin
-items in the slots (kernel `PluginSlot`), the `toggle`-based censor shield and its pipeline transformer, the
-`ViewerFilterV1` video path as overlay items; native: the channel methods above.
+Done in Dart, working without plugins and free when unused: ids for every built-in item above, with rules and plugin
+actions merged through the timeline area's plugin bridge (`arrangeActionWidgets`, `arrangeActions`, `arrangeButtons`,
+`arrangeViewerSlot`) and the `viewer` action surface; every action resolved through `action.<id>`; all events;
+`viewer.gesture`, `video.source`, `video.control`; the image pipeline in every image provider (plugin hooks plus Dart
+transformers, cache, placeholders, invalidation); video sessions with clock, frame rect, controls and the
+`immich/plugin_video` client; the declarative overlay layer; `image.load`; every host function's logic
+(`ViewerHostApi.functions`). Phase B: binding to the kernel (`ViewerPlugins.bind`, `ImagePipeline.subjectJson`,
+`ImagePipeline.invalidate` on plugin changes, host function registration, rebuilding gesture call sites when hooks
+change), content and decoration slots (`viewer.info.sections`, `viewer.bottomPanels`, `viewer.title`, overlays,
+memory and slideshow slots), the `toggle`-based censor shield with its pipeline transformer
+(`ViewerFilterTransformer`), the `ViewerFilterV1` video path as overlay items; native: the channel methods above.
