@@ -119,6 +119,7 @@ class _BackupPageState extends ConsumerState<BackupPage> {
         actions: [
           ShellList(
             slot: pageSlot(BackupRoute.name, PageSlotSuffix.appBarActions),
+            kind: ShellListKind.buttons,
             items: [
               ShellItem(
                 BackupPageIds.options,

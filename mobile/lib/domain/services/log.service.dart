@@ -30,6 +30,12 @@ class LogService {
 
   final List<LogMessage> _msgBuffer = [];
 
+  final StreamController<LogMessage> _records = StreamController<LogMessage>.broadcast();
+
+  /// Every log entry as it is recorded, already redacted (server addresses, access token and custom header values
+  /// replaced), e.g. for the `log.recorded` plugin event.
+  Stream<LogMessage> get records => _records.stream;
+
   /// Whether to buffer logs in memory before writing to the database.
   /// This is useful when logging in quick succession, as it increases performance
   /// and reduces NAND wear. However, it may cause the logs to be lost in case of a crash / in isolates.
@@ -96,6 +102,10 @@ class LogService {
       stack: r.stackTrace == null ? null : _redact(r.stackTrace.toString()),
     );
 
+    if (_records.hasListener) {
+      _records.add(record);
+    }
+
     if (_shouldBuffer) {
       _msgBuffer.add(record);
       _flushTimer ??= Timer(const Duration(seconds: 5), () => unawaited(_flushBuffer()));
@@ -113,6 +123,10 @@ class LogService {
     final logsFromDb = await _logRepository.getAll();
     return [..._msgBuffer.reversed, ...logsFromDb];
   }
+
+  /// [text] with server addresses, the access token and custom header values replaced by labels, the same way the
+  /// app's own log entries are redacted.
+  String redact(String text) => _redact(text);
 
   String _redact(String text) {
     var redacted = text.replaceAllMapped(_schemeAndHost, (match) => _urlLabel(Uri.tryParse(match[0]!)));
@@ -188,6 +202,7 @@ class LogService {
     _flushTimer?.cancel();
     _flushTimer = null;
     await _logSubscription.cancel();
+    await _records.close();
     await _flushBuffer();
     // Allow a subsequent init() (e.g. when a worker isolate is reused) to
     // create a fresh instance instead of returning this disposed one.

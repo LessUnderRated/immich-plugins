@@ -45,6 +45,7 @@ class _PartnerDetailPageState extends State<PartnerDetailPage> {
         }),
       ],
       child: Timeline(
+        page: LibraryPages.partnerDetail,
         appBar: MesmerizingSliverAppBar(title: partner.name),
         topSliverWidget: _InfoBox(partner: partner),
         topSliverWidgetHeight: 110,

@@ -49,6 +49,7 @@ class _SelectionSliverAppBarState extends ConsumerState<SelectionSliverAppBar> {
       actions: [
         ShellList(
           slot: routeSlotOf(context, PageSlotSuffix.appBarActions),
+          kind: ShellListKind.buttons,
           slotContext: {'selectionCount': filteredAssets.length},
           items: [
             ShellItem(

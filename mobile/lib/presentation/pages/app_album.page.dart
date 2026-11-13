@@ -87,6 +87,7 @@ class AppAlbumPage extends ConsumerWidget {
         }),
       ],
       child: Timeline(
+        page: _page,
         appBar: MesmerizingSliverAppBar(
           title: album.name,
           actions: [

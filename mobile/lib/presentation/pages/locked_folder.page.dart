@@ -93,6 +93,7 @@ class _LockedFolderPageState extends ConsumerState<LockedFolderPage> with Widget
                 }
               },
               child: Timeline(
+                page: LibraryPages.lockedFolder,
                 appBar: MesmerizingSliverAppBar(title: context.t.locked_folder),
                 bottomSheet: const LockedFolderBottomSheet(),
               ),

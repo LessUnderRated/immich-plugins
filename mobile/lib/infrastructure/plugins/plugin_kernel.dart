@@ -203,7 +203,13 @@ class PluginKernel extends ChangeNotifier {
   final List<(String, Map<String, dynamic>, String?)> _earlyEvents = [];
   final List<_Listener> _listeners = [];
   final Map<String, _HostEntry> _host = {};
+  final Map<String, PluginCommandHandler> _commands = {};
   final Map<String, PluginCatalogEntry> _catalog = {};
+
+  /// Bumps whenever the set of hook handlers changes (plugins enabled, disabled, installed, updated).
+  final hooksRevision = ValueNotifier<int>(0);
+  final _hookChanges = StreamController<Set<String>>.broadcast();
+  Map<String, int> _hookSignatures = const {};
 
   var _indexed = false;
   var _generation = 0;
@@ -345,6 +351,16 @@ class PluginKernel extends ChangeNotifier {
       return remove;
     });
 
+    final signatures = <String, int>{
+      for (final MapEntry(:key, :value) in hooks.entries) key: jsonHash([for (final handler in value) handler.toJson()]),
+      for (final handler in patternHooks) handler.hook: jsonHash(handler.toJson()),
+    };
+    final changedHooks = {
+      for (final id in {...signatures.keys, ..._hookSignatures.keys})
+        if (signatures[id] != _hookSignatures[id]) id,
+    };
+    _hookSignatures = signatures;
+
     _plugins = plugins;
     _slots = slots;
     _builtins = builtins;
@@ -365,6 +381,10 @@ class PluginKernel extends ChangeNotifier {
     final firstIndex = !_indexed;
     _indexed = true;
     notifyListeners();
+    if (changedHooks.isNotEmpty) {
+      hooksRevision.value++;
+      _hookChanges.add(changedHooks);
+    }
     if (firstIndex) {
       final early = List.of(_earlyEvents);
       _earlyEvents.clear();
@@ -411,8 +431,12 @@ class PluginKernel extends ChangeNotifier {
     });
   }
 
-  /// Whether any plugin contributes to [slotId] (before `when` filtering). Cheap; use it to skip building context.
+  /// Whether any plugin contributes to [slotId] (before `when` filtering). O(1) map lookup; use it on hot paths
+  /// (every tile build) to skip building slot context.
   bool hasSlot(String slotId) => _itemsOf(slotId).isNotEmpty;
+
+  /// Same as [hasSlot].
+  bool hasContributions(String slotId) => hasSlot(slotId);
 
   /// The items plugins contribute to [slotId] whose `when` matches [context], in display order.
   ///
@@ -518,6 +542,13 @@ class PluginKernel extends ChangeNotifier {
   // Slot content and taps
   // ---------------------------------------------------------------------------------------------------------------
 
+  /// The JSON UI surface id of [item]'s content in [context]: `slot:<slot>/<id>` (or the item's `surface`), plus
+  /// `#<assetId>` when the context is about one asset, so per-asset content (tile badges) can be updated one by one.
+  static String slotSurfaceId(SlotContribution item, Map<String, dynamic> context) {
+    final assetId = context['assetId'];
+    return assetId == null ? item.surfaceId : '${item.surfaceId}#$assetId';
+  }
+
   String _contentKey(SlotContribution item, Map<String, dynamic> context) =>
       '${item.slot}\n${item.plugin}\n${item.id}\n${jsonHash(context)}';
 
@@ -560,7 +591,7 @@ class PluginKernel extends ChangeNotifier {
           'slot': item.slot,
           'id': item.id,
           'event': 'content',
-          'surface': item.surfaceId,
+          'surface': slotSurfaceId(item, context),
           'context': slotContext(item.slot, context),
           if (assets.isNotEmpty) 'assets': [for (final asset in assets) await assetJson(asset)],
         }, config: item.params);
@@ -640,7 +671,7 @@ class PluginKernel extends ChangeNotifier {
         'id': item.id,
         'event': eventName,
         'value': ?eventValue,
-        'surface': item.surfaceId,
+        'surface': slotSurfaceId(item, context),
         'context': slotContext(item.slot, context),
         if (assets.isNotEmpty) 'assets': [for (final asset in assets) await assetJson(asset)],
       }, config: item.params);
@@ -707,6 +738,13 @@ class PluginKernel extends ChangeNotifier {
         _patternHooks.any((handler) => matchesEventPattern(handler.hook, hookId)),
   );
 
+  /// Hook ids whose handlers changed in the last re-index, each time the set changes (see also [hooksRevision]).
+  Stream<Set<String>> get hookChanges => _hookChanges.stream;
+
+  /// Whether a handler of [hookId] applies to a call with [args] (its manifest `when` matches them).
+  bool hasHookFor(String hookId, Map<String, dynamic> args) =>
+      hasHook(hookId) && _handlersOf(hookId).any((handler) => handler.appliesTo(args));
+
   List<PluginHookHandler> _handlersOf(String hookId) => [
     ...?_hooks[hookId],
     for (final handler in _patternHooks)
@@ -730,11 +768,18 @@ class PluginKernel extends ChangeNotifier {
     if (!hasHook(hookId)) {
       return original(args);
     }
+    final handlers = [
+      for (final handler in _handlersOf(hookId))
+        if (handler.appliesTo(args)) handler,
+    ];
+    if (handlers.isEmpty) {
+      return original(args);
+    }
     final declared = _catalog['hook:$hookId']?.details;
     final timeoutMs = declared?['timeoutMs'];
     final chain = PluginHookChain(
       hook: hookId,
-      bindings: _handlersOf(hookId),
+      bindings: handlers,
       invoke: _invokeHook,
       onError: (handler, error, stack) =>
           _log.warning('Hook $hookId (${handler.phase.name}) of ${handler.plugin} failed', error, stack),
@@ -1037,10 +1082,33 @@ class PluginKernel extends ChangeNotifier {
     }
   }
 
-  /// Runs one command for [plugin]. Kernel commands (`refresh`, `refreshSlots`, `setTheme`, `setContentHeight`,
-  /// `emit`, `uiUpdate`, `uiPatch`) run here; everything else goes to [commandHandler].
+  /// Implements command [type] in area code (`toast`, `setTheme`, or a new one). Registered commands run before the
+  /// kernel's own and the UI's, are reachable as `ui.<type>` host functions, and can be returned in `actions`.
+  void registerCommand(String type, PluginCommandHandler handler, {String? doc, String? area}) {
+    _commands[type] = handler;
+    if (!_host.containsKey('ui.$type')) {
+      registerHost('ui.$type', (plugin, args) {
+        final first = _at(args, 0);
+        return command(plugin, {...first is Map ? Map<String, dynamic>.from(first) : const {}, 'type': type});
+      }, doc: doc ?? '[{ ...command fields }] -> command result', area: area);
+    }
+  }
+
+  void unregisterCommand(String type) => _commands.remove(type);
+
+  /// Runs one command for [plugin]. Commands registered with [registerCommand] run first; then the kernel's own
+  /// (`refresh`, `refreshSlots`, `setTheme`, `setContentHeight`, `emit`, `uiUpdate`, `uiPatch`, `openSettings`);
+  /// everything else goes to [commandHandler] (the app UI).
   Future<Object?> command(String plugin, Map<String, dynamic> command, {BuildContext? context}) async {
     final owner = '${command['plugin'] ?? plugin}';
+    final registered = _commands[command['type']];
+    if (registered != null) {
+      final result = await registered(plugin, command, context);
+      if (command['type'] == 'setTheme') {
+        _applyRuntimeTheme(owner, command);
+      }
+      return result;
+    }
     switch (command['type']) {
       case 'refresh':
         _content.clear();
@@ -1049,14 +1117,12 @@ class PluginKernel extends ChangeNotifier {
         refreshSlots(command['slot'] as String?);
         return null;
       case 'setTheme':
-        final theme = command['theme'] is Map ? command['theme'] : command;
-        if (command['reset'] == true || theme is! Map) {
-          _runtimeThemes.remove(owner);
-        } else {
-          _runtimeThemes[owner] = ThemeOverride.fromJson(Map<String, dynamic>.from(theme));
-        }
-        notifyListeners();
+        _applyRuntimeTheme(owner, command);
         return null;
+      case 'openSettings':
+        final target = '${command['id'] ?? command['page'] ?? ''}';
+        final parsed = parsePluginItemId(target);
+        return openSettingsPage(parsed?.$1 ?? owner, parsed?.$2 ?? target, context: context);
       case 'setContentHeight':
         final height = command['height'];
         return views.setHeight('${command['instance']}', height is num ? height.toDouble() : null);
@@ -1092,6 +1158,64 @@ class PluginKernel extends ChangeNotifier {
       return null;
     }
     return handler(plugin, command, context);
+  }
+
+  void _applyRuntimeTheme(String owner, Map<String, dynamic> command) {
+    final theme = command['theme'] is Map ? command['theme'] : {...command}
+      ..remove('type')
+      ..remove('plugin');
+    if (command['reset'] == true || theme is! Map || theme.isEmpty) {
+      _runtimeThemes.remove(owner);
+    } else {
+      _runtimeThemes[owner] = ThemeOverride.fromJson(Map<String, dynamic>.from(theme));
+    }
+    notifyListeners();
+  }
+
+  /// The merged theme override as JSON (manifest themes, then `setTheme`), including keys the kernel does not model
+  /// (`variant`, `contrast`, `fonts`, ...); empty when no plugin overrides the theme.
+  Map<String, dynamic> get themeOverrideJson => themeOverride?.toJson() ?? const {};
+
+  /// Absolute path of a file shipped in [plugin]'s zip (fonts, images, models).
+  Future<String> pluginFile(String plugin, String path) async =>
+      p.isAbsolute(path) ? path : p.join(await engine.pluginsRoot(), plugin, 'files', path);
+
+  /// A settings page by plugin and id (`contributes.settings`); the first page of [plugin] when [id] is empty.
+  SettingsContribution? settingsPage(String plugin, [String id = '']) => _settings
+      .where((page) => page.plugin == plugin && (id.isEmpty || page.id == id))
+      .firstOrNull;
+
+  /// Opens a plugin settings page: its JSON UI page (`uiMethod`, live-updatable through surface `settings:<id>`) or
+  /// its native `view`. Returns whether the page exists.
+  Future<bool> openSettingsPage(String plugin, String id, {BuildContext? context}) async {
+    final page = settingsPage(plugin, id);
+    if (page == null) {
+      return false;
+    }
+    final title = page.title;
+    if (page.view != null) {
+      unawaited(
+        command(plugin, {
+          'type': 'openPage',
+          'view': page.view,
+          'title': title,
+          'params': page.params,
+          'composition': ?page.composition,
+        }, context: context),
+      );
+    } else {
+      unawaited(
+        command(plugin, {
+          'type': 'openUiPage',
+          'title': title,
+          'method': page.uiMethod,
+          'page': page.id,
+          'params': page.params,
+          'surface': 'settings:${page.id}',
+        }, context: context),
+      );
+    }
+    return true;
   }
 
   // ---------------------------------------------------------------------------------------------------------------
@@ -1130,6 +1254,7 @@ class PluginKernel extends ChangeNotifier {
     'share': 'text',
     'setContentHeight': 'instance',
     'emit': 'event',
+    'openSettings': 'id',
   };
 
   static Map<String, dynamic> _arg(List<dynamic> args, int index) =>
@@ -1322,6 +1447,11 @@ class PluginKernel extends ChangeNotifier {
     }, '[taskId] -> bool');
     host('tasks.get', (plugin, args) async => tasks[_text(args, 0)]?.toJson(), '[taskId] -> task JSON or null');
     host(
+      'tasks.isCancelled',
+      (plugin, args) async => tasks[_text(args, 0)]?.isCancelled ?? false,
+      '[taskId] -> bool (poll from long loops; the task.cancelled event also arrives)',
+    );
+    host(
       'tasks.list',
       (plugin, args) async => [for (final task in tasks.all) task.toJson()],
       '[] -> [task JSON] (running and recently finished)',
@@ -1458,6 +1588,8 @@ class PluginKernel extends ChangeNotifier {
     if (current == this) {
       current = null;
     }
+    hooksRevision.dispose();
+    unawaited(_hookChanges.close());
     engine
       ..hostLookup = null
       ..eventBus = null

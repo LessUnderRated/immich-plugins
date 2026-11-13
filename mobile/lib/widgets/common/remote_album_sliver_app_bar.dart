@@ -82,6 +82,7 @@ class _MesmerizingSliverAppBarState extends ConsumerState<RemoteAlbumSliverAppBa
       actions: [
         ShellList(
           slot: routeSlotOf(context, PageSlotSuffix.appBarActions),
+          kind: ShellListKind.buttons,
           slotContext: {'albumId': currentAlbum.id},
           items: [
             ShellItem(

@@ -703,8 +703,9 @@ class BuiltinRules {
   };
 }
 
-/// Parses `contributes.hooks`: `{ "<hook>": { "before"?: m, "instead"?: m, "after"?: m, "priority"?, "timeoutMs"? } }`
-/// (or a list of such objects per hook).
+/// Parses `contributes.hooks`: hook id to `{ "before"?: m, "instead"?: m, "after"?: m, "priority"?, "timeoutMs"? }`
+/// plus an optional `when` on the hook args (or a list of such objects per hook). Hook ids may be patterns
+/// (`action.*`, `*`).
 List<PluginHookHandler> parseHookHandlers(String plugin, Object? json) {
   final bindings = <PluginHookHandler>[];
   for (final MapEntry(:key, :value) in _map(json).entries) {
@@ -723,6 +724,7 @@ List<PluginHookHandler> parseHookHandlers(String plugin, Object? json) {
               method: method,
               priority: priority,
               timeout: timeoutMs == null || timeoutMs <= 0 ? null : Duration(milliseconds: timeoutMs),
+              when: spec['when'],
             ),
           );
         }
@@ -926,6 +928,7 @@ int? parsePluginColor(Object? value) {
 
 /// `contributes.theme` (and the `setTheme` command): seed color, per-brightness color scheme tokens and font.
 /// Token names are `ColorScheme` field names (`primary`, `onPrimary`, `surface`, `surfaceContainerHigh`, ...).
+/// Every other key (`variant`, `contrast`, `fonts`, ...) is kept in [raw] for the shell's theme controller.
 class ThemeOverride {
   final int? seedColor;
   final Map<String, int> light;
@@ -935,7 +938,17 @@ class ThemeOverride {
   /// `light`, `dark` or `system`.
   final String? mode;
 
-  const ThemeOverride({this.seedColor, this.light = const {}, this.dark = const {}, this.fontFamily, this.mode});
+  /// The override as declared (merged key by key, nested maps merged too), including keys this class does not model.
+  final Map<String, dynamic> raw;
+
+  const ThemeOverride({
+    this.seedColor,
+    this.light = const {},
+    this.dark = const {},
+    this.fontFamily,
+    this.mode,
+    this.raw = const {},
+  });
 
   static Map<String, int> _colors(Object? json) => {
     for (final MapEntry(:key, :value) in _map(json).entries)
@@ -948,9 +961,19 @@ class ThemeOverride {
     dark: _colors(json['dark']),
     fontFamily: _string(json['fontFamily']),
     mode: _string(json['mode']),
+    raw: Map<String, dynamic>.from(json),
   );
 
-  bool get isEmpty => seedColor == null && light.isEmpty && dark.isEmpty && fontFamily == null && mode == null;
+  bool get isEmpty =>
+      seedColor == null && light.isEmpty && dark.isEmpty && fontFamily == null && mode == null && raw.isEmpty;
+
+  static Map<String, dynamic> _deepMerge(Map<String, dynamic> base, Map<String, dynamic> over) => {
+    ...base,
+    for (final MapEntry(:key, :value) in over.entries)
+      key: value is Map && base[key] is Map
+          ? _deepMerge(Map<String, dynamic>.from(base[key] as Map), Map<String, dynamic>.from(value))
+          : value,
+  };
 
   /// [other] wins per key.
   ThemeOverride merge(ThemeOverride? other) => other == null
@@ -961,11 +984,13 @@ class ThemeOverride {
           dark: {...dark, ...other.dark},
           fontFamily: other.fontFamily ?? fontFamily,
           mode: other.mode ?? mode,
+          raw: _deepMerge(raw, other.raw),
         );
 
   static String _hex(int color) => '#${color.toRadixString(16).padLeft(8, '0').toUpperCase()}';
 
   Map<String, dynamic> toJson() => {
+    ...raw,
     if (seedColor != null) 'seedColor': _hex(seedColor!),
     if (light.isNotEmpty) 'light': light.map((key, value) => MapEntry(key, _hex(value))),
     if (dark.isNotEmpty) 'dark': dark.map((key, value) => MapEntry(key, _hex(value))),

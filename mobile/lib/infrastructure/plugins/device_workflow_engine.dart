@@ -289,10 +289,35 @@ class DeviceWorkflowEngine {
     };
   }
 
+  /// Replaces a local photo with plugin pixels. In-place replacements go through [DeviceEditRepository.replaceBase]:
+  /// the original stays backed up and the new image becomes the base later non-destructive edits render from (so a
+  /// later crop or mosaic does not silently undo the replacement). Formats that cannot be replaced in place are saved
+  /// as a new copy, as before.
   Future<Map<String, dynamic>> _writeImage(String assetId, Map<String, dynamic> image) async {
     final asset = await _localAsset(assetId);
     final bytes = await PluginHostExtras.decodePixels(image, png: _edits.replacesAsPng(asset));
-    final result = await _edits.replaceImage(asset, bytes);
+    final DeviceEditResult result;
+    if (_edits.replaceFormat(asset) != null) {
+      final temp = File(
+        '${Directory.systemTemp.path}/plugin-write-${asset.id}-${DateTime.now().microsecondsSinceEpoch}.bin',
+      );
+      await temp.writeAsBytes(bytes, flush: true);
+      try {
+        final pixels = image['encoded'] is! String;
+        result = await _edits.replaceBase(
+          asset,
+          temp,
+          width: pixels ? (image['width'] as num?)?.toInt() : null,
+          height: pixels ? (image['height'] as num?)?.toInt() : null,
+        );
+      } finally {
+        if (temp.existsSync()) {
+          await temp.delete();
+        }
+      }
+    } else {
+      result = await _edits.replaceImage(asset, bytes);
+    }
     if (result.createdId != null) {
       await _markCreated(result.createdId!);
     }

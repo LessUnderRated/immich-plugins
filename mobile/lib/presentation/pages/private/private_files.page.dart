@@ -134,7 +134,7 @@ class _PrivateFilesViewState extends ConsumerState<PrivateFilesView> {
             : LibraryPluginHooks.arrange(LibrarySlots.appBarActions(_page), [
                 if (widget.legacyCount > 0) privateOlderItemsItem(context, widget.legacyCount),
                 privateLockItem(context, widget.onLock),
-                privateSettingsItem(context),
+                privateAppMenuItem(),
               ]),
       ),
       bottomNavigationBar: selecting

@@ -17,7 +17,6 @@ import 'package:immich_mobile/models/folder/root_folder.model.dart';
 import 'package:immich_mobile/presentation/pages/album.page.dart';
 import 'package:immich_mobile/presentation/pages/search/paginated_search.provider.dart';
 import 'package:immich_mobile/presentation/pages/search/search.page.dart';
-import 'package:immich_mobile/presentation/pages/user_selection.page.dart';
 import 'package:immich_mobile/presentation/widgets/album/album_selector.widget.dart';
 import 'package:immich_mobile/presentation/widgets/map/map.state.dart';
 import 'package:immich_mobile/presentation/widgets/map/map_utils.dart';
@@ -125,11 +124,19 @@ class LibraryHostFunctions {
     'people.openList': (_, _) async => _push(const PeopleCollectionRoute()),
     'people.editName': (_, args) async {
       final person = await _person(_string(args, 0));
-      return person == null ? null : showNameEditModal(_context, person);
+      if (person == null) {
+        return null;
+      }
+      final context = _context;
+      return context.mounted ? showNameEditModal(context, person) : null;
     },
     'people.editBirthday': (_, args) async {
       final person = await _person(_string(args, 0));
-      final date = person == null ? null : await showBirthdayEditModal(_context, person);
+      if (person == null) {
+        return null;
+      }
+      final context = _context;
+      final date = context.mounted ? await showBirthdayEditModal(context, person) : null;
       return date?.toIso8601String();
     },
     'places.open': (_, args) async => _push(PlaceDetailRoute(place: _string(args, 0))),

@@ -212,7 +212,7 @@ const Map<String, List<String>> libraryBuiltins = {
   LibrarySlots.libraryActions: ['favorites', 'archived', 'sharedLinks', 'trash'],
   LibrarySlots.libraryCollections: ['people', 'places', 'onThisDevice', 'memories'],
   LibrarySlots.libraryQuickAccess: ['folders', 'lockedFolder', 'partners', 'partner:*'],
-  'localAlbums.appBar.actions': ['trash', 'downloads', 'findDuplicates', 'newAlbum', 'settings'],
+  'localAlbums.appBar.actions': ['downloads', 'findDuplicates', 'newAlbum', 'appMenu'],
   LibrarySlots.localAlbumsSections: ['appAlbums', 'deviceTitle', 'deviceAlbums'],
   'remoteAlbum.appBar.actions': ['slideshow', 'activity', 'menu'],
   'remoteAlbum.appBar.menu': [
@@ -256,7 +256,7 @@ const Map<String, List<String>> libraryBuiltins = {
   'activities.footer': ['input'],
   'downloadInfo.footer': ['clearAll'],
   LibrarySlots.pinAuthActions: ['biometric'],
-  'privateGallery.appBar.actions': ['olderItems', 'lock', 'settings'],
+  'privateGallery.appBar.actions': ['olderItems', 'lock', 'appMenu'],
   LibrarySlots.privateGallerySelectionAppBarActions: ['close', 'selectAll'],
   LibrarySlots.privateGallerySelectionActions: ['share', 'unhide', 'delete'],
   LibrarySlots.privateGalleryTimelineActions: ['share', 'moveToPrivate', 'delete'],

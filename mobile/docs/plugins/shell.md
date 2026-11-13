@@ -5,7 +5,8 @@ Everything the shell area exposes to plugins. Ids live in code in
 `SettingsItemIds`, `ProfileMenuIds`, `AppBarIds`, `LoginIds`, `BackupPageIds`, `AppLogIds`, `DownloadsRuleDialogIds`,
 `ShellHooks`, `ShellEvents`, `ShellHostNames`). Every built-in list goes through one widget,
 `ShellList` (`lib/presentation/widgets/shell/shell_list.widget.dart`), which applies the plugin rules and adds plugin
-items of the slot.
+items of the slot through the same bridge as the timeline area (`TimelinePluginBridge`: `arrangeButtons` for button
+rows, `arrangeMenuItems` for menus, rules plus content blocks for tile and section lists).
 
 Rules (`contributes.builtins.<slot>`: `hide`, `order`, `rename`) work on every slot below that lists built-in ids.
 Plugin items are named `plugin:<plugin>/<id>`. Page slots are named after the route without `Route`, in lower camel
@@ -72,12 +73,15 @@ host functions; the `settings.set` hook and `settings.changed` event cover chang
 
 The shared app bars render the `<page>.appBar.actions` slot of the route that shows them (page = route name, see
 above), so pages using them need no slot of their own; a page can pass `slot:` to `ImmichSliverAppBar` to use
-another id. Kinds: `button`, `menuItem` (overflow), `toggle`. Context: `{ "route" }` plus the fields below.
+another id. The buttons a page passes in keep the ids the page gives them (`BuiltinSlotItem`, action widgets; see
+`timeline.md`, e.g. `localTimeline`'s `galleryView`) and sit between the bar's own built-ins, so one set of
+`hide`/`order`/`rename` rules covers the whole row. Kinds: `button`, `toggle`. Rules and plugin items use the same
+mechanism as the timeline area's bars (`arrangeButtons`).
 
 | App bar | Used by | Built-in ids | Extra context |
 | --- | --- | --- | --- |
-| `ImmichSliverAppBar` | Library, album pages | `syncStatus`, `cast` (while casting), `pageActions` (the page's own buttons), `backup`, `profile` (signed in), `settings` (gear, while no server account is signed in; `showSettingsButton: false` turns it off) | |
-| `MesmerizingSliverAppBar` | Favorites, Archive, Recently added/taken, Videos, Places, Partner, Locked folder, app albums | `pageActions` | |
+| `ImmichSliverAppBar` | Library, album pages | `syncStatus`, `cast` (while casting), the page's own buttons, `backup`, `profile` (signed in), `settings` (gear, while no server account is signed in; `showSettingsButton: false` turns it off; same id as the timeline's app menu gear) | |
+| `MesmerizingSliverAppBar` | Favorites, Archive, Recently added/taken, Videos, Places, Partner, Locked folder, device and app albums | the page's own buttons | |
 | `RemoteAlbumSliverAppBar` | Server album | `slideshow`, `activity` (shared albums with activity), `menu` (the album's ⋮ menu) | `albumId` |
 | `PersonSliverAppBar` | Person | `menu` (options) | |
 | `SelectionSliverAppBar` | Asset picker timelines | `done` | `selectionCount` |

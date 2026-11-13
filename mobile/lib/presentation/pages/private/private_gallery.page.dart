@@ -8,17 +8,18 @@ import 'package:flutter/material.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:immich_mobile/data/db/main/table/local/asset.dart';
 import 'package:immich_mobile/domain/models/timeline.model.dart';
-import 'package:immich_mobile/generated/translations.g.dart';
 import 'package:immich_mobile/infrastructure/plugins/plugin_api/library/library_hooks.dart';
 import 'package:immich_mobile/infrastructure/plugins/plugin_api/library/library_ids.dart';
 import 'package:immich_mobile/infrastructure/repositories/private_vault.repository.dart';
 import 'package:immich_mobile/presentation/actions/action.widget.dart';
+import 'package:immich_mobile/presentation/actions/action_ids.dart';
 import 'package:immich_mobile/presentation/actions/delete.action.dart';
 import 'package:immich_mobile/presentation/actions/move_to_private.action.dart';
 import 'package:immich_mobile/presentation/actions/share.action.dart';
 import 'package:immich_mobile/presentation/pages/private/private_files.page.dart';
 import 'package:immich_mobile/presentation/widgets/bottom_sheet/base_bottom_sheet.widget.dart';
 import 'package:immich_mobile/presentation/widgets/library/library_plugins.widget.dart';
+import 'package:immich_mobile/presentation/widgets/sliver_app_bar/app_menu.widget.dart';
 import 'package:immich_mobile/presentation/widgets/timeline/timeline.widget.dart';
 import 'package:immich_mobile/providers/background_sync.provider.dart';
 import 'package:immich_mobile/providers/infrastructure/db.provider.dart';
@@ -29,15 +30,9 @@ import 'package:local_auth/local_auth.dart';
 
 const _page = LibraryPages.privateGallery;
 
-/// The app settings entry of the Private tab's app bars (built-in id `settings`).
-LibrarySlotItem<Widget> privateSettingsItem(BuildContext context) => (
-  id: 'settings',
-  item: IconButton(
-    tooltip: context.t.settings,
-    icon: const Icon(Icons.settings_outlined),
-    onPressed: () => libraryTap(context, _page, 'settings', () => context.pushRoute(const SettingsRoute())),
-  ),
-);
+/// The app menu of the Private tab's app bars: settings gear and ⋮ menu (built-in id `appMenu`; its own entries are
+/// in slots `app.appBar.actions` and `app.menu`).
+LibrarySlotItem<Widget> privateAppMenuItem() => (id: 'appMenu', item: const AppBarMenuActions());
 
 /// The lock button of the Private tab's app bars (built-in id `lock`).
 LibrarySlotItem<Widget> privateLockItem(BuildContext context, VoidCallback onLock) => (
@@ -161,7 +156,7 @@ class _PrivateGalleryPageState extends ConsumerState<PrivateGalleryPage> {
       appBar: AppBar(
         centerTitle: true,
         title: const Text('Private'),
-        actions: LibraryPluginHooks.arrange(LibrarySlots.appBarActions(_page), [privateSettingsItem(context)]),
+        actions: LibraryPluginHooks.arrange(LibrarySlots.appBarActions(_page), [privateAppMenuItem()]),
       ),
       body: _LockedView(
         busy: _authenticating,
@@ -226,6 +221,7 @@ class _PrivateTimeline extends ConsumerWidget {
         }),
       ],
       child: Timeline(
+        page: _page,
         topSliverWidget: const SliverToBoxAdapter(child: _FullHidingBanner()),
         topSliverWidgetHeight: 96,
         appBar: SliverAppBar(
@@ -236,7 +232,7 @@ class _PrivateTimeline extends ConsumerWidget {
           actions: LibraryPluginHooks.arrange(LibrarySlots.appBarActions(_page), [
             if (legacyCount > 0) privateOlderItemsItem(context, legacyCount),
             privateLockItem(context, onLock),
-            privateSettingsItem(context),
+            privateAppMenuItem(),
           ]),
         ),
         groupBy: GroupAssetsBy.none,
@@ -252,6 +248,7 @@ class _PrivateBottomSheet extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return BaseBottomSheet(
+      sheet: SelectionSheets.private,
       initialChildSize: 0.18,
       minChildSize: 0.18,
       maxChildSize: 0.18,

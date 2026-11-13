@@ -20,6 +20,7 @@ import 'package:immich_mobile/presentation/widgets/downloads_rule_dialog.widget.
 import 'package:immich_mobile/presentation/widgets/images/local_album_thumbnail.widget.dart';
 import 'package:immich_mobile/presentation/widgets/images/thumbnail.widget.dart';
 import 'package:immich_mobile/presentation/widgets/library/library_plugins.widget.dart';
+import 'package:immich_mobile/presentation/widgets/sliver_app_bar/app_menu.widget.dart';
 import 'package:immich_mobile/providers/app_album.provider.dart';
 import 'package:immich_mobile/providers/background_sync.provider.dart';
 import 'package:immich_mobile/providers/infrastructure/album.provider.dart';
@@ -89,15 +90,6 @@ class LocalAlbumsPage extends ConsumerWidget {
             title: Text(context.t.albums),
             actions: LibraryPluginHooks.arrange(LibrarySlots.appBarActions(_page), [
               (
-                id: 'trash',
-                item: IconButton(
-                  tooltip: 'Trash',
-                  icon: const Icon(Icons.delete_outline),
-                  onPressed: () =>
-                      libraryTap(context, _page, 'trash', () => context.pushRoute(const DeviceTrashRoute())),
-                ),
-              ),
-              (
                 id: 'downloads',
                 item: IconButton(
                   tooltip: 'Downloads',
@@ -121,15 +113,9 @@ class LocalAlbumsPage extends ConsumerWidget {
                   onPressed: () => libraryTap(context, _page, 'newAlbum', () => _newAlbum(context, ref)),
                 ),
               ),
-              (
-                id: 'settings',
-                item: IconButton(
-                  tooltip: context.t.settings,
-                  icon: const Icon(Icons.settings_outlined),
-                  onPressed: () =>
-                      libraryTap(context, _page, 'settings', () => context.pushRoute(const SettingsRoute())),
-                ),
-              ),
+              // Settings gear and the app menu (Trash, Plugins, Locked folder, Logs; slots `app.appBar.actions`,
+              // `app.menu`)
+              (id: 'appMenu', item: const AppBarMenuActions()),
             ]),
           ),
           ...LibraryPluginHooks.arrange(LibrarySlots.localAlbumsSections, [

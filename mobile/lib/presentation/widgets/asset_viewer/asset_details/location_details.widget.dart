@@ -65,7 +65,7 @@ class _LocationDetailsState extends ConsumerState<LocationDetails> {
       return const SizedBox.shrink();
     }
 
-    final editLocation = const EditLocationAction(source: .viewer).create(context, ref);
+    final editLocation = const EditLocationAction(source: .viewer).resolve(context, ref);
     final locationName = _getLocationName(exifInfo);
     final coordinates = "${exifInfo?.latitude?.toStringAsFixed(4)}, ${exifInfo?.longitude?.toStringAsFixed(4)}";
 

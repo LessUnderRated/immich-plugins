@@ -869,6 +869,8 @@ class _SearchResultGrid extends ConsumerWidget {
             }),
           ],
           child: Timeline(
+            // Names the result timeline's slots `search.results.header` / `.footer` / `.empty` / `.body`
+            page: '${LibraryPages.search}.results',
             groupBy: GroupAssetsBy.none,
             appBar: null,
             bottomSheet: const GeneralBottomSheet(minChildSize: 0.20),

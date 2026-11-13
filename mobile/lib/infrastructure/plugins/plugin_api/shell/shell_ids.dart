@@ -221,8 +221,6 @@ abstract final class AppBarIds {
   static const syncStatus = 'syncStatus';
   static const cast = 'cast';
 
-  /// The actions the page itself passes to the app bar, as one block.
-  static const pageActions = 'pageActions';
   static const backup = 'backup';
 
   /// The profile avatar (opens the profile dialog); shown while signed in to a server.
@@ -230,7 +228,7 @@ abstract final class AppBarIds {
 
   /// Settings gear; shown instead of [profile] while no server account is signed in.
   static const settings = 'settings';
-  static const immichAppBar = [syncStatus, cast, pageActions, backup, profile, settings];
+  static const immichAppBar = [syncStatus, cast, backup, profile, settings];
 
   // RemoteAlbumSliverAppBar
   static const slideshow = 'slideshow';

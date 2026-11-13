@@ -118,6 +118,7 @@ class _DownloadsRuleDialogState extends ConsumerState<_DownloadsRuleDialog> {
       actions: [
         ShellList(
           slot: ShellSlots.downloadsRuleDialogActions,
+          kind: ShellListKind.buttons,
           items: [
             ShellItem(
               DownloadsRuleDialogIds.runNow,

@@ -22,7 +22,7 @@ class DateTimeDetails extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final asset = this.asset;
     final exifInfo = this.exifInfo;
-    final editDateTime = const EditDateTimeAction(source: .viewer).create(context, ref);
+    final editDateTime = const EditDateTimeAction(source: .viewer).resolve(context, ref);
 
     return Column(
       children: [

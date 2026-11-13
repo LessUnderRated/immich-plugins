@@ -31,6 +31,10 @@ class PluginHookHandler {
   /// Per hook timeout from the manifest (`timeoutMs`); null uses the kernel default (10 s).
   final Duration? timeout;
 
+  /// Condition on the hook args (same matcher as slot `when`, see `matchesWhen`); the handler only runs for calls
+  /// whose args match, so a hook can be scoped to one page or scope.
+  final Object? when;
+
   const PluginHookHandler({
     required this.plugin,
     required this.hook,
@@ -38,7 +42,11 @@ class PluginHookHandler {
     required this.method,
     this.priority = 0,
     this.timeout,
+    this.when,
   });
+
+  /// Whether this handler applies to a call with [args].
+  bool appliesTo(Map<String, dynamic> args) => when == null || matchesWhen(when, args);
 
   Map<String, dynamic> toJson() => {
     'plugin': plugin,
@@ -47,6 +55,7 @@ class PluginHookHandler {
     'method': method,
     'priority': priority,
     if (timeout != null) 'timeoutMs': timeout!.inMilliseconds,
+    'when': ?when,
   };
 }
 

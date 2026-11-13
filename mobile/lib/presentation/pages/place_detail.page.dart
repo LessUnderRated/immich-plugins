@@ -35,7 +35,10 @@ class _PlaceDetailPageState extends State<PlaceDetailPage> {
           return timelineService;
         }),
       ],
-      child: Timeline(appBar: MesmerizingSliverAppBar(title: place)),
+      child: Timeline(
+        page: LibraryPages.placeDetail,
+        appBar: MesmerizingSliverAppBar(title: place),
+      ),
     );
   }
 }

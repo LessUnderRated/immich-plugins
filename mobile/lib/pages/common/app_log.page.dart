@@ -57,6 +57,7 @@ class AppLogPage extends HookWidget {
 
     return ShellList(
       slot: pageSlot(AppLogRoute.name, PageSlotSuffix.appBarActions),
+      kind: ShellListKind.buttons,
       items: [
         ShellItem(
           AppLogIds.clear,

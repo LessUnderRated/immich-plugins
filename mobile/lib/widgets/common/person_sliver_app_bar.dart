@@ -93,6 +93,7 @@ class _MesmerizingSliverAppBarState extends ConsumerState<PersonSliverAppBar> {
       actions: [
         ShellList(
           slot: routeSlotOf(context, PageSlotSuffix.appBarActions),
+          kind: ShellListKind.buttons,
           items: [
             ShellItem(
               AppBarIds.menu,

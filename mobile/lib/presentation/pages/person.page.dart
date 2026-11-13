@@ -105,6 +105,7 @@ class _PersonPageState extends ConsumerState<PersonPage> {
         }),
       ],
       child: Timeline(
+        page: _page,
         appBar: PersonSliverAppBar(
           person: _person,
           onNameTap: () => handleEditName(context),

@@ -69,10 +69,9 @@ class _MesmerizingSliverAppBarState extends ConsumerState<MesmerizingSliverAppBa
       actions: [
         ShellList(
           slot: routeSlotOf(context, PageSlotSuffix.appBarActions),
-          items: [
-            if (widget.actions.isNotEmpty)
-              ShellItem(AppBarIds.pageActions, Row(mainAxisSize: MainAxisSize.min, children: widget.actions)),
-          ],
+          kind: ShellListKind.buttons,
+          // The page's own buttons keep the ids the page gave them (BuiltinSlotItem, action widgets).
+          items: [for (final action in widget.actions) ShellItem.passThrough(action)],
           builder: (context, actions) => hideWhenSelecting(Row(mainAxisSize: MainAxisSize.min, children: actions)),
         ),
       ],

@@ -63,6 +63,7 @@ class ImmichSliverAppBar extends ConsumerWidget {
 
     return ShellList(
       slot: slot ?? routeSlotOf(context, PageSlotSuffix.appBarActions),
+      kind: ShellListKind.buttons,
       items: [
         const ShellItem(AppBarIds.syncStatus, _SyncStatusIndicator()),
         if (isCasting && !isReadonlyModeEnabled)
@@ -73,8 +74,8 @@ class ImmichSliverAppBar extends ConsumerWidget {
               icon: Icon(isCasting ? Icons.cast_connected_rounded : Icons.cast_rounded),
             ),
           ),
-        if (pageActions != null && pageActions.isNotEmpty)
-          ShellItem(AppBarIds.pageActions, Row(mainAxisSize: MainAxisSize.min, children: pageActions)),
+        // The page's own buttons keep the ids the page gave them (BuiltinSlotItem, action widgets).
+        for (final action in pageActions ?? const <Widget>[]) ShellItem.passThrough(action),
         if (showUploadButton && !isReadonlyModeEnabled) const ShellItem(AppBarIds.backup, _BackupIndicator()),
         if (isLoggedIn)
           const ShellItem(AppBarIds.profile, _ProfileIndicator())
