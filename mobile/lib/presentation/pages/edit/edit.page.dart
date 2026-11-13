@@ -13,17 +13,24 @@ import 'package:immich_mobile/domain/models/asset_edit.model.dart';
 import 'package:immich_mobile/extensions/build_context_extensions.dart';
 import 'package:immich_mobile/generated/translations.g.dart';
 import 'package:immich_mobile/infrastructure/plugins/censor_styles.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/editor/editor_ids.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/editor/editor_media_writer.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/editor/editor_tool.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/editor/editor_workspace.dart';
 import 'package:immich_mobile/presentation/pages/edit/editor.provider.dart';
+import 'package:immich_mobile/presentation/pages/edit/editor_edits.dart';
+import 'package:immich_mobile/presentation/pages/edit/editor_save_dialog.dart';
+import 'package:immich_mobile/presentation/pages/edit/editor_session.provider.dart';
+import 'package:immich_mobile/presentation/pages/edit/editor_tools.provider.dart';
 import 'package:immich_mobile/presentation/pages/plugins/schema_form.widget.dart';
+import 'package:immich_mobile/providers/background_sync.provider.dart';
 import 'package:immich_mobile/providers/device_plugins.provider.dart';
 import 'package:immich_mobile/providers/theme.provider.dart';
 import 'package:immich_mobile/theme/theme_data.dart';
-import 'package:immich_mobile/utils/editor.utils.dart';
 import 'package:immich_mobile/utils/error_handler.dart';
 import 'package:immich_mobile/utils/mosaic.utils.dart';
 import 'package:immich_mobile/widgets/common/immich_toast.dart';
 import 'package:immich_ui/immich_ui.dart';
-import 'package:openapi/api.dart' show MirrorAxis, MirrorParameters, RotateParameters;
 
 @RoutePage()
 class EditImagePage extends ConsumerStatefulWidget {
@@ -39,11 +46,36 @@ class EditImagePage extends ConsumerStatefulWidget {
 class _EditImagePageState extends ConsumerState<EditImagePage> with TickerProviderStateMixin {
   final ValueNotifier<int> _pinches = ValueNotifier(0);
   Rect? _cropBeforeGesture;
+  late final EditorSessionNotifier _session;
+  late final String _sessionId;
+  (int, Image)? _workingImage;
+
+  @override
+  void initState() {
+    super.initState();
+    _session = ref.read(editorSessionProvider.notifier);
+    _sessionId = ref.read(editorSessionProvider).id;
+  }
 
   @override
   void dispose() {
     _pinches.dispose();
+    _session.endSession(_sessionId);
     super.dispose();
+  }
+
+  /// The image the tools show: the asset itself, or the last tool result (decoded at display size).
+  Image _imageFor(EditorWorkingImage? working) {
+    if (working == null) {
+      return widget.image;
+    }
+    final cached = _workingImage;
+    if (cached != null && cached.$1 == working.generation) {
+      return cached.$2;
+    }
+    final image = Image(image: working.displayProvider());
+    _workingImage = (working.generation, image);
+    return image;
   }
 
   void _onFirstPointer() {
@@ -65,42 +97,12 @@ class _EditImagePageState extends ConsumerState<EditImagePage> with TickerProvid
   void _onPinchEnd() => _restoreCropBeforeGesture();
 
   Future<void> _saveEditedImage() async {
+    if (ref.read(editorSessionProvider).isBaked) {
+      return _saveBakedImage();
+    }
+
     ref.read(editorStateProvider.notifier).setIsEditing(true);
-
-    final editorState = ref.read(editorStateProvider);
-    final cropParameters = convertRectToCropParameters(
-      editorState.crop,
-      editorState.originalWidth,
-      editorState.originalHeight,
-    );
-    final edits = <AssetEdit>[];
-
-    if (cropParameters.width != editorState.originalWidth || cropParameters.height != editorState.originalHeight) {
-      edits.add(CropEdit(cropParameters));
-    }
-
-    if (editorState.flipHorizontal) {
-      edits.add(MirrorEdit(MirrorParameters(axis: MirrorAxis.horizontal)));
-    }
-
-    if (editorState.flipVertical) {
-      edits.add(MirrorEdit(MirrorParameters(axis: MirrorAxis.vertical)));
-    }
-
-    final normalizedRotation = (editorState.rotationAngle % 360 + 360) % 360;
-    if (normalizedRotation != 0) {
-      edits.add(RotateEdit(RotateParameters(angle: normalizedRotation)));
-    }
-
-    final mosaicParameters = mosaicToParameters(
-      editorState.mosaicStrokes,
-      editorState.mosaicBlockSize,
-      editorState.originalWidth,
-      editorState.originalHeight,
-    );
-    if (mosaicParameters != null) {
-      edits.add(MosaicEdit(mosaicParameters));
-    }
+    final edits = editorStateToEdits(ref.read(editorStateProvider));
 
     try {
       await widget.applyEdits(edits);
@@ -111,6 +113,40 @@ class _EditImagePageState extends ConsumerState<EditImagePage> with TickerProvid
       ImmichToast.show(context: context, msg: context.t.success, toastType: ToastType.success);
       Navigator.of(context).pop();
     } catch (e) {
+      if (!mounted) {
+        return;
+      }
+
+      ImmichToast.show(context: context, msg: context.t.error_title, toastType: ToastType.error);
+    } finally {
+      ref.read(editorStateProvider.notifier).setIsEditing(false);
+    }
+  }
+
+  /// A tool replaced the image (e.g. an upscale): bake everything into a new file, saved as a copy or over the
+  /// original, asking every time.
+  Future<void> _saveBakedImage() async {
+    final target = await showEditorSaveTargetDialog(
+      context,
+      canCopy: _session.canSave(EditorSaveTarget.copy),
+      canReplace: _session.canSave(EditorSaveTarget.replace),
+    );
+    if (target == null || !mounted) {
+      return;
+    }
+
+    ref.read(editorStateProvider.notifier).setIsEditing(true);
+    try {
+      await _session.saveBaked(target);
+      unawaited(ref.read(backgroundSyncProvider).syncLocal());
+      if (!mounted) {
+        return;
+      }
+
+      ImmichToast.show(context: context, msg: context.t.success, toastType: ToastType.success);
+      Navigator.of(context).pop();
+    } catch (error, stack) {
+      handleError(error, stack: stack, description: 'Failed to save the edited image');
       if (!mounted) {
         return;
       }
@@ -144,7 +180,10 @@ class _EditImagePageState extends ConsumerState<EditImagePage> with TickerProvid
   @override
   Widget build(BuildContext context) {
     final hasUnsavedEdits = ref.watch(editorStateProvider.select((state) => state.hasUnsavedEdits));
-    final mode = ref.watch(editorStateProvider.select((state) => state.mode));
+    final tool = ref.watch(editorActiveToolEntryProvider);
+    final working = ref.watch(editorSessionProvider.select((session) => session.working));
+    final canUndoTool = ref.watch(editorSessionProvider.select((session) => session.isBaked && session.run == null));
+    final image = _imageFor(working);
 
     return PopScope(
       canPop: !hasUnsavedEdits,
@@ -166,7 +205,11 @@ class _EditImagePageState extends ConsumerState<EditImagePage> with TickerProvid
             titleSpacing: 0,
             title: Text(context.t.edit, style: const TextStyle(fontSize: 16)),
             leading: ImmichCloseButton(onPressed: () => Navigator.of(context).maybePop()),
-            actions: [_SaveEditsButton(onSave: _saveEditedImage)],
+            actions: [
+              if (canUndoTool)
+                ImmichIconButton(icon: Icons.undo, variant: ImmichVariant.ghost, onPressed: _session.undoTool),
+              _SaveEditsButton(onSave: _saveEditedImage),
+            ],
           ),
           backgroundColor: Colors.black,
           body: SafeArea(
@@ -174,13 +217,14 @@ class _EditImagePageState extends ConsumerState<EditImagePage> with TickerProvid
               children: [
                 Expanded(
                   child: _ZoomableEditorArea(
-                    key: ValueKey(mode),
+                    key: ValueKey((tool.id, working?.generation)),
                     onPointerStart: _onFirstPointer,
                     onPinchStart: _onPinchStart,
                     onPinchEnd: _onPinchEnd,
-                    child: switch (mode) {
-                      EditorMode.transform => _EditorPreview(image: widget.image),
-                      EditorMode.mosaic => _MosaicCanvas(image: widget.image, pinches: _pinches),
+                    child: switch (tool.id) {
+                      EditorBuiltinToolIds.crop => _EditorPreview(image: image),
+                      EditorBuiltinToolIds.mosaic => _MosaicCanvas(image: image, pinches: _pinches),
+                      _ => _ToolImageView(fallback: image),
                     },
                   ),
                 ),
@@ -196,11 +240,25 @@ class _EditImagePageState extends ConsumerState<EditImagePage> with TickerProvid
                       child: Column(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          switch (mode) {
-                            EditorMode.transform => const _TransformControls(),
-                            EditorMode.mosaic => const _MosaicControls(),
+                          switch (tool.id) {
+                            EditorBuiltinToolIds.crop => const _TransformControls(),
+                            EditorBuiltinToolIds.mosaic => const _MosaicControls(),
+                            _ => _PluginToolControls(key: ValueKey(tool.id), tool: tool),
                           },
-                          const Row(children: [_EditorModeSelector(), Spacer(), _ResetEditsButton()]),
+                          const Row(
+                            children: [
+                              Expanded(
+                                child: Align(
+                                  alignment: Alignment.centerLeft,
+                                  child: SingleChildScrollView(
+                                    scrollDirection: Axis.horizontal,
+                                    child: _EditorToolSelector(),
+                                  ),
+                                ),
+                              ),
+                              _ResetEditsButton(),
+                            ],
+                          ),
                         ],
                       ),
                     ),
@@ -366,6 +424,7 @@ class _SaveEditsButton extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final isApplyingEdits = ref.watch(editorStateProvider.select((state) => state.isApplyingEdits));
     final hasUnsavedEdits = ref.watch(editorStateProvider.select((state) => state.hasUnsavedEdits));
+    final isRunningTool = ref.watch(editorSessionProvider.select((session) => session.run != null));
 
     return isApplyingEdits
         ? const Padding(
@@ -376,7 +435,7 @@ class _SaveEditsButton extends ConsumerWidget {
             icon: Icons.done_rounded,
             color: ImmichColor.primary,
             variant: ImmichVariant.ghost,
-            disabled: !hasUnsavedEdits,
+            disabled: !hasUnsavedEdits || isRunningTool,
             onPressed: onSave,
           );
   }
@@ -389,13 +448,21 @@ class _ResetEditsButton extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final editorState = ref.watch(editorStateProvider);
     final editorNotifier = ref.watch(editorStateProvider.notifier);
+    final session = ref.watch(
+      editorSessionProvider.select((session) => (baked: session.isBaked, running: session.run != null)),
+    );
 
     return ImmichTextButton(
       labelText: context.t.reset,
-      onPressed: editorNotifier.resetEdits,
+      onPressed: () async {
+        if (session.baked) {
+          await ref.read(editorSessionProvider.notifier).resetTools();
+        }
+        editorNotifier.resetEdits();
+      },
       variant: ImmichVariant.ghost,
       expanded: false,
-      disabled: !editorState.hasEdits || editorState.isApplyingEdits,
+      disabled: !(editorState.hasEdits || session.baked) || editorState.isApplyingEdits || session.running,
     );
   }
 }
@@ -500,14 +567,28 @@ class _EditorPreviewState extends ConsumerState<_EditorPreview> with TickerProvi
   }
 }
 
-class _EditorModeSelector extends ConsumerWidget {
-  const _EditorModeSelector();
+IconData _toolIcon(EditorTool tool) => switch (tool.id) {
+  EditorBuiltinToolIds.crop => Icons.crop_rotate,
+  EditorBuiltinToolIds.mosaic => Icons.grid_on,
+  _ => Icons.extension,
+};
+
+String _toolLabel(BuildContext context, EditorTool tool) => switch (tool.id) {
+  EditorBuiltinToolIds.crop => context.t.crop,
+  EditorBuiltinToolIds.mosaic => context.t.mosaic,
+  _ => tool.title,
+};
+
+class _EditorToolSelector extends ConsumerWidget {
+  const _EditorToolSelector();
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final mode = ref.watch(editorStateProvider.select((state) => state.mode));
+    final tools = ref.watch(editorToolsProvider);
+    final active = ref.watch(editorActiveToolEntryProvider);
+    final isRunningTool = ref.watch(editorSessionProvider.select((session) => session.run != null));
 
-    return SegmentedButton<EditorMode>(
+    return SegmentedButton<String>(
       showSelectedIcon: false,
       style: SegmentedButton.styleFrom(
         visualDensity: VisualDensity.compact,
@@ -516,19 +597,219 @@ class _EditorModeSelector extends ConsumerWidget {
         textStyle: const TextStyle(fontSize: 12),
       ),
       segments: [
-        ButtonSegment(
-          value: EditorMode.transform,
-          icon: const Icon(Icons.crop_rotate, size: 16),
-          label: Text(context.t.crop),
-        ),
-        ButtonSegment(
-          value: EditorMode.mosaic,
-          icon: const Icon(Icons.grid_on, size: 16),
-          label: Text(context.t.mosaic),
-        ),
+        for (final tool in tools)
+          ButtonSegment(
+            value: tool.id,
+            icon: Icon(_toolIcon(tool), size: 16),
+            label: Text(_toolLabel(context, tool)),
+            tooltip: tool.subtitle,
+          ),
       ],
-      selected: {mode},
-      onSelectionChanged: (selection) => ref.read(editorStateProvider.notifier).setMode(selection.first),
+      selected: {active.id},
+      onSelectionChanged: isRunningTool
+          ? null
+          : (selection) => ref.read(editorActiveToolProvider.notifier).select(selection.first),
+    );
+  }
+}
+
+/// Image area of a plugin tool: what the tool will receive (the working image with pending edits baked in), or the
+/// tool's preview. Press and hold to compare with the image before the preview.
+class _ToolImageView extends ConsumerStatefulWidget {
+  final Image fallback;
+
+  const _ToolImageView({required this.fallback});
+
+  @override
+  ConsumerState<_ToolImageView> createState() => _ToolImageViewState();
+}
+
+class _ToolImageViewState extends ConsumerState<_ToolImageView> {
+  late Future<EditorWorkingImage> _display;
+  bool _comparing = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _display = ref.read(editorSessionProvider.notifier).renderDisplay();
+  }
+
+  Widget _fitted(ImageProvider image, int width, int height) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final available = Size(constraints.maxWidth * 0.9, constraints.maxHeight * 0.95);
+        final scale = min(available.width / width, available.height / height);
+        return Center(
+          child: SizedBox(
+            width: width * scale,
+            height: height * scale,
+            child: Image(image: image, fit: BoxFit.fill, gaplessPlayback: true),
+          ),
+        );
+      },
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final toolId = ref.watch(editorActiveToolProvider);
+    final preview = ref.watch(
+      editorSessionProvider.select((session) => session.preview?.toolId == toolId ? session.preview : null),
+    );
+
+    return GestureDetector(
+      onLongPressStart: (_) => setState(() => _comparing = true),
+      onLongPressEnd: (_) => setState(() => _comparing = false),
+      child: FutureBuilder<EditorWorkingImage>(
+        future: _display,
+        builder: (context, snapshot) {
+          final display = snapshot.data;
+          if (display == null) {
+            return snapshot.hasError
+                ? Center(child: widget.fallback)
+                : const Center(child: CircularProgressIndicator());
+          }
+          final base = _fitted(display.displayProvider(), display.width, display.height);
+          if (preview == null || _comparing) {
+            return base;
+          }
+          final region = preview.region;
+          if (region.width >= 1 && region.height >= 1) {
+            return _fitted(preview.image.displayProvider(), preview.image.width, preview.image.height);
+          }
+          return Stack(
+            fit: StackFit.expand,
+            children: [
+              base,
+              LayoutBuilder(
+                builder: (context, constraints) {
+                  final available = Size(constraints.maxWidth * 0.9, constraints.maxHeight * 0.95);
+                  final scale = min(available.width / display.width, available.height / display.height);
+                  final size = Size(display.width * scale, display.height * scale);
+                  final origin = Offset(
+                    (constraints.maxWidth - size.width) / 2,
+                    (constraints.maxHeight - size.height) / 2,
+                  );
+                  return Stack(
+                    children: [
+                      Positioned(
+                        left: origin.dx + region.x * size.width,
+                        top: origin.dy + region.y * size.height,
+                        width: region.width * size.width,
+                        height: region.height * size.height,
+                        child: Image(image: preview.image.displayProvider(), fit: BoxFit.fill, gaplessPlayback: true),
+                      ),
+                    ],
+                  );
+                },
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+}
+
+/// Controls of a plugin tool: apply (and preview) with progress and cancel while the tool runs.
+class _PluginToolControls extends ConsumerStatefulWidget {
+  final EditorTool tool;
+
+  const _PluginToolControls({super.key, required this.tool});
+
+  @override
+  ConsumerState<_PluginToolControls> createState() => _PluginToolControlsState();
+}
+
+class _PluginToolControlsState extends ConsumerState<_PluginToolControls> {
+  bool _previewing = false;
+
+  Map<String, dynamic> get _toolState => ref.read(editorToolStateProvider.notifier).of(widget.tool.id);
+
+  void _show(String message, {bool error = false}) {
+    if (mounted) {
+      ImmichToast.show(context: context, msg: message, toastType: error ? ToastType.error : ToastType.info);
+    }
+  }
+
+  Future<void> _apply() async {
+    try {
+      final result = await ref.read(editorSessionProvider.notifier).applyTool(widget.tool, _toolState);
+      final message = result.message;
+      if (message != null) {
+        _show(message);
+      }
+    } catch (error, stack) {
+      handleError(error, stack: stack, description: 'Editor tool ${widget.tool.id} failed');
+      _show(error.toString(), error: true);
+    }
+  }
+
+  Future<void> _preview() async {
+    setState(() => _previewing = true);
+    try {
+      await ref.read(editorSessionProvider.notifier).previewTool(widget.tool, _toolState);
+    } catch (error, stack) {
+      handleError(error, stack: stack, description: 'Editor tool preview ${widget.tool.id} failed');
+      _show(error.toString(), error: true);
+    } finally {
+      if (mounted) {
+        setState(() => _previewing = false);
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final run = ref.watch(editorSessionProvider.select((session) => session.run));
+    final busy = ref.watch(editorStateProvider.select((state) => state.isApplyingEdits));
+    final options = widget.tool.options;
+
+    if (run != null) {
+      return SizedBox(
+        height: 48,
+        child: Row(
+          children: [
+            Expanded(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    run.message ?? options.taskTitle ?? widget.tool.title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: context.textTheme.labelMedium?.copyWith(color: Colors.white),
+                  ),
+                  const SizedBox(height: 6),
+                  LinearProgressIndicator(value: run.progress),
+                ],
+              ),
+            ),
+            if (options.cancellable)
+              TextButton(onPressed: ref.read(editorSessionProvider.notifier).cancelRun, child: Text(context.t.cancel)),
+          ],
+        ),
+      );
+    }
+
+    return SizedBox(
+      height: 48,
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              widget.tool.subtitle ?? widget.tool.title,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: context.textTheme.labelMedium?.copyWith(color: Colors.white70),
+            ),
+          ),
+          if (options.preview && !options.livePreview)
+            TextButton(onPressed: busy || _previewing ? null : _preview, child: Text(context.t.preview)),
+          FilledButton.tonal(onPressed: busy ? null : _apply, child: Text(options.applyLabel ?? widget.tool.title)),
+        ],
+      ),
     );
   }
 }

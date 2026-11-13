@@ -52,15 +52,7 @@ abstract final class LibraryPluginHooks {
     Object? Function(T value)? encode,
     T Function(Object? json)? decode,
     String? event,
-  }) => PluginHooks.run<T>(
-    hookId,
-    args,
-    original,
-    withArgs: withArgs,
-    encode: encode,
-    decode: decode,
-    event: event,
-  );
+  }) => PluginHooks.run<T>(hookId, args, original, withArgs: withArgs, encode: encode, decode: decode, event: event);
 
   /// Lets query hook [hookId] filter, sort or extend [items] (what a page is about to show).
   ///

@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:immich_mobile/domain/models/asset/base_asset.model.dart';
+import 'package:immich_mobile/domain/models/memory.model.dart';
 import 'package:immich_mobile/domain/utils/plugin_hooks.dart';
 import 'package:immich_mobile/infrastructure/plugins/plugin_api/viewer/viewer_bridge.dart';
 
@@ -34,6 +35,17 @@ abstract final class ViewerEvents {
     PluginHooks.emit(event, () => {'asset': json, ...?data?.call()});
   }
 }
+
+/// MemoryV1 JSON for memory events.
+Map<String, dynamic> memoryJson(Memory memory) => {
+  'id': memory.id,
+  'type': memory.type.name,
+  'year': memory.data.year,
+  'personName': memory.data.personName,
+  'isSaved': memory.isSaved,
+  'memoryAt': memory.memoryAt.toUtc().toIso8601String(),
+  'assetIds': [for (final asset in memory.assets) asset.id],
+};
 
 /// Rate-limits one event stream: the first call goes out at once, later calls within [interval] are coalesced and
 /// the latest data goes out when the interval ends (trailing edge), so the last value is never lost.

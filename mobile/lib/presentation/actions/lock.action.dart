@@ -4,6 +4,7 @@ import 'package:immich_mobile/constants/enums.dart';
 import 'package:immich_mobile/extensions/platform_extensions.dart';
 import 'package:immich_mobile/generated/translations.g.dart';
 import 'package:immich_mobile/presentation/actions/action.dart';
+import 'package:immich_mobile/presentation/actions/action_ids.dart';
 import 'package:immich_mobile/providers/infrastructure/asset.provider.dart';
 import 'package:immich_mobile/providers/infrastructure/toast.provider.dart';
 import 'package:immich_mobile/services/toast.service.dart';
@@ -31,6 +32,9 @@ final _stateProvider = Provider.family.autoDispose<_State?, ActionSource>((ref, 
 
 class LockAction extends AssetActionBuilder {
   const LockAction({required super.source});
+
+  @override
+  String get id => ActionIds.lock;
 
   static final Logger _log = Logger('LockAction');
 

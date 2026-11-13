@@ -3,6 +3,8 @@ import 'dart:io';
 
 import 'package:flutter/services.dart';
 import 'package:immich_mobile/domain/models/asset/base_asset.model.dart';
+import 'package:immich_mobile/domain/utils/plugin_data_ids.dart';
+import 'package:immich_mobile/domain/utils/plugin_hooks.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:photo_manager/photo_manager.dart' hide AssetType;
@@ -107,7 +109,26 @@ class PrivateVaultRepository {
   static const _channel = MethodChannel('immich/device_media');
   static const _batchSize = 40;
 
-  Future<int> hide(List<LocalAsset> assets, {void Function(int done, int total)? onProgress}) async {
+  /// Copies device assets into app storage and deletes them from the gallery; runs as `private.hide`
+  /// (`mode: "vault"`). Returns how many were hidden.
+  Future<int> hide(List<LocalAsset> assets, {void Function(int done, int total)? onProgress}) => PluginHooks.run<int>(
+    DataHooks.privateHide,
+    () => {
+      'ids': [for (final asset in assets) asset.id],
+      'mode': 'vault',
+    },
+    () => _hide(assets, onProgress: onProgress),
+    withArgs: (args) {
+      final ids = PluginArgs.strings(args['ids']).toSet();
+      return _hide(assets.where((asset) => ids.contains(asset.id)).toList(), onProgress: onProgress);
+    },
+    encode: (hidden) => hidden,
+    decode: (json) => PluginArgs.integer(json) ?? 0,
+    event: DataEvents.privateHidden,
+    eventData: (args, hidden) => {...args, 'hidden': hidden},
+  );
+
+  Future<int> _hide(List<LocalAsset> assets, {void Function(int done, int total)? onProgress}) async {
     final directory = await _dir();
     final copied = <String, PrivateItem>{};
     var done = 0;
@@ -170,7 +191,18 @@ class PrivateVaultRepository {
     return kept.length;
   }
 
-  Future<void> restore(PrivateItem item) async {
+  /// Saves the item back into the gallery and removes it from the vault; runs as `private.unhide`.
+  Future<void> restore(PrivateItem item) => PluginHooks.run<void>(
+    DataHooks.privateUnhide,
+    () => {
+      'files': [item.toJson()],
+      'mode': 'vault',
+    },
+    () => _restore(item),
+    event: DataEvents.privateUnhidden,
+  );
+
+  Future<void> _restore(PrivateItem item) async {
     final file = File(await path(item.file));
     final relativePath = Platform.isAndroid ? (item.relativePath ?? 'Pictures/Restored') : null;
     final title = p.basenameWithoutExtension(item.name);
@@ -193,10 +225,21 @@ class PrivateVaultRepository {
         longitude: item.longitude,
       );
     }
-    await delete(item);
+    await _delete(item);
   }
 
-  Future<void> delete(PrivateItem item) async {
+  /// Deletes the item for good; runs as `private.delete`.
+  Future<void> delete(PrivateItem item) => PluginHooks.run<void>(
+    DataHooks.privateDelete,
+    () => {
+      'files': [item.toJson()],
+      'mode': 'vault',
+    },
+    () => _delete(item),
+    event: DataEvents.privateDeleted,
+  );
+
+  Future<void> _delete(PrivateItem item) async {
     await _deleteFiles(item);
     await _save((await list()).where((existing) => existing.id != item.id).toList());
   }

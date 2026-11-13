@@ -8,7 +8,10 @@ import 'package:flutter_svg/svg.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:immich_mobile/extensions/build_context_extensions.dart';
 import 'package:immich_mobile/generated/translations.g.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/shell/shell_ids.dart';
 import 'package:immich_mobile/models/server_info/server_info.model.dart';
+import 'package:immich_mobile/presentation/widgets/shell/shell_list.widget.dart';
+import 'package:immich_mobile/providers/auth.provider.dart';
 import 'package:immich_mobile/providers/backup/backup.provider.dart';
 import 'package:immich_mobile/providers/cast.provider.dart';
 import 'package:immich_mobile/providers/infrastructure/readonly_mode.provider.dart';
@@ -31,6 +34,12 @@ class ImmichSliverAppBar extends ConsumerWidget {
   final Widget? title;
   final double? expandedHeight;
 
+  /// Shows a settings button in place of the profile avatar while no server account is signed in.
+  final bool showSettingsButton;
+
+  /// The plugin slot of the actions; defaults to `<page>.appBar.actions` of the route showing the app bar.
+  final String? slot;
+
   const ImmichSliverAppBar({
     super.key,
     this.actions,
@@ -40,6 +49,8 @@ class ImmichSliverAppBar extends ConsumerWidget {
     this.snap = true,
     this.title,
     this.expandedHeight,
+    this.showSettingsButton = true,
+    this.slot,
   });
 
   @override
@@ -47,41 +58,64 @@ class ImmichSliverAppBar extends ConsumerWidget {
     final isCasting = ref.watch(castProvider.select((c) => c.isCasting));
     final isReadonlyModeEnabled = ref.watch(readonlyModeProvider);
     final isMultiSelectEnabled = ref.watch(multiSelectProvider.select((s) => s.isEnabled));
+    final isLoggedIn = ref.watch(authProvider.select((auth) => auth.isAuthenticated));
+    final pageActions = actions;
 
-    return SliverIgnorePointer(
-      ignoring: isMultiSelectEnabled,
-      sliver: SliverAnimatedOpacity(
-        duration: Durations.medium1,
-        opacity: isMultiSelectEnabled ? 0 : 1,
-        sliver: SliverAppBar(
-          backgroundColor: context.colorScheme.surface,
-          surfaceTintColor: context.colorScheme.surfaceTint,
-          elevation: 0,
-          scrolledUnderElevation: 1.0,
-          floating: floating,
-          pinned: pinned,
-          snap: snap,
-          expandedHeight: expandedHeight,
-          shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(bottom: Radius.circular(5))),
-          automaticallyImplyLeading: false,
-          centerTitle: false,
-          title: title ?? const _ImmichLogoWithText(),
-          actions: [
-            const _SyncStatusIndicator(),
-            if (isCasting && !isReadonlyModeEnabled)
-              IconButton(
-                onPressed: () => showDialog(context: context, builder: (context) => const CastDialog()),
-                icon: Icon(isCasting ? Icons.cast_connected_rounded : Icons.cast_rounded),
-              ),
-            ...?actions,
-            if (showUploadButton && !isReadonlyModeEnabled) const _BackupIndicator(),
-            const _ProfileIndicator(),
-            const SizedBox(width: 8),
-          ],
+    return ShellList(
+      slot: slot ?? routeSlotOf(context, PageSlotSuffix.appBarActions),
+      items: [
+        const ShellItem(AppBarIds.syncStatus, _SyncStatusIndicator()),
+        if (isCasting && !isReadonlyModeEnabled)
+          ShellItem(
+            AppBarIds.cast,
+            IconButton(
+              onPressed: () => showDialog(context: context, builder: (context) => const CastDialog()),
+              icon: Icon(isCasting ? Icons.cast_connected_rounded : Icons.cast_rounded),
+            ),
+          ),
+        if (pageActions != null && pageActions.isNotEmpty)
+          ShellItem(AppBarIds.pageActions, Row(mainAxisSize: MainAxisSize.min, children: pageActions)),
+        if (showUploadButton && !isReadonlyModeEnabled) const ShellItem(AppBarIds.backup, _BackupIndicator()),
+        if (isLoggedIn)
+          const ShellItem(AppBarIds.profile, _ProfileIndicator())
+        else if (showSettingsButton)
+          const ShellItem(AppBarIds.settings, _SettingsButton()),
+      ],
+      builder: (context, children) => SliverIgnorePointer(
+        ignoring: isMultiSelectEnabled,
+        sliver: SliverAnimatedOpacity(
+          duration: Durations.medium1,
+          opacity: isMultiSelectEnabled ? 0 : 1,
+          sliver: SliverAppBar(
+            backgroundColor: context.colorScheme.surface,
+            surfaceTintColor: context.colorScheme.surfaceTint,
+            elevation: 0,
+            scrolledUnderElevation: 1.0,
+            floating: floating,
+            pinned: pinned,
+            snap: snap,
+            expandedHeight: expandedHeight,
+            shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(bottom: Radius.circular(5))),
+            automaticallyImplyLeading: false,
+            centerTitle: false,
+            title: title ?? const _ImmichLogoWithText(),
+            actions: [...children, const SizedBox(width: 8)],
+          ),
         ),
       ),
     );
   }
+}
+
+class _SettingsButton extends StatelessWidget {
+  const _SettingsButton();
+
+  @override
+  Widget build(BuildContext context) => IconButton(
+    tooltip: context.t.settings,
+    onPressed: () => context.pushRoute(const SettingsRoute()),
+    icon: const Icon(Icons.settings_outlined),
+  );
 }
 
 class _ImmichLogoWithText extends StatelessWidget {

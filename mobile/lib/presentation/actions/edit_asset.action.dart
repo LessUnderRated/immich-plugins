@@ -12,18 +12,23 @@ import 'package:immich_mobile/domain/models/server_capability.model.dart';
 import 'package:immich_mobile/generated/translations.g.dart';
 import 'package:immich_mobile/presentation/actions/action.dart';
 import 'package:immich_mobile/presentation/pages/edit/editor.provider.dart';
+import 'package:immich_mobile/presentation/pages/edit/editor_session.provider.dart';
 import 'package:immich_mobile/presentation/widgets/images/image_provider.dart';
 import 'package:immich_mobile/providers/background_sync.provider.dart';
 import 'package:immich_mobile/providers/device_plugins.provider.dart';
 import 'package:immich_mobile/providers/infrastructure/asset.provider.dart';
 import 'package:immich_mobile/providers/infrastructure/db.provider.dart';
 import 'package:immich_mobile/providers/server_info.provider.dart';
+import 'package:immich_mobile/providers/user.provider.dart';
 import 'package:immich_mobile/providers/websocket.provider.dart';
 import 'package:immich_mobile/routing/router.dart';
 import 'package:immich_mobile/utils/asset_edit_renderer.utils.dart';
 import 'package:immich_mobile/utils/error_handler.dart';
 
 const _uneditableExtensions = ['.gif', '.svg'];
+
+/// `ref.read` of a [WidgetRef] or a [Ref], so the editor can be opened from widgets and from plugin host functions.
+typedef ProviderReader = T Function<T>(ProviderListenable<T> provider);
 
 final _stateProvider = Provider.family.autoDispose<RemoteAsset?, ActionSource>((ref, source) {
   final isSupported = ref.watch(serverInfoProvider.select((state) => state.serverVersion.supports(.syncAssetEditsV1)));
@@ -73,27 +78,7 @@ class EditAssetAction extends AssetActionBuilder {
     if (asset == null) {
       return;
     }
-
-    try {
-      // TODO(shenlong): Move all EXIF and Apply Edits logic onto the Route
-      final repository = ref.read(driftProvider).remoteAssetRepository;
-      final (edits, exif) = await (repository.getAssetEdits(asset.id), repository.watchExif(asset.id).first).wait;
-      if (exif == null || !context.mounted) {
-        return;
-      }
-
-      ref.read(editorStateProvider.notifier).init(edits, exif);
-      unawaited(
-        context.pushRoute(
-          EditImageRoute(
-            image: Image(image: getFullImageProvider(asset, edited: false)),
-            applyEdits: (newEdits) => applyEdits(ref, asset.id, newEdits),
-          ),
-        ),
-      );
-    } catch (error, stack) {
-      handleError(error, stack: stack, description: "Failed to open the editor for the asset");
-    }
+    await _open(context, ref, asset);
   }
 
   Future<void> _editOnDevice(BuildContext context, WidgetRef ref) async {
@@ -101,51 +86,94 @@ class EditAssetAction extends AssetActionBuilder {
     if (asset == null) {
       return;
     }
+    await _open(context, ref, asset);
+  }
 
+  Future<void> _open(BuildContext context, WidgetRef ref, BaseAsset asset) async {
     try {
-      final repository = ref.read(deviceEditRepositoryProvider);
-      final bytes = await repository.readOriginal(asset.id);
-      if (bytes == null || !context.mounted) {
-        return;
+      final route = await prepareImageEditor(ref.read, asset, isActive: () => context.mounted);
+      if (route != null && context.mounted) {
+        unawaited(context.pushRoute(route));
       }
-
-      final decoded = await decodeEditableImage(bytes);
-      final exif = ExifInfo(width: decoded.width, height: decoded.height);
-      decoded.dispose();
-      if (!context.mounted) {
-        return;
-      }
-
-      final existing = await repository.getEdits(asset.id);
-      if (!context.mounted) {
-        return;
-      }
-      ref.read(editorStateProvider.notifier).init(existing, exif);
-      unawaited(
-        context.pushRoute(
-          EditImageRoute(image: Image.memory(bytes), applyEdits: (edits) => applyDeviceEdits(ref, asset, edits)),
-        ),
-      );
     } catch (error, stack) {
       handleError(error, stack: stack, description: "Failed to open the editor for the asset");
     }
   }
 }
 
+/// Whether [asset] can be opened in the image editor (server edits for owned remote images, device edits for local
+/// images).
+bool canEditImage(ProviderReader read, BaseAsset asset) => switch (asset) {
+  RemoteAsset() =>
+    read(serverInfoProvider).serverVersion.supports(.syncAssetEditsV1) &&
+        asset.ownerId == read(authUserProvider).id &&
+        asset.isEditable,
+  LocalAsset() => isDeviceEditable(asset),
+};
+
+/// Loads [asset] into the editor (edit state and session) and returns the route that shows it, or null when the asset
+/// cannot be edited or [isActive] turned false while loading.
+Future<EditImageRoute?> prepareImageEditor(ProviderReader read, BaseAsset asset, {bool Function()? isActive}) async {
+  bool active() => isActive?.call() ?? true;
+  if (!canEditImage(read, asset)) {
+    return null;
+  }
+
+  switch (asset) {
+    case RemoteAsset():
+      // TODO(shenlong): Move all EXIF and Apply Edits logic onto the Route
+      final repository = read(driftProvider).remoteAssetRepository;
+      final (edits, exif) = await (repository.getAssetEdits(asset.id), repository.watchExif(asset.id).first).wait;
+      if (exif == null || !active()) {
+        return null;
+      }
+
+      final provider = getFullImageProvider(asset, edited: false);
+      read(editorStateProvider.notifier).init(edits, exif);
+      read(editorSessionProvider.notifier).start(asset: asset, provider: provider);
+      return EditImageRoute(
+        image: Image(image: provider),
+        applyEdits: (newEdits) => applyEdits(read, asset.id, newEdits),
+      );
+
+    case LocalAsset():
+      final repository = read(deviceEditRepositoryProvider);
+      final bytes = await repository.readEditBase(asset.id);
+      if (bytes == null || !active()) {
+        return null;
+      }
+
+      final decoded = await decodeEditableImage(bytes);
+      final exif = ExifInfo(width: decoded.width, height: decoded.height);
+      decoded.dispose();
+      if (!active()) {
+        return null;
+      }
+
+      final existing = await repository.getEdits(asset.id);
+      if (!active()) {
+        return null;
+      }
+      read(editorStateProvider.notifier).init(existing, exif);
+      read(editorSessionProvider.notifier).start(asset: asset, bytes: bytes, width: exif.width, height: exif.height);
+      return EditImageRoute(image: Image.memory(bytes), applyEdits: (edits) => applyDeviceEdits(read, asset, edits));
+  }
+}
+
 @visibleForTesting
-Future<void> applyEdits(WidgetRef ref, String remoteId, List<AssetEdit> edits) async {
-  final websocket = ref.read(websocketProvider.notifier);
+Future<void> applyEdits(ProviderReader read, String remoteId, List<AssetEdit> edits) async {
+  final websocket = read(websocketProvider.notifier);
 
   bool isCurrentId(dynamic data) => data is Map && (data['asset'] as Map?)?['id'] == remoteId;
-  await ref.read(assetServiceProvider).applyEdits(remoteId, edits);
+  await read(assetServiceProvider).applyEdits(remoteId, edits);
   await Future.any([
     websocket.waitForEvent('AssetEditReadyV1', isCurrentId, const .new(seconds: 10)),
     websocket.waitForEvent('AssetEditReadyV2', isCurrentId, const .new(seconds: 10)),
   ]).catchError((_) {});
 }
 
-Future<void> applyDeviceEdits(WidgetRef ref, LocalAsset asset, List<AssetEdit> edits) async {
-  final backgroundSync = ref.read(backgroundSyncProvider);
-  await ref.read(deviceEditRepositoryProvider).applyEdits(asset, edits);
+Future<void> applyDeviceEdits(ProviderReader read, LocalAsset asset, List<AssetEdit> edits) async {
+  final backgroundSync = read(backgroundSyncProvider);
+  await read(deviceEditRepositoryProvider).applyEdits(asset, edits);
   unawaited(backgroundSync.syncLocal());
 }

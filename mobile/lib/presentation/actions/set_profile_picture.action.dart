@@ -6,12 +6,19 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:immich_mobile/domain/models/asset/base_asset.model.dart';
 import 'package:immich_mobile/generated/translations.g.dart';
 import 'package:immich_mobile/presentation/actions/action.dart';
+import 'package:immich_mobile/presentation/actions/action_ids.dart';
 import 'package:immich_mobile/routing/router.dart';
 
 class SetProfilePictureAction extends ActionBuilder {
   final BaseAsset asset;
 
   const SetProfilePictureAction({required this.asset});
+
+  @override
+  String get id => ActionIds.setProfilePicture;
+
+  @override
+  List<BaseAsset> hookAssets(WidgetRef ref) => [asset];
 
   @override
   ActionItem create(BuildContext context, WidgetRef ref) => .new(

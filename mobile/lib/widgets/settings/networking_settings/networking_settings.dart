@@ -5,7 +5,9 @@ import 'package:flutter_hooks/flutter_hooks.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:immich_mobile/extensions/build_context_extensions.dart';
 import 'package:immich_mobile/generated/translations.g.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/shell/shell_ids.dart';
 import 'package:immich_mobile/models/auth/auxilary_endpoint.model.dart';
+import 'package:immich_mobile/presentation/widgets/shell/shell_list.widget.dart';
 import 'package:immich_mobile/providers/infrastructure/settings.provider.dart';
 import 'package:immich_mobile/providers/network.provider.dart';
 import 'package:immich_mobile/utils/url_helper.dart';
@@ -100,49 +102,77 @@ class NetworkingSettings extends HookConsumerWidget {
       return null;
     }, [featureEnabled.value]);
 
-    return ListView(
-      padding: const EdgeInsets.only(bottom: 96),
-      children: <Widget>[
-        const SizedBox(height: 8),
-        SettingGroupTitle(
-          title: context.t.current_server_address,
-          icon: (currentEndpoint?.startsWith('https') ?? false) ? Icons.https_outlined : Icons.http_outlined,
-        ),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 8),
-          child: Card(
-            elevation: 0,
-            shape: RoundedRectangleBorder(
-              borderRadius: const BorderRadius.all(Radius.circular(16)),
-              side: BorderSide(color: context.colorScheme.surfaceContainerHighest, width: 1),
-            ),
-            child: ListTile(
-              leading: currentEndpoint != null
-                  ? const Icon(Icons.check_circle_rounded, color: Colors.green)
-                  : const Icon(Icons.circle_outlined),
-              title: Text(
-                currentEndpoint ?? "--",
-                style: TextStyle(fontSize: 14, fontFamily: 'GoogleSansCode', color: context.primaryColor),
+    return ShellList(
+      slot: ShellSlots.settingsItems(SettingsEntryIds.networking),
+      builder: (context, children) =>
+          ListView(padding: const EdgeInsets.only(bottom: 96), children: [const SizedBox(height: 8), ...children]),
+      items: [
+        ShellItem(
+          'currentServer',
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              SettingGroupTitle(
+                title: context.t.current_server_address,
+                icon: (currentEndpoint?.startsWith('https') ?? false) ? Icons.https_outlined : Icons.http_outlined,
               ),
-            ),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                child: Card(
+                  elevation: 0,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: const BorderRadius.all(Radius.circular(16)),
+                    side: BorderSide(color: context.colorScheme.surfaceContainerHighest, width: 1),
+                  ),
+                  child: ListTile(
+                    leading: currentEndpoint != null
+                        ? const Icon(Icons.check_circle_rounded, color: Colors.green)
+                        : const Icon(Icons.circle_outlined),
+                    title: Text(
+                      currentEndpoint ?? "--",
+                      style: TextStyle(fontSize: 14, fontFamily: 'GoogleSansCode', color: context.primaryColor),
+                    ),
+                  ),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.only(top: 10.0),
+                child: Divider(color: context.colorScheme.surfaceContainerHighest),
+              ),
+            ],
           ),
         ),
-        Padding(
-          padding: const EdgeInsets.only(top: 10.0),
-          child: Divider(color: context.colorScheme.surfaceContainerHighest),
+        ShellItem(
+          'autoSwitching',
+          SettingsSwitchListTile(
+            enabled: true,
+            valueNotifier: featureEnabled,
+            title: context.t.automatic_endpoint_switching_title,
+            subtitle: context.t.automatic_endpoint_switching_subtitle,
+          ),
         ),
-        SettingsSwitchListTile(
-          enabled: true,
-          valueNotifier: featureEnabled,
-          title: context.t.automatic_endpoint_switching_title,
-          subtitle: context.t.automatic_endpoint_switching_subtitle,
+        ShellItem(
+          'localNetwork',
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const SizedBox(height: 8),
+              SettingGroupTitle(title: context.t.local_network, icon: Icons.home_outlined),
+              LocalNetworkPreference(enabled: featureEnabled.value),
+            ],
+          ),
         ),
-        const SizedBox(height: 8),
-        SettingGroupTitle(title: context.t.local_network, icon: Icons.home_outlined),
-        LocalNetworkPreference(enabled: featureEnabled.value),
-        const SizedBox(height: 16),
-        SettingGroupTitle(title: context.t.external_network, icon: Icons.dns_outlined),
-        ExternalNetworkPreference(enabled: featureEnabled.value),
+        ShellItem(
+          'externalNetwork',
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const SizedBox(height: 16),
+              SettingGroupTitle(title: context.t.external_network, icon: Icons.dns_outlined),
+              ExternalNetworkPreference(enabled: featureEnabled.value),
+            ],
+          ),
+        ),
       ],
     );
   }

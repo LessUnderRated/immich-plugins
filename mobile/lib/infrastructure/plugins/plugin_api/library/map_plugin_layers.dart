@@ -94,9 +94,18 @@ class MapPluginLayer {
     if (minZoom != null) 'minZoom': minZoom,
     if (maxZoom != null) 'maxZoom': maxZoom,
     if (action != null) 'action': action,
-    'markers': [for (final f in features) if (f.kind == 'point') f.toJson()],
-    'polylines': [for (final f in features) if (f.kind == 'line') f.toJson()],
-    'areas': [for (final f in features) if (f.kind == 'polygon') f.toJson()],
+    'markers': [
+      for (final f in features)
+        if (f.kind == 'point') f.toJson(),
+    ],
+    'polylines': [
+      for (final f in features)
+        if (f.kind == 'line') f.toJson(),
+    ],
+    'areas': [
+      for (final f in features)
+        if (f.kind == 'polygon') f.toJson(),
+    ],
   };
 
   /// Reads `{ "markers": [...], "polylines": [...], "areas": [...], "visible"?, "minZoom"?, "maxZoom"?, "action"? }`.
@@ -126,7 +135,16 @@ class MapPluginLayer {
       final outer = rings.isEmpty ? const <List<double>>[] : rings.first;
       if (outer.length >= 3) {
         features.add(
-          _feature('polygon', featureId(item), outer, item, holes: [for (final ring in rings.skip(1)) if (ring.length >= 3) ring]),
+          _feature(
+            'polygon',
+            featureId(item),
+            outer,
+            item,
+            holes: [
+              for (final ring in rings.skip(1))
+                if (ring.length >= 3) ring,
+            ],
+          ),
         );
       }
     }
@@ -187,7 +205,7 @@ class MapPluginLayer {
   }
 
   static List<List<double>> _path(Object? value) =>
-      value is List ? [for (final point in value) if (_point(point) case final p?) p] : const [];
+      value is List ? [for (final point in value) ?_point(point)] : const [];
 }
 
 /// Builds the MapLibre GeoJSON and style properties of plugin layers.
@@ -210,10 +228,7 @@ abstract final class MapPluginGeoJson {
       },
       _ => {
         'type': 'Polygon',
-        'coordinates': [
-          _ring(feature.points),
-          for (final hole in feature.holes) _ring(hole),
-        ],
+        'coordinates': [_ring(feature.points), for (final hole in feature.holes) _ring(hole)],
       },
     };
     final style = feature.style;
@@ -262,12 +277,28 @@ abstract final class MapPluginGeoJson {
     return 'rgba(${(argb >> 16) & 0xFF},${(argb >> 8) & 0xFF},${argb & 0xFF},${a.toStringAsFixed(3)})';
   }
 
-  static const pointFilter = ['==', ['geometry-type'], 'Point'];
-  static const lineFilter = ['==', ['geometry-type'], 'LineString'];
-  static const polygonFilter = ['==', ['geometry-type'], 'Polygon'];
+  static const pointFilter = [
+    '==',
+    ['geometry-type'],
+    'Point',
+  ];
+  static const lineFilter = [
+    '==',
+    ['geometry-type'],
+    'LineString',
+  ];
+  static const polygonFilter = [
+    '==',
+    ['geometry-type'],
+    'Polygon',
+  ];
   static const labelFilter = [
     'all',
-    ['==', ['geometry-type'], 'Point'],
+    [
+      '==',
+      ['geometry-type'],
+      'Point',
+    ],
     ['has', 'label'],
   ];
 

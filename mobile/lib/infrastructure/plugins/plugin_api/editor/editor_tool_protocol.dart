@@ -188,11 +188,19 @@ class EditorToolRequest {
   /// Increases every time the working image is replaced (tool applied, undo).
   final int generation;
 
+  /// Size of the editor's current working image (sent in every phase as `image`).
+  final int imageWidth;
+  final int imageHeight;
+
+  /// The file to process (`preview` and `apply`). Read-only: never modify or delete it.
   final EditorImageRef? source;
   final Map<String, dynamic> state;
   final Map<String, dynamic>? asset;
   final int? previewMaxSize;
   final String? taskId;
+
+  /// Folder to write results into (`output.dir`).
+  final String? outputDir;
   final EditorToolLimits limits;
   final Map<String, dynamic> params;
 
@@ -201,11 +209,14 @@ class EditorToolRequest {
     required this.tool,
     required this.session,
     required this.generation,
+    this.imageWidth = 0,
+    this.imageHeight = 0,
     this.source,
     this.state = const {},
     this.asset,
     this.previewMaxSize,
     this.taskId,
+    this.outputDir,
     this.limits = const EditorToolLimits(),
     this.params = const {},
   });
@@ -215,11 +226,13 @@ class EditorToolRequest {
     'tool': tool,
     'session': session,
     'generation': generation,
+    'image': {'width': imageWidth, 'height': imageHeight},
     if (source != null) 'source': source!.toJson(),
     'state': state,
     if (asset != null) 'asset': asset,
     if (previewMaxSize != null) 'preview': {'maxSize': previewMaxSize},
     if (taskId != null) 'task': {'id': taskId},
+    if (outputDir != null) 'output': {'dir': outputDir},
     'limits': limits.toJson(),
     if (params.isNotEmpty) 'params': params,
   };

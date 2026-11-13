@@ -6,22 +6,29 @@ import 'package:flutter/material.dart';
 import 'package:flutter_hooks/flutter_hooks.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:immich_mobile/constants/enums.dart';
+import 'package:immich_mobile/domain/models/asset/base_asset.model.dart';
 import 'package:immich_mobile/domain/services/timeline.service.dart';
 import 'package:immich_mobile/extensions/build_context_extensions.dart';
 import 'package:immich_mobile/extensions/datetime_extensions.dart';
 import 'package:immich_mobile/extensions/theme_extensions.dart';
 import 'package:immich_mobile/generated/translations.g.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/library/library_hooks.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/library/library_ids.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/library/library_json.dart';
 import 'package:immich_mobile/models/folder/recursive_folder.model.dart';
 import 'package:immich_mobile/models/folder/root_folder.model.dart';
 import 'package:immich_mobile/pages/common/large_leading_tile.dart';
 import 'package:immich_mobile/presentation/widgets/asset_viewer/asset_viewer.page.dart';
 import 'package:immich_mobile/presentation/widgets/images/thumbnail_tile.widget.dart';
+import 'package:immich_mobile/presentation/widgets/library/library_plugins.widget.dart';
 import 'package:immich_mobile/providers/folder.provider.dart';
 import 'package:immich_mobile/providers/infrastructure/timeline.provider.dart';
 import 'package:immich_mobile/routing/router.dart';
 import 'package:immich_mobile/utils/bytes_units.dart';
 import 'package:immich_mobile/widgets/common/immich_toast.dart';
 import 'package:intl/intl.dart';
+
+const _page = LibraryPages.folder;
 
 RecursiveFolder? _findFolderInStructure(RootFolder rootFolder, RecursiveFolder targetFolder) {
   for (final folder in rootFolder.subfolders) {
@@ -59,6 +66,11 @@ class FolderPage extends HookConsumerWidget {
       if (folder == null) {
         unawaited(ref.read(folderStructureProvider.notifier).fetchFolders(sortOrder.value));
       }
+      final opened = folder;
+      LibraryPluginHooks.emit(
+        LibraryEvents.folderOpened,
+        () => {'folder': opened == null ? null : LibraryJson.folder(opened)},
+      );
       return null;
     }, []);
 
@@ -75,10 +87,11 @@ class FolderPage extends HookConsumerWidget {
 
     void onToggleSortOrder() {
       final newOrder = sortOrder.value == SortOrder.asc ? SortOrder.desc : SortOrder.asc;
+      libraryTap(context, _page, 'sort', () {
+        unawaited(ref.read(folderStructureProvider.notifier).fetchFolders(newOrder));
 
-      unawaited(ref.read(folderStructureProvider.notifier).fetchFolders(newOrder));
-
-      sortOrder.value = newOrder;
+        sortOrder.value = newOrder;
+      }, args: () => {'order': newOrder.name});
     }
 
     return Scaffold(
@@ -86,7 +99,9 @@ class FolderPage extends HookConsumerWidget {
         title: Text(currentFolder.value?.name ?? context.t.folders),
         elevation: 0,
         centerTitle: false,
-        actions: [IconButton(icon: const Icon(Icons.swap_vert), onPressed: onToggleSortOrder)],
+        actions: LibraryPluginHooks.arrange(LibrarySlots.appBarActions(_page), [
+          (id: 'sort', item: IconButton(icon: const Icon(Icons.swap_vert), onPressed: onToggleSortOrder)),
+        ]),
       ),
       body: folderState.when(
         data: (rootFolder) {
@@ -143,71 +158,95 @@ class FolderContent extends HookConsumerWidget {
 
     return Column(
       children: [
-        FolderPath(currentFolder: folder!),
+        ...LibraryPluginHooks.arrange(LibrarySlots.header(_page), [
+          (id: 'path', item: FolderPath(currentFolder: folder!)),
+        ]),
         Expanded(
           child: folderRenderlist.when(
-            data: (folderAssets) {
-              if (folder!.subfolders.isEmpty && folderAssets.isEmpty) {
+            data: (allFolderAssets) {
+              if (folder!.subfolders.isEmpty && allFolderAssets.isEmpty) {
                 return Center(child: Text(context.t.empty_folder));
               }
 
-              return ListView(
-                children: [
-                  if (folder!.subfolders.isNotEmpty)
-                    ...folder!.subfolders.map(
-                      (subfolder) => LargeLeadingTile(
-                        leading: Icon(Icons.folder, color: context.primaryColor, size: 48),
-                        title: Text(
-                          subfolder.name,
-                          softWrap: false,
-                          overflow: TextOverflow.ellipsis,
-                          style: context.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w600),
+              return LibraryQueryBuilder<RecursiveFolder>(
+                hook: LibraryHooks.foldersQuery,
+                items: folder!.subfolders,
+                id: (subfolder) => '${subfolder.path}/${subfolder.name}',
+                toJson: (subfolder) => {'id': '${subfolder.path}/${subfolder.name}', ...LibraryJson.folder(subfolder)},
+                args: () => {'folder': LibraryJson.folder(folder!)},
+                builder: (context, subfolders) => LibraryQueryBuilder<RemoteAssetExif>(
+                  hook: LibraryHooks.folderAssetsQuery,
+                  items: allFolderAssets,
+                  id: (asset) => asset.id,
+                  toJson: LibraryJson.asset,
+                  args: () => {'folder': LibraryJson.folder(folder!)},
+                  builder: (context, folderAssets) => ListView(
+                    children: [
+                      if (subfolders.isNotEmpty)
+                        ...subfolders.map(
+                          (subfolder) => LargeLeadingTile(
+                            leading: Icon(Icons.folder, color: context.primaryColor, size: 48),
+                            title: Text(
+                              subfolder.name,
+                              softWrap: false,
+                              overflow: TextOverflow.ellipsis,
+                              style: context.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w600),
+                            ),
+                            subtitle: subfolder.subfolders.isNotEmpty
+                                ? Text(
+                                    getSubtitle(subfolder.subfolders.length),
+                                    style: context.textTheme.bodyMedium?.copyWith(
+                                      color: context.colorScheme.onSurfaceSecondary,
+                                    ),
+                                  )
+                                : null,
+                            onTap: () => libraryTap(
+                              context,
+                              _page,
+                              'openFolder',
+                              () => context.pushRoute(FolderRoute(folder: subfolder)),
+                              args: () => {'folder': LibraryJson.folder(subfolder)},
+                            ),
+                          ),
                         ),
-                        subtitle: subfolder.subfolders.isNotEmpty
-                            ? Text(
-                                getSubtitle(subfolder.subfolders.length),
-                                style: context.textTheme.bodyMedium?.copyWith(
-                                  color: context.colorScheme.onSurfaceSecondary,
+                      if (folderAssets.isNotEmpty)
+                        ...folderAssets.mapIndexed(
+                          (index, asset) => LargeLeadingTile(
+                            onTap: () => libraryTap(context, _page, 'openAsset', () {
+                              AssetViewer.setAsset(ref, asset);
+                              unawaited(
+                                context.pushRoute(
+                                  AssetViewerRoute(
+                                    initialIndex: index,
+                                    timelineService: ref
+                                        .read(timelineFactoryProvider)
+                                        .fromAssets(folderAssets, TimelineOrigin.folder),
+                                  ),
                                 ),
-                              )
-                            : null,
-                        onTap: () => context.pushRoute(FolderRoute(folder: subfolder)),
-                      ),
-                    ),
-                  if (folderAssets.isNotEmpty)
-                    ...folderAssets.mapIndexed(
-                      (index, asset) => LargeLeadingTile(
-                        onTap: () {
-                          AssetViewer.setAsset(ref, asset);
-                          unawaited(
-                            context.pushRoute(
-                              AssetViewerRoute(
-                                initialIndex: index,
-                                timelineService: ref
-                                    .read(timelineFactoryProvider)
-                                    .fromAssets(folderAssets, TimelineOrigin.folder),
+                              );
+                            }, args: () => {'asset': LibraryJson.asset(asset), 'folder': LibraryJson.folder(folder!)}),
+                            leading: ClipRRect(
+                              borderRadius: const BorderRadius.all(Radius.circular(15)),
+                              child: SizedBox(width: 80, height: 80, child: ThumbnailTile(asset)),
+                            ),
+                            title: Text(
+                              asset.name,
+                              maxLines: 2,
+                              softWrap: false,
+                              overflow: TextOverflow.ellipsis,
+                              style: context.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w600),
+                            ),
+                            subtitle: Text(
+                              "${asset.exifInfo.fileSize != null ? "${formatBytes(asset.exifInfo.fileSize ?? 0)} • " : ""}${DateFormat.yMMMd(resolvedDateTimeLocale()).format(asset.createdAt.toLocal())}",
+                              style: context.textTheme.bodyMedium?.copyWith(
+                                color: context.colorScheme.onSurfaceSecondary,
                               ),
                             ),
-                          );
-                        },
-                        leading: ClipRRect(
-                          borderRadius: const BorderRadius.all(Radius.circular(15)),
-                          child: SizedBox(width: 80, height: 80, child: ThumbnailTile(asset)),
+                          ),
                         ),
-                        title: Text(
-                          asset.name,
-                          maxLines: 2,
-                          softWrap: false,
-                          overflow: TextOverflow.ellipsis,
-                          style: context.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w600),
-                        ),
-                        subtitle: Text(
-                          "${asset.exifInfo.fileSize != null ? "${formatBytes(asset.exifInfo.fileSize ?? 0)} • " : ""}${DateFormat.yMMMd(resolvedDateTimeLocale()).format(asset.createdAt.toLocal())}",
-                          style: context.textTheme.bodyMedium?.copyWith(color: context.colorScheme.onSurfaceSecondary),
-                        ),
-                      ),
-                    ),
-                ],
+                    ],
+                  ),
+                ),
               );
             },
             loading: () => const Center(child: CircularProgressIndicator()),

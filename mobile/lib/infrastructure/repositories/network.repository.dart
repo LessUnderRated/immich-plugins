@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:cupertino_http/cupertino_http.dart';
 import 'package:http/http.dart' as http;
+import 'package:immich_mobile/infrastructure/utils/plugin_http_client.dart';
 import 'package:immich_mobile/providers/infrastructure/platform.provider.dart';
 import 'package:ok_http/ok_http.dart';
 import 'package:web_socket/web_socket.dart';
@@ -18,16 +19,19 @@ class NetworkRepository {
     }
     _clientPointer = clientPointer;
     _client?.close();
+    // Every request of the shared client runs through the `net.request` plugin hook (a pass-through when unused).
     if (Platform.isIOS) {
       final session = URLSession.fromRawPointer(clientPointer.cast());
-      _client = CupertinoClient.fromSharedSession(session);
+      _client = PluginHttpClient(CupertinoClient.fromSharedSession(session));
     } else {
-      _client = OkHttpClient.fromJniGlobalRef(
-        clientPointer,
-        configuration: const OkHttpClientConfiguration(
-          connectTimeout: Duration(seconds: 30),
-          readTimeout: Duration(seconds: 60),
-          writeTimeout: Duration(seconds: 60),
+      _client = PluginHttpClient(
+        OkHttpClient.fromJniGlobalRef(
+          clientPointer,
+          configuration: const OkHttpClientConfiguration(
+            connectTimeout: Duration(seconds: 30),
+            readTimeout: Duration(seconds: 60),
+            writeTimeout: Duration(seconds: 60),
+          ),
         ),
       );
     }

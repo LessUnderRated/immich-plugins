@@ -2,19 +2,22 @@ import 'dart:async';
 
 import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_hooks/flutter_hooks.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:immich_mobile/domain/models/asset/base_asset.model.dart';
 import 'package:immich_mobile/domain/models/timeline.model.dart';
+import 'package:immich_mobile/domain/models/timeline_plugin.model.dart';
 import 'package:immich_mobile/extensions/build_context_extensions.dart';
 import 'package:immich_mobile/extensions/datetime_extensions.dart';
 import 'package:immich_mobile/extensions/theme_extensions.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/timeline/timeline_plugin_ids.dart';
+import 'package:immich_mobile/presentation/widgets/timeline/plugins/timeline_slots.widget.dart';
 import 'package:immich_mobile/providers/haptic_feedback.provider.dart';
 import 'package:immich_mobile/providers/infrastructure/readonly_mode.provider.dart';
 import 'package:immich_mobile/providers/infrastructure/timeline.provider.dart';
 import 'package:immich_mobile/providers/timeline/multiselect.provider.dart';
+import 'package:immich_mobile/providers/timeline/timeline_plugins.provider.dart';
 
-class TimelineHeader extends HookWidget {
+class TimelineHeader extends HookConsumerWidget {
   final Bucket bucket;
   final HeaderType header;
   final double height;
@@ -41,12 +44,37 @@ class TimelineHeader extends HookWidget {
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final bucket = this.bucket;
     if (bucket is! TimeBucket || header == HeaderType.none) {
       return const SizedBox.shrink();
     }
 
-    final date = (bucket as TimeBucket).date;
+    final bridge = ref.watch(timelinePluginBridgeProvider);
+    final rules = bridge.rules(const [TimelineSlots.groupHeader]);
+    final showTitle = !rules.isHidden(TimelineItemIds.groupTitle);
+    final showSelect = !rules.isHidden(TimelineItemIds.selectGroup);
+    final Widget content = bucket is PluginGroupBucket
+        ? _buildPluginGroup(context, bucket, showTitle: showTitle, showSelect: showSelect)
+        : _buildDateGroup(context, bucket.date, showTitle: showTitle, showSelect: showSelect);
+
+    if (!bridge.hasDecorations(TimelineSlots.groupHeader)) {
+      return content;
+    }
+    return bridge.decorate(TimelineSlots.groupHeader, {
+      'page': TimelinePageScope.of(context),
+      'origin': ref.read(timelineServiceProvider).origin.name,
+      'header': header.name,
+      'group': {
+        'firstIndex': assetOffset,
+        'count': bucket.assetCount,
+        'date': bucket.date.toUtc().toIso8601String(),
+        if (bucket is PluginGroupBucket) ...bucket.toJson(),
+      },
+    }, content);
+  }
+
+  Widget _buildDateGroup(BuildContext context, DateTime date, {required bool showTitle, required bool showSelect}) {
     final isMonthHeader = header == HeaderType.month || header == HeaderType.monthAndDay;
     final isDayHeader = header == HeaderType.day || header == HeaderType.monthAndDay;
 
@@ -61,25 +89,72 @@ class TimelineHeader extends HookWidget {
             if (isMonthHeader)
               Row(
                 children: [
-                  Text(
-                    toBeginningOfSentenceCase(_formatMonth(date)),
-                    style: context.textTheme.labelLarge?.copyWith(fontSize: 24),
-                  ),
+                  if (showTitle)
+                    Text(
+                      toBeginningOfSentenceCase(_formatMonth(date)),
+                      style: context.textTheme.labelLarge?.copyWith(fontSize: 24),
+                    ),
                   const Spacer(),
-                  if (header != HeaderType.monthAndDay) _BulkSelectIconButton(bucket: bucket, assetOffset: assetOffset),
+                  if (header != HeaderType.monthAndDay && showSelect)
+                    _BulkSelectIconButton(bucket: bucket, assetOffset: assetOffset),
                 ],
               ),
             if (isDayHeader)
               Row(
                 children: [
-                  Text(
-                    toBeginningOfSentenceCase(_formatDay(date)),
-                    style: context.textTheme.labelLarge?.copyWith(fontSize: 15),
-                  ),
+                  if (showTitle)
+                    Text(
+                      toBeginningOfSentenceCase(_formatDay(date)),
+                      style: context.textTheme.labelLarge?.copyWith(fontSize: 15),
+                    ),
                   const Spacer(),
-                  _BulkSelectIconButton(bucket: bucket, assetOffset: assetOffset),
+                  if (showSelect) _BulkSelectIconButton(bucket: bucket, assetOffset: assetOffset),
                 ],
               ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// A group a `timeline.query` plugin made: its title (large or small) and subtitle.
+  Widget _buildPluginGroup(
+    BuildContext context,
+    PluginGroupBucket group, {
+    required bool showTitle,
+    required bool showSelect,
+  }) {
+    final title = group.title;
+    final subtitle = group.subtitle;
+    return Padding(
+      padding: EdgeInsets.only(top: group.large ? 8.0 : 0.0, left: 12.0, right: 12.0),
+      child: SizedBox(
+        height: height,
+        child: Row(
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  if (showTitle && title != null)
+                    Text(
+                      title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: context.textTheme.labelLarge?.copyWith(fontSize: group.large ? 24 : 15),
+                    ),
+                  if (subtitle != null)
+                    Text(
+                      subtitle,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: context.textTheme.bodySmall?.copyWith(color: context.colorScheme.onSurfaceSecondary),
+                    ),
+                ],
+              ),
+            ),
+            if (showSelect) _BulkSelectIconButton(bucket: group, assetOffset: assetOffset),
           ],
         ),
       ),

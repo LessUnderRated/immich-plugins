@@ -4,6 +4,7 @@ import 'package:immich_mobile/constants/enums.dart';
 import 'package:immich_mobile/data/store.dart';
 import 'package:immich_mobile/generated/translations.g.dart';
 import 'package:immich_mobile/presentation/actions/action.dart';
+import 'package:immich_mobile/presentation/actions/action_ids.dart';
 import 'package:immich_mobile/providers/infrastructure/toast.provider.dart';
 import 'package:immich_mobile/utils/error_handler.dart';
 import 'package:immich_mobile/widgets/common/tag_picker.dart';
@@ -23,6 +24,9 @@ final _stateProvider = Provider.family.autoDispose<List<String>?, ActionSource>(
 
 class TagAction extends AssetActionBuilder {
   const TagAction({required super.source});
+
+  @override
+  String get id => ActionIds.tag;
 
   @override
   ActionItem? create(BuildContext context, WidgetRef ref) {
@@ -86,6 +90,12 @@ class UntagAction extends AssetActionBuilder {
   final String tagId;
 
   const UntagAction({required super.source, required this.tagId});
+
+  @override
+  String get id => ActionIds.untag;
+
+  @override
+  Map<String, dynamic> get hookArgs => {'tagId': tagId};
 
   @override
   ActionItem? create(BuildContext context, WidgetRef ref) {

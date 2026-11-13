@@ -9,7 +9,9 @@ import 'package:immich_mobile/domain/models/person.model.dart';
 import 'package:immich_mobile/extensions/build_context_extensions.dart';
 import 'package:immich_mobile/extensions/datetime_extensions.dart';
 import 'package:immich_mobile/generated/translations.g.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/shell/shell_ids.dart';
 import 'package:immich_mobile/presentation/widgets/images/remote_image_provider.dart';
+import 'package:immich_mobile/presentation/widgets/shell/shell_list.widget.dart';
 import 'package:immich_mobile/presentation/widgets/sliver_app_bar/item_count_text.widget.dart';
 import 'package:immich_mobile/presentation/widgets/sliver_app_bar/random_asset_background_image.widget.dart';
 import 'package:immich_mobile/providers/infrastructure/timeline.provider.dart';
@@ -89,11 +91,18 @@ class _MesmerizingSliverAppBarState extends ConsumerState<PersonSliverAppBar> {
         ),
       ),
       actions: [
-        hideWhenSelecting(
-          IconButton(
-            icon: Icon(Icons.more_vert, color: actionIconColor, shadows: actionIconShadows),
-            onPressed: widget.onShowOptions,
-          ),
+        ShellList(
+          slot: routeSlotOf(context, PageSlotSuffix.appBarActions),
+          items: [
+            ShellItem(
+              AppBarIds.menu,
+              IconButton(
+                icon: Icon(Icons.more_vert, color: actionIconColor, shadows: actionIconShadows),
+                onPressed: widget.onShowOptions,
+              ),
+            ),
+          ],
+          builder: (context, actions) => hideWhenSelecting(Row(mainAxisSize: MainAxisSize.min, children: actions)),
         ),
       ],
       flexibleSpace: Builder(

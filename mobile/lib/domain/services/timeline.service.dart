@@ -162,12 +162,7 @@ class TimelineService {
         plugin: plugin,
       );
 
-  TimelineService._({
-    required this._assetSource,
-    required this._bucketSource,
-    required this.origin,
-    this._plugin,
-  }) {
+  TimelineService._({required this._assetSource, required this._bucketSource, required this.origin, this._plugin}) {
     _bucketSubscription = _bucketSource().listen((buckets) {
       unawaited(
         _mutex.run(() async {

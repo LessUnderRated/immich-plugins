@@ -5,6 +5,8 @@ import 'dart:io';
 import 'package:drift/drift.dart';
 import 'package:flutter/services.dart';
 import 'package:immich_mobile/data/db/main/database.dart';
+import 'package:immich_mobile/domain/utils/plugin_data_ids.dart';
+import 'package:immich_mobile/domain/utils/plugin_hooks.dart';
 import 'package:immich_mobile/infrastructure/repositories/device_album.repository.dart';
 import 'package:logging/logging.dart';
 import 'package:path/path.dart' as p;
@@ -59,7 +61,16 @@ class DownloadsOrganizer {
     }
   }
 
-  Future<void> save(DownloadsRule rule) async {
+  /// Saves the rule; runs as `downloadsRule.set` and emits `downloadsRule.changed`.
+  Future<void> save(DownloadsRule rule) => PluginHooks.run<void>(
+    DataHooks.downloadsRuleSet,
+    rule.toJson,
+    () => _save(rule),
+    withArgs: (args) => _save(DownloadsRule.fromJson(args)),
+    event: DataEvents.downloadsRuleChanged,
+  );
+
+  Future<void> _save(DownloadsRule rule) async {
     await (await _file()).writeAsString(jsonEncode(rule.toJson()), flush: true);
   }
 
@@ -75,6 +86,13 @@ class DownloadsOrganizer {
       }
     }
     return (name: 'Movies', relativePath: 'Movies/');
+  }
+
+  Future<int> _move(List<Map<String, Object>> items, String target) async {
+    if (items.isEmpty) {
+      return 0;
+    }
+    return await _channel.invokeMethod<int>('moveToFolder', {'items': items, 'relativePath': target}) ?? 0;
   }
 
   void startWatching() {
@@ -110,7 +128,30 @@ class DownloadsOrganizer {
       if (items.isEmpty) {
         return 0;
       }
-      final moved = await _channel.invokeMethod<int>('moveToFolder', {'items': items, 'relativePath': target}) ?? 0;
+      // A plugin can drop items (`ids`), change the target folder or cancel the move.
+      final moved = await PluginHooks.orSkip(
+        PluginHooks.run<int>(
+          DataHooks.downloadsOrganize,
+          () => {
+            'ids': [for (final item in items) item['id']],
+            'relativePath': target,
+            'force': force,
+          },
+          () => _move(items, target),
+          withArgs: (args) {
+            final ids = PluginArgs.strings(args['ids']).toSet();
+            return _move(
+              items.where((item) => ids.contains(item['id'])).toList(),
+              PluginArgs.string(args['relativePath']) ?? target,
+            );
+          },
+          encode: (moved) => moved,
+          decode: (json) => PluginArgs.integer(json) ?? 0,
+          event: DataEvents.downloadsOrganized,
+          eventData: (args, moved) => {...args, 'moved': moved},
+        ),
+        0,
+      );
       _log.info('Moved $moved downloaded items to $target');
       return moved;
     } catch (error, stack) {

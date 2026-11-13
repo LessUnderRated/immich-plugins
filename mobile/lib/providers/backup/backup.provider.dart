@@ -7,6 +7,8 @@ import 'package:immich_mobile/constants/constants.dart';
 import 'package:immich_mobile/domain/models/album/local_album.model.dart';
 import 'package:immich_mobile/domain/models/asset/base_asset.model.dart';
 import 'package:immich_mobile/extensions/platform_extensions.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/shell/shell_hooks.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/shell/shell_ids.dart';
 import 'package:immich_mobile/providers/infrastructure/db.provider.dart';
 import 'package:immich_mobile/providers/user.provider.dart';
 import 'package:immich_mobile/services/background_upload.service.dart';
@@ -75,8 +77,24 @@ class BackupNotifier extends StateNotifier<BackupState> {
   final BackgroundUploadService _backgroundUploadService;
   final UploadSpeedManager _uploadSpeedManager;
   Completer<void>? _cancelToken;
+  DateTime _lastProgressEvent = DateTime.fromMillisecondsSinceEpoch(0);
 
   final _logger = Logger("BackupNotifier");
+
+  /// Whether a foreground backup run is in progress.
+  bool get isRunning => _cancelToken != null;
+
+  /// The backup state for the `backup.status` host function and `backup.statusChanged` event.
+  Map<String, dynamic> statusJson() => {
+    'running': isRunning,
+    'syncing': state.isSyncing,
+    'total': state.totalCount,
+    'backedUp': state.backupCount,
+    'remainder': state.remainderCount,
+    'processing': state.processingCount,
+    'uploading': state.uploadItems.length,
+    'error': state.error.name,
+  };
 
   /// Remove upload item from state
   void _removeUploadItem(String taskId) {
@@ -108,6 +126,7 @@ class BackupNotifier extends StateNotifier<BackupState> {
       remainderCount: counts.remainder,
       processingCount: counts.processing,
     );
+    ShellHookRunner.emit(ShellEvents.backupStatusChanged, statusJson);
   }
 
   void updateError(BackupError error) {
@@ -122,7 +141,16 @@ class BackupNotifier extends StateNotifier<BackupState> {
     state = state.copyWith(isSyncing: isSyncing);
   }
 
-  Future<void> startForegroundBackup(String userId) async {
+  /// Starts a foreground backup run through the cancellable `backup.start` hook; a plugin may also replace the run
+  /// (`instead`). Completes when the run ends.
+  Future<void> startForegroundBackup(String userId) => ShellHookRunner.guard<void>(
+    ShellHooks.backupStart,
+    {'userId': userId},
+    (args) => _startForegroundBackup('${args['userId'] ?? userId}'),
+    decode: (_) {},
+  );
+
+  Future<void> _startForegroundBackup(String userId) async {
     // Cancel any existing backup before starting a new one
     if (_cancelToken != null) {
       stopForegroundBackup(reason: "restarting the backup");
@@ -144,6 +172,7 @@ class BackupNotifier extends StateNotifier<BackupState> {
     // otherwise a resume counts duplicate successes against the old baseline (#26215).
     await getBackupStatus(userId);
 
+    ShellHookRunner.emit(ShellEvents.backupStarted, () => {'userId': userId, ...statusJson()});
     return _foregroundUploadService.uploadCandidates(
       userId,
       cancelToken,
@@ -159,6 +188,7 @@ class BackupNotifier extends StateNotifier<BackupState> {
   void stopForegroundBackup({required String reason}) {
     if (_cancelToken != null) {
       _logger.info("Foreground backup cancelled: $reason");
+      ShellHookRunner.emit(ShellEvents.backupStopped, () => {'reason': reason});
     }
     _cancelToken?.complete();
     _cancelToken = null;
@@ -184,6 +214,7 @@ class BackupNotifier extends StateNotifier<BackupState> {
     }
 
     final progress = totalBytes > 0 ? bytes / totalBytes : 0.0;
+    _emitProgress(localAssetId, filename, bytes, totalBytes, progress);
     final networkSpeedAsString = _uploadSpeedManager.updateProgress(localAssetId, bytes, totalBytes);
     final currentItem = state.uploadItems[localAssetId];
     if (currentItem != null) {
@@ -221,6 +252,10 @@ class BackupNotifier extends StateNotifier<BackupState> {
     }
     state = state.copyWith(backupCount: state.backupCount + 1, remainderCount: state.remainderCount - 1);
     _uploadSpeedManager.removeTask(localAssetId);
+    ShellHookRunner.emit(
+      ShellEvents.backupUploaded,
+      () => {'localAssetId': localAssetId, 'remoteAssetId': remoteAssetId, ...statusJson()},
+    );
 
     Future.delayed(const Duration(milliseconds: 1000), () {
       _removeUploadItem(localAssetId);
@@ -228,6 +263,7 @@ class BackupNotifier extends StateNotifier<BackupState> {
   }
 
   void _handleForegroundBackupError(String localAssetId, String errorMessage) {
+    ShellHookRunner.emit(ShellEvents.backupFailed, () => {'localAssetId': localAssetId, 'error': errorMessage});
     final currentItem = state.uploadItems[localAssetId];
     if (currentItem != null) {
       state = state.copyWith(
@@ -254,6 +290,25 @@ class BackupNotifier extends StateNotifier<BackupState> {
     }
 
     _uploadSpeedManager.removeTask(localAssetId);
+  }
+
+  /// `backup.progress`, at most twice a second (and always for a finished file).
+  void _emitProgress(String localAssetId, String filename, int bytes, int totalBytes, double progress) {
+    final now = DateTime.now();
+    if (progress < 1.0 && now.difference(_lastProgressEvent) < const Duration(milliseconds: 500)) {
+      return;
+    }
+    _lastProgressEvent = now;
+    ShellHookRunner.emit(
+      ShellEvents.backupProgress,
+      () => {
+        'localAssetId': localAssetId,
+        'filename': filename,
+        'bytes': bytes,
+        'totalBytes': totalBytes,
+        'progress': progress,
+      },
+    );
   }
 
   Future<void> startBackupWithURLSession(String userId, Future<bool> remoteSync) async {

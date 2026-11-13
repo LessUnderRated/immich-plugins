@@ -10,7 +10,9 @@ import 'package:immich_mobile/extensions/build_context_extensions.dart';
 import 'package:immich_mobile/extensions/platform_extensions.dart';
 import 'package:immich_mobile/extensions/theme_extensions.dart';
 import 'package:immich_mobile/generated/translations.g.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/shell/shell_ids.dart';
 import 'package:immich_mobile/presentation/widgets/backup/backup_toggle_button.widget.dart';
+import 'package:immich_mobile/presentation/widgets/shell/shell_list.widget.dart';
 import 'package:immich_mobile/providers/background_sync.provider.dart';
 import 'package:immich_mobile/providers/backup/backup.provider.dart';
 import 'package:immich_mobile/providers/backup/backup_album.provider.dart';
@@ -115,12 +117,21 @@ class _BackupPageState extends ConsumerState<BackupPage> {
           icon: const Icon(Icons.arrow_back_ios_rounded),
         ),
         actions: [
-          IconButton(
-            onPressed: () {
-              unawaited(context.pushRoute(const BackupOptionsRoute()));
-            },
-            icon: const Icon(Icons.settings_outlined),
-            tooltip: context.t.backup_options,
+          ShellList(
+            slot: pageSlot(BackupRoute.name, PageSlotSuffix.appBarActions),
+            items: [
+              ShellItem(
+                BackupPageIds.options,
+                IconButton(
+                  onPressed: () {
+                    unawaited(context.pushRoute(const BackupOptionsRoute()));
+                  },
+                  icon: const Icon(Icons.settings_outlined),
+                  tooltip: context.t.backup_options,
+                ),
+              ),
+            ],
+            builder: (context, actions) => Row(mainAxisSize: MainAxisSize.min, children: actions),
           ),
         ],
       ),
@@ -128,23 +139,32 @@ class _BackupPageState extends ConsumerState<BackupPage> {
         children: [
           Padding(
             padding: const EdgeInsets.only(left: 16.0, right: 16, bottom: 32),
-            child: ListView(
-              children: [
-                const SizedBox(height: 8),
-                const _BackupAlbumSelectionCard(),
+            child: ShellList(
+              slot: ShellSlots.backupSections,
+              builder: (context, sections) => ListView(children: [const SizedBox(height: 8), ...sections]),
+              items: [
+                const ShellItem(BackupPageIds.albums, _BackupAlbumSelectionCard()),
                 if (selectedAlbum.isNotEmpty) ...[
-                  const _TotalCard(),
-                  const _BackupCard(),
-                  const _RemainderCard(),
-                  const Divider(),
-                  BackupToggleButton(
-                    onStart: () async => await startBackup(),
-                    onStop: () {
-                      syncSuccess = null;
-                      backupNotifier.stopForegroundBackup(reason: "backup button toggled off");
-                    },
+                  const ShellItem(BackupPageIds.total, _TotalCard()),
+                  const ShellItem(BackupPageIds.backedUp, _BackupCard()),
+                  const ShellItem(BackupPageIds.remainder, _RemainderCard()),
+                  ShellItem(
+                    BackupPageIds.toggle,
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        const Divider(),
+                        BackupToggleButton(
+                          onStart: () async => await startBackup(),
+                          onStop: () {
+                            syncSuccess = null;
+                            backupNotifier.stopForegroundBackup(reason: "backup button toggled off");
+                          },
+                        ),
+                      ],
+                    ),
                   ),
-                  switch (error) {
+                  ShellItem(BackupPageIds.error, switch (error) {
                     BackupError.none => const SizedBox.shrink(),
                     BackupError.syncFailed => Padding(
                       padding: const EdgeInsets.only(top: 10),
@@ -165,8 +185,8 @@ class _BackupPageState extends ConsumerState<BackupPage> {
                         ],
                       ),
                     ),
-                  },
-                  const _BackupFooter(),
+                  }),
+                  const ShellItem(BackupPageIds.footerLinks, _BackupFooter()),
                 ],
               ],
             ),
@@ -265,48 +285,58 @@ class _BackupFooterState extends ConsumerState<_BackupFooter> with WidgetsBindin
     final notificationStatus = ref.watch(notificationPermissionProvider);
     final batteryOptimizationStatus = ref.watch(batteryOptimizationProvider).valueOrNull;
 
-    return Column(
-      children: [
-        if (CurrentPlatform.isAndroid && isBackupEnabled) ...[
-          if (notificationStatus != PermissionStatus.granted)
-            TextButton.icon(
-              iconAlignment: .end,
-              icon: Icon(Icons.open_in_new_outlined, color: context.colorScheme.onSurfaceSecondary),
-              label: Text(
-                context.t.notification_backup_reliability,
-                textAlign: TextAlign.left,
-                style: context.textTheme.bodySmall?.copyWith(color: context.colorScheme.onSurfaceSecondary),
-              ),
-              onPressed: () {
-                unawaited(
-                  ref.read(notificationPermissionProvider.notifier).requestNotificationPermission().then((p) {
-                    if (p == PermissionStatus.permanentlyDenied) {
-                      unawaited(showPermissionsDialog());
-                    }
-                  }),
-                );
-              },
-            ),
-          if (notificationStatus != PermissionStatus.granted && batteryOptimizationStatus != PermissionStatus.granted)
-            const Divider(indent: 32, endIndent: 32),
-          if (batteryOptimizationStatus != PermissionStatus.granted)
-            TextButton.icon(
-              iconAlignment: .end,
-              icon: Icon(Icons.open_in_new_outlined, color: context.colorScheme.onSurfaceSecondary),
-              label: Text(
-                context.t.battery_optimization_backup_reliability,
-                textAlign: TextAlign.left,
-                style: context.textTheme.bodySmall?.copyWith(color: context.colorScheme.onSurfaceSecondary),
-              ),
-              onPressed: () => unawaited(showBatteryOptimizationInfo()),
-            ),
-        ],
-        TextButton.icon(
-          icon: const Icon(Icons.info_outline_rounded),
-          onPressed: () => context.pushRoute(const UploadDetailRoute()),
-          label: Text(context.t.view_details),
+    final notificationButton = TextButton.icon(
+      iconAlignment: .end,
+      icon: Icon(Icons.open_in_new_outlined, color: context.colorScheme.onSurfaceSecondary),
+      label: Text(
+        context.t.notification_backup_reliability,
+        textAlign: TextAlign.left,
+        style: context.textTheme.bodySmall?.copyWith(color: context.colorScheme.onSurfaceSecondary),
+      ),
+      onPressed: () {
+        unawaited(
+          ref.read(notificationPermissionProvider.notifier).requestNotificationPermission().then((p) {
+            if (p == PermissionStatus.permanentlyDenied) {
+              unawaited(showPermissionsDialog());
+            }
+          }),
+        );
+      },
+    );
+    final batteryButton = TextButton.icon(
+      iconAlignment: .end,
+      icon: Icon(Icons.open_in_new_outlined, color: context.colorScheme.onSurfaceSecondary),
+      label: Text(
+        context.t.battery_optimization_backup_reliability,
+        textAlign: TextAlign.left,
+        style: context.textTheme.bodySmall?.copyWith(color: context.colorScheme.onSurfaceSecondary),
+      ),
+      onPressed: () => unawaited(showBatteryOptimizationInfo()),
+    );
+    final showNotification =
+        CurrentPlatform.isAndroid && isBackupEnabled && notificationStatus != PermissionStatus.granted;
+    final showBattery =
+        CurrentPlatform.isAndroid && isBackupEnabled && batteryOptimizationStatus != PermissionStatus.granted;
+
+    return ShellList(
+      slot: ShellSlots.backupFooterLinks,
+      items: [
+        if (showNotification)
+          ShellItem(
+            BackupPageIds.notificationReliability,
+            Column(children: [notificationButton, if (showBattery) const Divider(indent: 32, endIndent: 32)]),
+          ),
+        if (showBattery) ShellItem(BackupPageIds.batteryOptimization, batteryButton),
+        ShellItem(
+          BackupPageIds.uploadDetails,
+          TextButton.icon(
+            icon: const Icon(Icons.info_outline_rounded),
+            onPressed: () => context.pushRoute(const UploadDetailRoute()),
+            label: Text(context.t.view_details),
+          ),
         ),
       ],
+      builder: (context, links) => Column(children: links),
     );
   }
 }

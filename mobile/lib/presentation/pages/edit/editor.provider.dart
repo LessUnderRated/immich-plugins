@@ -68,6 +68,42 @@ class EditorProvider extends Notifier<EditorState> {
     state = state.copyWith(isApplyingEdits: isApplyingEdits);
   }
 
+  /// The working image was replaced by a [width] x [height] tool result that already contains every pending edit:
+  /// start over on it with no crop, rotation, mirroring or mosaic.
+  void rebase(int width, int height) {
+    state = state.copyWith(
+      originalWidth: width,
+      originalHeight: height,
+      rotationAngle: 0,
+      animationDuration: Duration.zero,
+      flipHorizontal: false,
+      flipVertical: false,
+      crop: const Rect.fromLTRB(0, 0, 1, 1),
+      aspectRatio: CropAspectRatio.free,
+      mosaicStrokes: const [],
+      mosaicRedoStrokes: const [],
+      hasUnsavedEdits: true,
+    );
+  }
+
+  /// Restores the edits of [snapshot] (taken before a tool result replaced the working image), keeping the current
+  /// mode and brush settings.
+  void restore(EditorState snapshot) {
+    state = state.copyWith(
+      originalWidth: snapshot.originalWidth,
+      originalHeight: snapshot.originalHeight,
+      rotationAngle: snapshot.rotationAngle,
+      animationDuration: Duration.zero,
+      flipHorizontal: snapshot.flipHorizontal,
+      flipVertical: snapshot.flipVertical,
+      crop: snapshot.crop,
+      aspectRatio: snapshot.aspectRatio,
+      mosaicStrokes: snapshot.mosaicStrokes,
+      mosaicRedoStrokes: snapshot.mosaicRedoStrokes,
+      hasUnsavedEdits: snapshot.hasUnsavedEdits,
+    );
+  }
+
   void setCrop(Rect crop) {
     state = state.copyWith(crop: crop, hasUnsavedEdits: true);
   }

@@ -3,6 +3,8 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:immich_mobile/constants/enums.dart';
 import 'package:immich_mobile/domain/models/asset/base_asset.model.dart';
 import 'package:immich_mobile/extensions/build_context_extensions.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/viewer/viewer_builtins.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/viewer/viewer_ids.dart';
 import 'package:immich_mobile/providers/asset_viewer/asset_viewer.provider.dart';
 import 'package:immich_mobile/providers/cast.provider.dart';
 import 'package:immich_mobile/providers/infrastructure/current_album.provider.dart';
@@ -47,7 +49,7 @@ class ViewerKebabMenu extends ConsumerWidget {
       timelineOrigin: timelineOrigin,
     );
 
-    final menuChildren = ActionButtonBuilder.buildViewerKebabMenu(actionContext, context);
+    final menuChildren = _menuChildren(actionContext, context);
 
     return ImmichMenu(
       consumeOutsideTap: true,
@@ -80,5 +82,27 @@ class ViewerKebabMenu extends ConsumerWidget {
         );
       },
     );
+  }
+
+  /// `ActionButtonBuilder.buildViewerKebabMenu` with stable ids (the button type names, ViewerBuiltinIds.menu) so
+  /// plugins can hide and reorder the entries. Dividers separate the groups of neighbouring entries.
+  static List<Widget> _menuChildren(ActionButtonContext actionContext, BuildContext buildContext) {
+    final visible = [
+      for (final type in ActionButtonBuilder.defaultViewerKebabMenuOrder)
+        if (!ActionButtonBuilder.defaultViewerBottomBarButtons.contains(type) && type.shouldShow(actionContext))
+          ViewerSlotItem(type.name, type),
+    ];
+    final types = arrangeViewerItems(ViewerSlotIds.menu, visible);
+
+    final result = <Widget>[];
+    int? lastGroup;
+    for (final type in types) {
+      if (lastGroup != null && type.kebabMenuGroup != lastGroup) {
+        result.add(const Divider(height: 1));
+      }
+      result.add(type.buildButton(actionContext, buildContext, false, true));
+      lastGroup = type.kebabMenuGroup;
+    }
+    return result;
   }
 }

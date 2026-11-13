@@ -24,7 +24,7 @@ class PluginUiSurface extends ChangeNotifier {
 
   /// Replaces the tree (and optionally input values) and notifies the renderer.
   void setTree(Map<String, dynamic>? tree, {Map<String, dynamic>? state, bool notify = true}) {
-    _tree = tree == null ? null : _copy(tree) as Map<String, dynamic>;
+    _tree = tree == null ? null : _copyMap(tree);
     if (state != null && state.isNotEmpty) {
       _pushedState = {..._pushedState, ...state};
     }
@@ -91,10 +91,14 @@ class PluginUiSurface extends ChangeNotifier {
     return null;
   }
 
+  static Map<String, dynamic> _copyMap(Map value) => <String, dynamic>{
+    for (final MapEntry(:key, :value) in value.entries) '$key': _copy(value),
+  };
+
   /// Deep copy into mutable `Map<String, dynamic>` / `List<dynamic>`.
   static Object? _copy(Object? value) {
     if (value is Map) {
-      return <String, dynamic>{for (final MapEntry(:key, :value) in value.entries) '$key': _copy(value)};
+      return _copyMap(value);
     }
     if (value is List) {
       return [for (final item in value) _copy(item)];

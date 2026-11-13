@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:immich_mobile/presentation/actions/action.widget.dart';
+import 'package:immich_mobile/presentation/actions/action_ids.dart';
 import 'package:immich_mobile/presentation/actions/asset_debug.action.dart';
 import 'package:immich_mobile/presentation/actions/delete.action.dart';
 import 'package:immich_mobile/presentation/actions/download.action.dart';
@@ -13,6 +14,7 @@ class LockedFolderBottomSheet extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return const BaseBottomSheet(
+      sheet: SelectionSheets.lockedFolder,
       initialChildSize: 0.25,
       maxChildSize: 0.4,
       shouldCloseOnMinExtent: false,

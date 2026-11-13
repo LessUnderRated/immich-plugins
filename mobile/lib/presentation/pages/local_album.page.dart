@@ -4,22 +4,29 @@ import 'package:auto_route/auto_route.dart';
 import 'package:drift/drift.dart' hide Column;
 import 'package:flutter/material.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
+import 'package:immich_mobile/data/db/main/table/local/asset.dart';
+import 'package:immich_mobile/domain/models/album/local_album.model.dart';
 import 'package:immich_mobile/extensions/build_context_extensions.dart';
 import 'package:immich_mobile/extensions/theme_extensions.dart';
 import 'package:immich_mobile/generated/translations.g.dart';
-import 'package:immich_mobile/pages/common/large_leading_tile.dart';
-import 'package:immich_mobile/presentation/widgets/images/local_album_thumbnail.widget.dart';
-import 'package:immich_mobile/providers/infrastructure/album.provider.dart';
-import 'package:immich_mobile/routing/router.dart';
-import 'package:immich_mobile/data/db/main/table/local/asset.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/library/library_hooks.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/library/library_ids.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/library/library_json.dart';
 import 'package:immich_mobile/infrastructure/repositories/app_album.repository.dart';
 import 'package:immich_mobile/infrastructure/repositories/duplicate_finder.repository.dart';
+import 'package:immich_mobile/pages/common/large_leading_tile.dart';
 import 'package:immich_mobile/presentation/actions/device_album.actions.dart';
-import 'package:immich_mobile/presentation/widgets/images/thumbnail.widget.dart';
 import 'package:immich_mobile/presentation/widgets/downloads_rule_dialog.widget.dart';
+import 'package:immich_mobile/presentation/widgets/images/local_album_thumbnail.widget.dart';
+import 'package:immich_mobile/presentation/widgets/images/thumbnail.widget.dart';
+import 'package:immich_mobile/presentation/widgets/library/library_plugins.widget.dart';
 import 'package:immich_mobile/providers/app_album.provider.dart';
 import 'package:immich_mobile/providers/background_sync.provider.dart';
+import 'package:immich_mobile/providers/infrastructure/album.provider.dart';
 import 'package:immich_mobile/providers/infrastructure/db.provider.dart';
+import 'package:immich_mobile/routing/router.dart';
+
+const _page = LibraryPages.localAlbums;
 
 @RoutePage()
 class LocalAlbumsPage extends ConsumerWidget {
@@ -80,33 +87,64 @@ class LocalAlbumsPage extends ConsumerWidget {
             snap: true,
             centerTitle: true,
             title: Text(context.t.albums),
-            actions: [
-              IconButton(
-                tooltip: 'Trash',
-                icon: const Icon(Icons.delete_outline),
-                onPressed: () => context.pushRoute(const DeviceTrashRoute()),
+            actions: LibraryPluginHooks.arrange(LibrarySlots.appBarActions(_page), [
+              (
+                id: 'trash',
+                item: IconButton(
+                  tooltip: 'Trash',
+                  icon: const Icon(Icons.delete_outline),
+                  onPressed: () =>
+                      libraryTap(context, _page, 'trash', () => context.pushRoute(const DeviceTrashRoute())),
+                ),
               ),
-              IconButton(
-                tooltip: 'Downloads',
-                icon: const Icon(Icons.download_done_outlined),
-                onPressed: () => showDownloadsRuleDialog(context),
+              (
+                id: 'downloads',
+                item: IconButton(
+                  tooltip: 'Downloads',
+                  icon: const Icon(Icons.download_done_outlined),
+                  onPressed: () => libraryTap(context, _page, 'downloads', () => showDownloadsRuleDialog(context)),
+                ),
               ),
-              IconButton(
-                tooltip: 'Find duplicates',
-                icon: const Icon(Icons.copy_all_outlined),
-                onPressed: () => _findDuplicates(context, ref),
+              (
+                id: 'findDuplicates',
+                item: IconButton(
+                  tooltip: 'Find duplicates',
+                  icon: const Icon(Icons.copy_all_outlined),
+                  onPressed: () => libraryTap(context, _page, 'findDuplicates', () => _findDuplicates(context, ref)),
+                ),
               ),
-              IconButton(tooltip: 'New album', icon: const Icon(Icons.add), onPressed: () => _newAlbum(context, ref)),
-            ],
+              (
+                id: 'newAlbum',
+                item: IconButton(
+                  tooltip: 'New album',
+                  icon: const Icon(Icons.add),
+                  onPressed: () => libraryTap(context, _page, 'newAlbum', () => _newAlbum(context, ref)),
+                ),
+              ),
+              (
+                id: 'settings',
+                item: IconButton(
+                  tooltip: context.t.settings,
+                  icon: const Icon(Icons.settings_outlined),
+                  onPressed: () =>
+                      libraryTap(context, _page, 'settings', () => context.pushRoute(const SettingsRoute())),
+                ),
+              ),
+            ]),
           ),
-          const _AppAlbumList(),
-          SliverToBoxAdapter(
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(18, 16, 18, 0),
-              child: Text(context.t.on_this_device, style: context.textTheme.titleSmall),
+          ...LibraryPluginHooks.arrange(LibrarySlots.localAlbumsSections, [
+            (id: 'appAlbums', item: const _AppAlbumList()),
+            (
+              id: 'deviceTitle',
+              item: SliverToBoxAdapter(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(18, 16, 18, 0),
+                  child: Text(context.t.on_this_device, style: context.textTheme.titleSmall),
+                ),
+              ),
             ),
-          ),
-          const _AlbumList(),
+            (id: 'deviceAlbums', item: const _AlbumList()),
+          ]),
         ],
       ),
     );
@@ -131,26 +169,39 @@ class _AppAlbumList extends ConsumerWidget {
       );
     }
     final sorted = [...albums]..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
-    return SliverPadding(
-      padding: const EdgeInsets.fromLTRB(18, 12, 18, 0),
-      sliver: SliverList.builder(
-        itemCount: sorted.length,
-        itemBuilder: (context, index) {
-          final album = sorted[index];
-          return Padding(
-            padding: const EdgeInsets.only(bottom: 8.0),
-            child: LargeLeadingTile(
-              leadingPadding: const EdgeInsets.only(right: 16),
-              leading: SizedBox(width: 80, height: 80, child: _AppAlbumCover(album: album)),
-              title: Text(album.name, style: context.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w600)),
-              subtitle: Text(
-                context.t.items_count(count: album.assetIds.length),
-                style: context.textTheme.bodyMedium?.copyWith(color: context.colorScheme.onSurfaceSecondary),
+    return LibraryQueryBuilder<AppAlbum>(
+      hook: LibraryHooks.appAlbumsQuery,
+      items: sorted,
+      id: (album) => album.id,
+      toJson: LibraryJson.appAlbum,
+      placeholder: (_) => const SliverToBoxAdapter(child: SizedBox.shrink()),
+      builder: (context, sorted) => SliverPadding(
+        padding: const EdgeInsets.fromLTRB(18, 12, 18, 0),
+        sliver: SliverList.builder(
+          itemCount: sorted.length,
+          itemBuilder: (context, index) {
+            final album = sorted[index];
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 8.0),
+              child: LargeLeadingTile(
+                leadingPadding: const EdgeInsets.only(right: 16),
+                leading: SizedBox(width: 80, height: 80, child: _AppAlbumCover(album: album)),
+                title: Text(album.name, style: context.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w600)),
+                subtitle: Text(
+                  context.t.items_count(count: album.assetIds.length),
+                  style: context.textTheme.bodyMedium?.copyWith(color: context.colorScheme.onSurfaceSecondary),
+                ),
+                onTap: () => libraryTap(
+                  context,
+                  _page,
+                  'openAppAlbum',
+                  () => context.pushRoute(AppAlbumRoute(albumId: album.id)),
+                  args: () => {'album': LibraryJson.appAlbum(album)},
+                ),
               ),
-              onTap: () => context.pushRoute(AppAlbumRoute(albumId: album.id)),
-            ),
-          );
-        },
+            );
+          },
+        ),
       ),
     );
   }
@@ -224,27 +275,40 @@ class _AlbumList extends ConsumerWidget {
           );
         }
 
-        return SliverPadding(
-          padding: const EdgeInsets.all(18.0),
-          sliver: SliverList.builder(
-            itemBuilder: (_, index) {
-              final album = albums[index];
+        return LibraryQueryBuilder<LocalAlbum>(
+          hook: LibraryHooks.deviceAlbumsQuery,
+          items: albums,
+          id: (album) => album.id,
+          toJson: LibraryJson.deviceAlbum,
+          placeholder: (_) => const SliverToBoxAdapter(child: SizedBox.shrink()),
+          builder: (context, albums) => SliverPadding(
+            padding: const EdgeInsets.all(18.0),
+            sliver: SliverList.builder(
+              itemBuilder: (_, index) {
+                final album = albums[index];
 
-              return Padding(
-                padding: const EdgeInsets.only(bottom: 8.0),
-                child: LargeLeadingTile(
-                  leadingPadding: const EdgeInsets.only(right: 16),
-                  leading: SizedBox(width: 80, height: 80, child: LocalAlbumThumbnail(albumId: album.id)),
-                  title: Text(album.name, style: context.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w600)),
-                  subtitle: Text(
-                    context.t.items_count(count: album.assetCount),
-                    style: context.textTheme.bodyMedium?.copyWith(color: context.colorScheme.onSurfaceSecondary),
+                return Padding(
+                  padding: const EdgeInsets.only(bottom: 8.0),
+                  child: LargeLeadingTile(
+                    leadingPadding: const EdgeInsets.only(right: 16),
+                    leading: SizedBox(width: 80, height: 80, child: LocalAlbumThumbnail(albumId: album.id)),
+                    title: Text(album.name, style: context.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w600)),
+                    subtitle: Text(
+                      context.t.items_count(count: album.assetCount),
+                      style: context.textTheme.bodyMedium?.copyWith(color: context.colorScheme.onSurfaceSecondary),
+                    ),
+                    onTap: () => libraryTap(
+                      context,
+                      _page,
+                      'openDeviceAlbum',
+                      () => context.pushRoute(LocalTimelineRoute(album: album)),
+                      args: () => {'album': LibraryJson.deviceAlbum(album)},
+                    ),
                   ),
-                  onTap: () => context.pushRoute(LocalTimelineRoute(album: album)),
-                ),
-              );
-            },
-            itemCount: albums.length,
+                );
+              },
+              itemCount: albums.length,
+            ),
           ),
         );
       },

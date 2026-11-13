@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/painting.dart';
 import 'package:immich_mobile/domain/models/asset/base_asset.model.dart';
 import 'package:immich_mobile/infrastructure/loaders/image_request.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/viewer/image_pipeline.dart';
 import 'package:immich_mobile/infrastructure/repositories/settings.repository.dart';
 import 'package:immich_mobile/presentation/widgets/images/animated_image_stream_completer.dart';
 import 'package:immich_mobile/presentation/widgets/images/image_provider.dart';
@@ -16,14 +17,20 @@ class RemoteImageProvider extends ImageProvider<RemoteImageProvider> {
   /// Physical size to decode, or null for the source size.
   final Size? decodeSize;
 
-  const RemoteImageProvider({required this.url, this.edited = true, this.decodeSize});
+  /// The asset this is the thumbnail of (for the `image.thumbnail` plugin hook); null for other images
+  /// (faces, avatars, ...). Derived from [url], so not part of equality.
+  final ImageSubject? subject;
+
+  const RemoteImageProvider({required this.url, this.edited = true, this.decodeSize}) : subject = null;
 
   RemoteImageProvider.thumbnail({
     required String assetId,
     required String thumbhash,
     this.edited = true,
     this.decodeSize,
-  }) : url = getThumbnailUrlForRemoteId(assetId, thumbhash: thumbhash, edited: edited);
+    AssetType assetType = AssetType.image,
+  }) : url = getThumbnailUrlForRemoteId(assetId, thumbhash: thumbhash, edited: edited),
+       subject = ImageSubject(remoteId: assetId, type: assetType);
 
   @override
   Future<RemoteImageProvider> obtainKey(ImageConfiguration configuration) {
@@ -45,7 +52,13 @@ class RemoteImageProvider extends ImageProvider<RemoteImageProvider> {
 
   Stream<ImageInfo> _codec(ImageLoader loader, RemoteImageProvider key, ImageDecoderCallback decode) {
     final request = loader.request = RemoteImageRequest(uri: key.url, decodeSize: key.decodeSize);
-    return loader.loadRequest(request, decode, isFinal: true);
+    final subject = key.subject;
+    return loader.loadRequest(
+      request,
+      decode,
+      isFinal: true,
+      pipeline: subject == null ? null : ImagePipelineTarget(ImageStage.thumbnail, subject),
+    );
   }
 
   @override
@@ -87,6 +100,13 @@ class RemoteFullImageProvider extends ImageProvider<RemoteFullImageProvider> {
     return SynchronousFuture(this);
   }
 
+  ImagePipelineTarget _pipeline(ImageStage stage) =>
+      ImagePipelineTarget(stage, ImageSubject(remoteId: assetId, type: assetType));
+
+  ImageStage get _finalStage => assetType == AssetType.image && SettingsRepository.instance.appConfig.image.loadOriginal
+      ? ImageStage.full
+      : ImageStage.preview;
+
   @override
   ImageStreamCompleter loadImage(RemoteFullImageProvider key, ImageDecoderCallback decode) {
     final loader = ImageLoader(key);
@@ -94,8 +114,15 @@ class RemoteFullImageProvider extends ImageProvider<RemoteFullImageProvider> {
       return AnimatedImageStreamCompleter(
         stream: _animatedCodec(loader, key, decode),
         scale: 1.0,
-        initialImage: loader.getInitialImage(
-          RemoteImageProvider.thumbnail(assetId: key.assetId, thumbhash: key.thumbhash, decodeSize: key.thumbnailSize),
+        initialImage: ImagePipeline.placeholder(
+          loader.getInitialImage(
+            RemoteImageProvider.thumbnail(
+              assetId: key.assetId,
+              thumbhash: key.thumbhash,
+              decodeSize: key.thumbnailSize,
+            ),
+          ),
+          ImageStage.full,
         ),
         informationCollector: () => <DiagnosticsNode>[
           DiagnosticsProperty<ImageProvider>('Image provider', this),
@@ -108,13 +135,16 @@ class RemoteFullImageProvider extends ImageProvider<RemoteFullImageProvider> {
 
     return OneFramePlaceholderImageStreamCompleter(
       _codec(loader, key, decode),
-      initialImage: loader.getInitialImage(
-        RemoteImageProvider.thumbnail(
-          assetId: key.assetId,
-          thumbhash: key.thumbhash,
-          edited: key.edited,
-          decodeSize: key.thumbnailSize,
+      initialImage: ImagePipeline.placeholder(
+        loader.getInitialImage(
+          RemoteImageProvider.thumbnail(
+            assetId: key.assetId,
+            thumbhash: key.thumbhash,
+            edited: key.edited,
+            decodeSize: key.thumbnailSize,
+          ),
         ),
+        key._finalStage,
       ),
       informationCollector: () => <DiagnosticsNode>[
         DiagnosticsProperty<ImageProvider>('Image provider', this),
@@ -134,7 +164,13 @@ class RemoteFullImageProvider extends ImageProvider<RemoteFullImageProvider> {
 
     final previewRequest = loader.request = _previewRequest(key);
     final loadOriginal = assetType == AssetType.image && SettingsRepository.instance.appConfig.image.loadOriginal;
-    yield* loader.loadRequest(previewRequest, decode, isFinal: !loadOriginal);
+    yield* loader.loadRequest(
+      previewRequest,
+      decode,
+      isFinal: !loadOriginal,
+      pipeline: key._pipeline(ImageStage.preview),
+      finalStage: loadOriginal ? ImageStage.full : ImageStage.preview,
+    );
 
     if (!loadOriginal) {
       return;
@@ -145,7 +181,7 @@ class RemoteFullImageProvider extends ImageProvider<RemoteFullImageProvider> {
     }
 
     final originalRequest = loader.request = _originalRequest(key);
-    yield* loader.loadRequest(originalRequest, decode, isFinal: true);
+    yield* loader.loadRequest(originalRequest, decode, isFinal: true, pipeline: key._pipeline(ImageStage.full));
   }
 
   Stream<Object> _animatedCodec(ImageLoader loader, RemoteFullImageProvider key, ImageDecoderCallback decode) async* {
@@ -156,7 +192,13 @@ class RemoteFullImageProvider extends ImageProvider<RemoteFullImageProvider> {
     }
 
     final previewRequest = loader.request = _previewRequest(key);
-    yield* loader.loadRequest(previewRequest, decode, isFinal: false);
+    yield* loader.loadRequest(
+      previewRequest,
+      decode,
+      isFinal: false,
+      pipeline: key._pipeline(ImageStage.preview),
+      finalStage: ImageStage.full,
+    );
 
     if (loader.isCancelled) {
       return;
@@ -164,7 +206,12 @@ class RemoteFullImageProvider extends ImageProvider<RemoteFullImageProvider> {
 
     // always try original for animated, since previews don't support animation
     final originalRequest = loader.request = _originalRequest(key);
-    final codec = await loader.loadCodecRequest(originalRequest, isFinal: true);
+    final codec = await loader.loadCodecRequest(
+      originalRequest,
+      isFinal: true,
+      pipeline: key._pipeline(ImageStage.full),
+      reload: () => _originalRequest(key),
+    );
     if (codec == null) {
       if (loader.isCancelled) {
         return;

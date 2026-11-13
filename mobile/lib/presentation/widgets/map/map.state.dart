@@ -7,6 +7,9 @@ import 'package:immich_mobile/domain/models/events.model.dart';
 import 'package:immich_mobile/domain/models/map.model.dart';
 import 'package:immich_mobile/domain/models/time_range.model.dart';
 import 'package:immich_mobile/domain/utils/event_stream.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/library/library_hooks.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/library/library_ids.dart';
+import 'package:immich_mobile/presentation/widgets/map/map_utils.dart';
 import 'package:immich_mobile/providers/infrastructure/map.provider.dart';
 import 'package:immich_mobile/providers/infrastructure/settings.provider.dart';
 import 'package:immich_mobile/providers/map/map_state.provider.dart';
@@ -47,8 +50,26 @@ abstract class MapState with _$MapState {
   );
 }
 
+/// The map settings as plugins see them (`map.settingsChanged`, `map.state`).
+Map<String, dynamic> mapSettingsJson(MapState state) => {
+  'themeMode': state.themeMode.name,
+  'onlyFavorites': state.onlyFavorites,
+  'includeArchived': state.includeArchived,
+  'withPartners': state.withPartners,
+  'relativeDays': state.relativeDays,
+  'timeRange': {
+    'from': state.timeRange.from?.toUtc().toIso8601String(),
+    'to': state.timeRange.to?.toUtc().toIso8601String(),
+  },
+};
+
 class MapStateNotifier extends Notifier<MapState> {
   MapStateNotifier();
+
+  void _settingChanged(String key, Object? value) => LibraryPluginHooks.emit(
+    LibraryEvents.mapSettingsChanged,
+    () => {'key': key, 'value': value, 'settings': mapSettingsJson(state)},
+  );
 
   bool setBounds(LatLngBounds bounds) {
     if (state.bounds == bounds) {
@@ -64,30 +85,35 @@ class MapStateNotifier extends Notifier<MapState> {
     // ref.read(appSettingsServiceProvider).setSetting(AppSettingsEnum.mapThemeMode, mode.index);
     ref.read(mapStateNotifierProvider.notifier).switchTheme(mode);
     state = state.copyWith(themeMode: mode);
+    _settingChanged('themeMode', mode.name);
   }
 
   void switchFavoriteOnly(bool isFavoriteOnly) {
     unawaited(ref.read(settingsProvider).write(.mapShowFavoriteOnly, isFavoriteOnly));
     state = state.copyWith(onlyFavorites: isFavoriteOnly);
     EventStream.shared.emit(const MapMarkerReloadEvent());
+    _settingChanged('onlyFavorites', isFavoriteOnly);
   }
 
   void switchIncludeArchived(bool isIncludeArchived) {
     unawaited(ref.read(settingsProvider).write(.mapIncludeArchived, isIncludeArchived));
     state = state.copyWith(includeArchived: isIncludeArchived);
     EventStream.shared.emit(const MapMarkerReloadEvent());
+    _settingChanged('includeArchived', isIncludeArchived);
   }
 
   void switchWithPartners(bool isWithPartners) {
     unawaited(ref.read(settingsProvider).write(.mapWithPartners, isWithPartners));
     state = state.copyWith(withPartners: isWithPartners);
     EventStream.shared.emit(const MapMarkerReloadEvent());
+    _settingChanged('withPartners', isWithPartners);
   }
 
   void setRelativeTime(int relativeDays) {
     unawaited(ref.read(settingsProvider).write(.mapRelativeDate, relativeDays));
     state = state.copyWith(relativeDays: relativeDays);
     EventStream.shared.emit(const MapMarkerReloadEvent());
+    _settingChanged('relativeDays', relativeDays);
   }
 
   void setCustomTimeRange(TimeRange range) {
@@ -95,6 +121,10 @@ class MapStateNotifier extends Notifier<MapState> {
     unawaited(ref.read(settingsProvider).write(.mapCustomTo, range.to));
     state = state.copyWith(timeRange: range);
     EventStream.shared.emit(const MapMarkerReloadEvent());
+    _settingChanged('timeRange', {
+      'from': range.from?.toUtc().toIso8601String(),
+      'to': range.to?.toUtc().toIso8601String(),
+    });
   }
 
   @override
@@ -116,7 +146,27 @@ class MapStateNotifier extends Notifier<MapState> {
 // It should be used only after the map service provider is overridden
 final mapMarkerProvider = FutureProvider.family<Map<String, dynamic>, LatLngBounds?>((ref, bounds) async {
   final mapService = ref.watch(mapServiceProvider);
-  final markers = await mapService.getMarkers(bounds);
+  final hooked = LibraryPluginHooks.query<Marker>(
+    LibraryHooks.mapMarkersQuery,
+    await mapService.getMarkers(bounds),
+    id: (marker) => marker.assetId,
+    toJson: (marker) => {
+      'id': marker.assetId,
+      'assetId': marker.assetId,
+      'lat': marker.location.latitude,
+      'lng': marker.location.longitude,
+    },
+    fromJson: (json) {
+      final lat = json['lat'];
+      final lng = json['lng'];
+      final id = json['assetId'] ?? json['id'];
+      return lat is num && lng is num && id != null
+          ? Marker(location: LatLng(lat.toDouble(), lng.toDouble()), assetId: '$id')
+          : null;
+    },
+    args: () => {if (bounds != null) 'bounds': mapBoundsJson(bounds)},
+  );
+  final markers = hooked is Future<List<Marker>> ? await hooked : hooked;
   final features = List.filled(markers.length, const <String, dynamic>{});
   for (int i = 0; i < markers.length; i++) {
     final marker = markers[i];

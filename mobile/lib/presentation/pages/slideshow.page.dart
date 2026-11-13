@@ -11,6 +11,10 @@ import 'package:immich_mobile/domain/services/timeline.service.dart';
 import 'package:immich_mobile/extensions/build_context_extensions.dart';
 import 'package:immich_mobile/extensions/scroll_extensions.dart';
 import 'package:immich_mobile/generated/translations.g.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/viewer/active_viewer.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/viewer/viewer_builtins.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/viewer/viewer_events.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/viewer/viewer_ids.dart';
 import 'package:immich_mobile/pages/common/settings.page.dart';
 import 'package:immich_mobile/presentation/widgets/slideshow/slideshow_controller.dart';
 import 'package:immich_mobile/presentation/widgets/slideshow/slideshow_progress_bar.widget.dart';
@@ -48,6 +52,10 @@ class _SlideshowPageState extends ConsumerState<SlideshowPage>
 
   bool _showAppBar = false;
   bool _disableAnimations = false;
+
+  late final _handle = _SlideshowHandle(this);
+  late int _reportedIndex;
+  late bool _reportedPaused;
 
   SlideshowConfig get _config => ref.read(appConfigProvider).slideshow;
 
@@ -101,10 +109,41 @@ class _SlideshowPageState extends ConsumerState<SlideshowPage>
       _slideshow.recalculateNextIndex();
     });
 
+    _reportedIndex = _slideshow.currentIndex;
+    _reportedPaused = _slideshow.paused;
     _slideshow.goToNextSlide();
+    _slideshow.addListener(_emitChanges);
+    ActiveViewers.opened(_handle);
+    ViewerEvents.emitAsset(ViewerEventNames.slideshowStarted, _assetAt(initialIndex), () => {'index': initialIndex});
 
     unawaited(SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersive));
     unawaited(WakelockPlus.enable());
+  }
+
+  /// `slideshow.slideChanged`, `slideshow.paused`, `slideshow.resumed` and `slideshow.ended` for plugins.
+  void _emitChanges() {
+    final index = _slideshow.currentIndex;
+    final paused = _slideshow.paused;
+    if (index != _reportedIndex) {
+      final previous = _reportedIndex;
+      ViewerEvents.emitAsset(
+        ViewerEventNames.slideshowSlideChanged,
+        _assetAt(index),
+        () => {'index': index, 'previousIndex': previous, 'total': widget.timeline.totalAssets},
+      );
+    }
+    if (paused != _reportedPaused) {
+      final ended = paused && _slideshow.nextIndex == null;
+      ViewerEvents.emitAsset(
+        ended
+            ? ViewerEventNames.slideshowEnded
+            : (paused ? ViewerEventNames.slideshowPaused : ViewerEventNames.slideshowResumed),
+        _assetAt(index),
+        () => {'index': index},
+      );
+    }
+    _reportedIndex = index;
+    _reportedPaused = paused;
   }
 
   @override
@@ -115,6 +154,8 @@ class _SlideshowPageState extends ConsumerState<SlideshowPage>
 
   @override
   void dispose() {
+    ActiveViewers.closed(_handle);
+    _slideshow.removeListener(_emitChanges);
     _slideshow.dispose();
     _fade.dispose();
     _pageController.dispose();
@@ -296,21 +337,28 @@ class _SlideshowPageState extends ConsumerState<SlideshowPage>
                     AppBar(
                       backgroundColor: context.scaffoldBackgroundColor,
                       title: Text(context.t.slideshow),
-                      actions: [
-                        IconButton(
-                          onPressed: _slideshow.paused ? _slideshow.resume : _slideshow.pause,
-                          icon: Icon(_slideshow.paused ? Icons.play_arrow : Icons.pause),
+                      // Built-in ids: ViewerBuiltinIds.slideshowActions.
+                      actions: arrangeViewerItems<Widget>(ViewerSlotIds.slideshowActions, [
+                        ViewerSlotItem(
+                          'playPause',
+                          IconButton(
+                            onPressed: _slideshow.paused ? _slideshow.resume : _slideshow.pause,
+                            icon: Icon(_slideshow.paused ? Icons.play_arrow : Icons.pause),
+                          ),
                         ),
-                        IconButton(
-                          onPressed: () {
-                            if (!_slideshow.paused) {
-                              _slideshow.pause();
-                            }
-                            unawaited(context.pushRoute(SettingsSubRoute(section: SettingSection.assetViewer)));
-                          },
-                          icon: const Icon(Icons.settings),
+                        ViewerSlotItem(
+                          'settings',
+                          IconButton(
+                            onPressed: () {
+                              if (!_slideshow.paused) {
+                                _slideshow.pause();
+                              }
+                              unawaited(context.pushRoute(SettingsSubRoute(section: SettingSection.assetViewer)));
+                            },
+                            icon: const Icon(Icons.settings),
+                          ),
                         ),
-                      ],
+                      ]),
                     ),
                     progressBar,
                   ],
@@ -344,5 +392,59 @@ class _SlideshowPageState extends ConsumerState<SlideshowPage>
         );
       },
     );
+  }
+}
+
+/// The slideshow as plugins see it (`viewer.*` host functions act on the innermost open viewer).
+class _SlideshowHandle implements ViewerHandle {
+  final _SlideshowPageState _state;
+
+  _SlideshowHandle(this._state);
+
+  @override
+  String get surface => 'slideshow';
+
+  @override
+  BaseAsset? get currentAsset => _state._assetAt(_state._slideshow.currentIndex);
+
+  @override
+  int get index => _state._slideshow.currentIndex;
+
+  @override
+  int get total => _state.widget.timeline.totalAssets;
+
+  @override
+  bool get controlsVisible => _state._showAppBar;
+
+  @override
+  bool get detailsVisible => false;
+
+  @override
+  bool get zoomed => false;
+
+  @override
+  bool jumpTo(int index) {
+    if (!_state.mounted || index < 0 || index >= total || !_state._pageController.hasClients) {
+      return false;
+    }
+    _state._pageController.jumpToPage(index);
+    return true;
+  }
+
+  @override
+  void showControls(bool show) {
+    if (_state.mounted && show != _state._showAppBar) {
+      unawaited(_state._onTapUp());
+    }
+  }
+
+  @override
+  void showDetails(bool show) {}
+
+  @override
+  Future<void> close() async {
+    if (_state.mounted) {
+      await _state.context.maybePop();
+    }
   }
 }

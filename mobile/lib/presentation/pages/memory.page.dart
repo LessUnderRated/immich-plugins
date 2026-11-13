@@ -8,6 +8,10 @@ import 'package:flutter_hooks/flutter_hooks.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:immich_mobile/domain/models/asset/base_asset.model.dart';
 import 'package:immich_mobile/domain/models/memory.model.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/viewer/active_viewer.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/viewer/viewer_bridge.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/viewer/viewer_events.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/viewer/viewer_ids.dart';
 import 'package:immich_mobile/presentation/widgets/images/image_provider.dart';
 import 'package:immich_mobile/presentation/widgets/memory/memory_bottom_info.widget.dart';
 import 'package:immich_mobile/presentation/widgets/memory/memory_card.widget.dart';
@@ -56,6 +60,22 @@ class MemoryPage extends HookConsumerWidget {
       return () {
         // Clean up to normal edge to edge when we are done
         unawaited(restoreEdgeToEdge());
+      };
+    }, const []);
+
+    // The memory as plugins see it: `viewer.*` host functions and `memory.*` events.
+    final handle = useMemoized(_MemoryHandle.new);
+    handle
+      ..memory = currentMemory.value
+      ..assetIndex = currentAssetPage.value
+      ..controller = memoryAssetPageControllers[currentMemoryIndex.value]
+      ..pop = () => context.maybePop();
+    useEffect(() {
+      ActiveViewers.opened(handle);
+      _emitMemory(ViewerEventNames.memoryOpened, memories[memoryIndex], 0);
+      return () {
+        ActiveViewers.closed(handle);
+        _emitMemory(ViewerEventNames.memoryClosed, handle.memory, handle.assetIndex);
       };
     }, const []);
 
@@ -191,6 +211,7 @@ class MemoryPage extends HookConsumerWidget {
       ref.read(hapticFeedbackProvider.notifier).selectionClick();
       currentAssetPage.value = otherIndex;
       updateProgressText();
+      _emitMemory(ViewerEventNames.memoryAssetChanged, currentMemory.value, otherIndex);
 
       final activeMemory = currentMemory.value;
 
@@ -250,6 +271,7 @@ class MemoryPage extends HookConsumerWidget {
                 if (pageNumber < memories.length) {
                   currentMemoryIndex.value = pageNumber;
                   currentMemory.value = memories[pageNumber];
+                  _emitMemory(ViewerEventNames.memoryOpened, memories[pageNumber], 0);
 
                   WidgetsBinding.instance.addPostFrameCallback((_) {
                     MemoryPage.setMemory(ref, memories[pageNumber]);
@@ -350,24 +372,25 @@ class MemoryPage extends HookConsumerWidget {
                               );
                             },
                           ),
-                          Positioned(
-                            top: 8,
-                            left: 8,
-                            child: MaterialButton(
-                              minWidth: 0,
-                              onPressed: () {
-                                // auto_route doesn't invoke pop scope, so
-                                // turn off full screen mode here
-                                // https://github.com/Milad-Akarie/auto_route_library/issues/1799
-                                unawaited(context.maybePop());
-                                unawaited(restoreEdgeToEdge());
-                              },
-                              shape: const CircleBorder(),
-                              color: Colors.white.withValues(alpha: 0.2),
-                              elevation: 0,
-                              child: const Icon(Icons.close_rounded, color: Colors.white),
+                          if (!ViewerPlugins.rules(ViewerSlotIds.memoryActions).isHidden('close'))
+                            Positioned(
+                              top: 8,
+                              left: 8,
+                              child: MaterialButton(
+                                minWidth: 0,
+                                onPressed: () {
+                                  // auto_route doesn't invoke pop scope, so
+                                  // turn off full screen mode here
+                                  // https://github.com/Milad-Akarie/auto_route_library/issues/1799
+                                  unawaited(context.maybePop());
+                                  unawaited(restoreEdgeToEdge());
+                                },
+                                shape: const CircleBorder(),
+                                color: Colors.white.withValues(alpha: 0.2),
+                                elevation: 0,
+                                child: const Icon(Icons.close_rounded, color: Colors.white),
+                              ),
                             ),
-                          ),
                           if (currentAsset.value != null && currentAsset.value!.isVideo)
                             Positioned(
                               bottom: 24,
@@ -396,4 +419,61 @@ class MemoryPage extends HookConsumerWidget {
       ),
     );
   }
+}
+
+void _emitMemory(String event, Memory memory, int assetIndex) {
+  if (!ViewerEvents.listens(event)) {
+    return;
+  }
+  final asset = assetIndex >= 0 && assetIndex < memory.assets.length ? memory.assets[assetIndex] : null;
+  final data = {'memory': memoryJson(memory), 'index': assetIndex, 'total': memory.assets.length};
+  ViewerEvents.emitAsset(event, asset, () => data);
+}
+
+/// The memory page as plugins see it; updated on every build.
+class _MemoryHandle implements ViewerHandle {
+  late Memory memory;
+  int assetIndex = 0;
+  PageController? controller;
+  Future<bool> Function()? pop;
+
+  @override
+  String get surface => 'memory';
+
+  @override
+  BaseAsset? get currentAsset => assetIndex < memory.assets.length ? memory.assets[assetIndex] : null;
+
+  @override
+  int get index => assetIndex;
+
+  @override
+  int get total => memory.assets.length;
+
+  @override
+  bool get controlsVisible => true;
+
+  @override
+  bool get detailsVisible => false;
+
+  @override
+  bool get zoomed => false;
+
+  @override
+  bool jumpTo(int index) {
+    final controller = this.controller;
+    if (controller == null || !controller.hasClients || index < 0 || index >= total) {
+      return false;
+    }
+    controller.jumpToPage(index);
+    return true;
+  }
+
+  @override
+  void showControls(bool show) {}
+
+  @override
+  void showDetails(bool show) {}
+
+  @override
+  Future<void> close() async => pop?.call();
 }

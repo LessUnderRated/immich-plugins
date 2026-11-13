@@ -5,6 +5,8 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:immich_mobile/data/db/main/database.dart';
 import 'package:immich_mobile/extensions/build_context_extensions.dart';
 import 'package:immich_mobile/generated/translations.g.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/timeline/timeline_plugin_ids.dart';
+import 'package:immich_mobile/presentation/widgets/sliver_app_bar/app_menu.widget.dart';
 import 'package:immich_mobile/providers/infrastructure/db.provider.dart';
 import 'package:immich_mobile/routing/router.dart';
 
@@ -55,7 +57,10 @@ class LocalMediaSummaryPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: Text(context.t.local_media_summary)),
+      appBar: AppBar(
+        title: Text(context.t.local_media_summary),
+        actions: const [PageAppBarActions(page: TimelinePages.localMediaSummary)],
+      ),
       body: Consumer(
         builder: (ctx, ref, _) {
           final db = ref.watch(driftProvider);
@@ -135,7 +140,10 @@ class RemoteMediaSummaryPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: Text(context.t.remote_media_summary)),
+      appBar: AppBar(
+        title: Text(context.t.remote_media_summary),
+        actions: const [PageAppBarActions(page: TimelinePages.remoteMediaSummary)],
+      ),
       body: Consumer(
         builder: (ctx, ref, _) {
           final db = ref.watch(driftProvider);

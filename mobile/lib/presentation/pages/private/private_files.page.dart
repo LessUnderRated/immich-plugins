@@ -4,7 +4,12 @@ import 'dart:io';
 import 'package:auto_route/auto_route.dart';
 import 'package:flutter/material.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/library/library_hooks.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/library/library_ids.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/library/library_json.dart';
 import 'package:immich_mobile/infrastructure/repositories/private_files.repository.dart';
+import 'package:immich_mobile/presentation/pages/private/private_gallery.page.dart';
+import 'package:immich_mobile/presentation/widgets/library/library_plugins.widget.dart';
 import 'package:immich_mobile/providers/background_sync.provider.dart';
 import 'package:immich_mobile/providers/private_vault.provider.dart';
 import 'package:immich_mobile/routing/router.dart';
@@ -58,7 +63,20 @@ class PrivateFilesView extends ConsumerStatefulWidget {
 }
 
 class _PrivateFilesViewState extends ConsumerState<PrivateFilesView> {
+  static const _page = LibraryPages.privateGallery;
+
   final Set<String> _selected = {};
+
+  /// Runs selection action [id] on [files] through hook `action.privateGallery.<id>`.
+  void _selectionAction(String id, List<PrivateFile> files, Future<void> Function() original) => libraryTap(
+    context,
+    _page,
+    id,
+    original,
+    args: () => {
+      'files': [for (final file in files) LibraryJson.privateFile(file)],
+    },
+  );
 
   void _toggle(PrivateFile file) =>
       setState(() => _selected.contains(file.file) ? _selected.remove(file.file) : _selected.add(file.file));
@@ -91,48 +109,65 @@ class _PrivateFilesViewState extends ConsumerState<PrivateFilesView> {
       appBar: AppBar(
         centerTitle: !selecting,
         leading: selecting
-            ? IconButton(icon: const Icon(Icons.close), onPressed: () => setState(_selected.clear))
+            ? IconButton(
+                icon: const Icon(Icons.close),
+                onPressed: () => libraryTap(context, _page, 'close', () => setState(_selected.clear)),
+              )
             : null,
         title: Text(selecting ? '${_selected.length} selected' : 'Private'),
         actions: selecting
-            ? [
-                IconButton(
-                  tooltip: 'Select all',
-                  icon: const Icon(Icons.select_all),
-                  onPressed: () => setState(() => _selected.addAll(files.map((file) => file.file))),
-                ),
-              ]
-            : [
-                if (widget.legacyCount > 0)
-                  TextButton(
-                    onPressed: () => context.pushRoute(const PrivateLegacyRoute()),
-                    child: Text('Older items (${widget.legacyCount})'),
+            ? LibraryPluginHooks.arrange(LibrarySlots.privateGallerySelectionAppBarActions, [
+                (
+                  id: 'selectAll',
+                  item: IconButton(
+                    tooltip: 'Select all',
+                    icon: const Icon(Icons.select_all),
+                    onPressed: () => libraryTap(
+                      context,
+                      _page,
+                      'selectAll',
+                      () => setState(() => _selected.addAll(files.map((file) => file.file))),
+                    ),
                   ),
-                IconButton(tooltip: 'Lock', icon: const Icon(Icons.lock_outline), onPressed: widget.onLock),
-              ],
+                ),
+              ])
+            : LibraryPluginHooks.arrange(LibrarySlots.appBarActions(_page), [
+                if (widget.legacyCount > 0) privateOlderItemsItem(context, widget.legacyCount),
+                privateLockItem(context, widget.onLock),
+                privateSettingsItem(context),
+              ]),
       ),
       bottomNavigationBar: selecting
           ? BottomAppBar(
               height: 64,
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                children: [
-                  TextButton.icon(
-                    icon: const Icon(Icons.share_outlined),
-                    label: const Text('Share'),
-                    onPressed: () => sharePrivateFiles(selection),
+                children: LibraryPluginHooks.arrange(LibrarySlots.privateGallerySelectionActions, [
+                  (
+                    id: 'share',
+                    item: TextButton.icon(
+                      icon: const Icon(Icons.share_outlined),
+                      label: const Text('Share'),
+                      onPressed: () => _selectionAction('share', selection, () => sharePrivateFiles(selection)),
+                    ),
                   ),
-                  TextButton.icon(
-                    icon: const Icon(Icons.lock_open_outlined),
-                    label: const Text('Unhide'),
-                    onPressed: () => _unhide(selection),
+                  (
+                    id: 'unhide',
+                    item: TextButton.icon(
+                      icon: const Icon(Icons.lock_open_outlined),
+                      label: const Text('Unhide'),
+                      onPressed: () => _selectionAction('unhide', selection, () => _unhide(selection)),
+                    ),
                   ),
-                  TextButton.icon(
-                    icon: const Icon(Icons.delete_outline),
-                    label: const Text('Delete'),
-                    onPressed: () => _delete(selection),
+                  (
+                    id: 'delete',
+                    item: TextButton.icon(
+                      icon: const Icon(Icons.delete_outline),
+                      label: const Text('Delete'),
+                      onPressed: () => _selectionAction('delete', selection, () => _delete(selection)),
+                    ),
                   ),
-                ],
+                ]),
               ),
             )
           : null,
@@ -146,46 +181,58 @@ class _PrivateFilesViewState extends ConsumerState<PrivateFilesView> {
                 ),
               ),
             )
-          : GridView.builder(
-              padding: const EdgeInsets.all(2),
-              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: 4,
-                mainAxisSpacing: 2,
-                crossAxisSpacing: 2,
-              ),
-              itemCount: files.length,
-              itemBuilder: (context, index) {
-                final file = files[index];
-                final selected = _selected.contains(file.file);
-                return GestureDetector(
-                  onLongPress: () => _toggle(file),
-                  onTap: () => selecting
-                      ? _toggle(file)
-                      : context.pushRoute(PrivateFileViewerRoute(files: files, initialIndex: index)),
-                  child: Stack(
-                    fit: StackFit.expand,
-                    children: [
-                      PrivateThumbnail(file: file),
-                      if (file.isVideo)
-                        const Align(
-                          alignment: Alignment.bottomRight,
-                          child: Padding(
-                            padding: EdgeInsets.all(4),
-                            child: Icon(Icons.play_circle_fill, color: Colors.white, size: 20),
+          : LibraryQueryBuilder<PrivateFile>(
+              hook: LibraryHooks.privateFilesQuery,
+              items: files,
+              id: (file) => file.file,
+              toJson: LibraryJson.privateFile,
+              builder: (context, files) => GridView.builder(
+                padding: const EdgeInsets.all(2),
+                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: 4,
+                  mainAxisSpacing: 2,
+                  crossAxisSpacing: 2,
+                ),
+                itemCount: files.length,
+                itemBuilder: (context, index) {
+                  final file = files[index];
+                  final selected = _selected.contains(file.file);
+                  return GestureDetector(
+                    onLongPress: () => _toggle(file),
+                    onTap: () => selecting
+                        ? _toggle(file)
+                        : libraryTap(
+                            context,
+                            _page,
+                            'open',
+                            () => context.pushRoute(PrivateFileViewerRoute(files: files, initialIndex: index)),
+                            args: () => {'file': LibraryJson.privateFile(file)},
                           ),
-                        ),
-                      if (selected) ...[
-                        ColoredBox(color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.25)),
-                        Positioned(
-                          top: 4,
-                          right: 4,
-                          child: Icon(Icons.check_circle, color: Theme.of(context).colorScheme.primary),
-                        ),
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        PrivateThumbnail(file: file),
+                        if (file.isVideo)
+                          const Align(
+                            alignment: Alignment.bottomRight,
+                            child: Padding(
+                              padding: EdgeInsets.all(4),
+                              child: Icon(Icons.play_circle_fill, color: Colors.white, size: 20),
+                            ),
+                          ),
+                        if (selected) ...[
+                          ColoredBox(color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.25)),
+                          Positioned(
+                            top: 4,
+                            right: 4,
+                            child: Icon(Icons.check_circle, color: Theme.of(context).colorScheme.primary),
+                          ),
+                        ],
                       ],
-                    ],
-                  ),
-                );
-              },
+                    ),
+                  );
+                },
+              ),
             ),
     );
   }
@@ -226,6 +273,11 @@ class PrivateFileViewerPage extends ConsumerStatefulWidget {
 }
 
 class _PrivateFileViewerPageState extends ConsumerState<PrivateFileViewerPage> {
+  static const _page = LibraryPages.privateFileViewer;
+
+  void _action(String id, Future<void> Function() original) =>
+      libraryTap(context, _page, id, original, args: () => {'file': LibraryJson.privateFile(_current)});
+
   late final PageController _controller = PageController(initialPage: widget.initialIndex);
   late int _index = widget.initialIndex;
   bool _showControls = true;
@@ -277,15 +329,32 @@ class _PrivateFileViewerPageState extends ConsumerState<PrivateFileViewerPage> {
                 ),
               ),
               title: Text(_current.name, style: const TextStyle(fontSize: 14)),
-              actions: [
-                IconButton(
-                  tooltip: 'Share',
-                  icon: const Icon(Icons.share_outlined),
-                  onPressed: () => sharePrivateFiles([_current]),
+              actions: LibraryPluginHooks.arrange(LibrarySlots.appBarActions(_page), [
+                (
+                  id: 'share',
+                  item: IconButton(
+                    tooltip: 'Share',
+                    icon: const Icon(Icons.share_outlined),
+                    onPressed: () => _action('share', () => sharePrivateFiles([_current])),
+                  ),
                 ),
-                IconButton(tooltip: 'Unhide', icon: const Icon(Icons.lock_open), onPressed: _unhide),
-                IconButton(tooltip: 'Delete', icon: const Icon(Icons.delete_outline), onPressed: _delete),
-              ],
+                (
+                  id: 'unhide',
+                  item: IconButton(
+                    tooltip: 'Unhide',
+                    icon: const Icon(Icons.lock_open),
+                    onPressed: () => _action('unhide', _unhide),
+                  ),
+                ),
+                (
+                  id: 'delete',
+                  item: IconButton(
+                    tooltip: 'Delete',
+                    icon: const Icon(Icons.delete_outline),
+                    onPressed: () => _action('delete', _delete),
+                  ),
+                ),
+              ]),
             )
           : null,
       body: PageView.builder(

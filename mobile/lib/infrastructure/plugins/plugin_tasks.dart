@@ -22,7 +22,8 @@ class PluginTask {
   final DateTime startedAt = DateTime.now();
   DateTime? finishedAt;
 
-  final void Function()? _onCancel;
+  /// Called when the task is cancelled (app tasks; plugins get the `task.cancelled` event).
+  final void Function()? onCancel;
   final _done = Completer<PluginTaskState>();
 
   PluginTask._({
@@ -32,8 +33,8 @@ class PluginTask {
     required this.cancellable,
     this.message,
     this.progress,
-    void Function()? onCancel,
-  }) : _onCancel = onCancel;
+    this.onCancel,
+  });
 
   bool get isRunning => state == PluginTaskState.running;
 
@@ -162,7 +163,7 @@ class PluginTasks extends ChangeNotifier {
       ..state = PluginTaskState.cancelled
       ..finishedAt = DateTime.now();
     try {
-      task._onCancel?.call();
+      task.onCancel?.call();
     } catch (_) {
       // a failing cancel callback must not keep the task alive
     }

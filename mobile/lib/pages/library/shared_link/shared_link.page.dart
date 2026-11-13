@@ -6,7 +6,10 @@ import 'package:flutter_hooks/flutter_hooks.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:immich_mobile/extensions/asyncvalue_extensions.dart';
 import 'package:immich_mobile/generated/translations.g.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/library/library_ids.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/library/library_json.dart';
 import 'package:immich_mobile/models/shared_link/shared_link.model.dart';
+import 'package:immich_mobile/presentation/widgets/library/library_plugins.widget.dart';
 import 'package:immich_mobile/providers/shared_link.provider.dart';
 import 'package:immich_mobile/widgets/shared_link/shared_link_item.dart';
 
@@ -42,7 +45,7 @@ class SharedLinkPage extends HookConsumerWidget {
       );
     }
 
-    Widget buildSharesList(List<SharedLink> links) {
+    Widget buildLinks(List<SharedLink> links) {
       return LayoutBuilder(
         builder: (context, constraints) => constraints.maxWidth > 600
             ? GridView.builder(
@@ -66,6 +69,14 @@ class SharedLinkPage extends HookConsumerWidget {
               ),
       );
     }
+
+    Widget buildSharesList(List<SharedLink> allLinks) => LibraryQueryBuilder<SharedLink>(
+      hook: LibraryHooks.sharedLinksQuery,
+      items: allLinks,
+      id: (link) => link.id,
+      toJson: LibraryJson.sharedLink,
+      builder: (context, links) => links.isEmpty ? buildNoShares() : buildLinks(links),
+    );
 
     return Scaffold(
       appBar: AppBar(title: Text(context.t.shared_link_app_bar_title), elevation: 0, centerTitle: false),

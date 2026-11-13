@@ -8,7 +8,11 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:immich_mobile/extensions/build_context_extensions.dart';
 import 'package:immich_mobile/extensions/datetime_extensions.dart';
 import 'package:immich_mobile/generated/translations.g.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/library/library_hooks.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/library/library_ids.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/library/library_json.dart';
 import 'package:immich_mobile/models/shared_link/shared_link.model.dart';
+import 'package:immich_mobile/presentation/widgets/library/library_plugins.widget.dart';
 import 'package:immich_mobile/providers/server_info.provider.dart';
 import 'package:immich_mobile/providers/shared_link.provider.dart';
 import 'package:immich_mobile/services/shared_link.service.dart';
@@ -57,6 +61,21 @@ class SharedLinkEditPage extends HookConsumerWidget {
     final expiryAfter = useState<DateTime?>(existingLink?.expiresAt?.toLocal());
     final selectedPresetIndex = useState<int?>(existingLink?.expiresAt == null ? 0 : null);
     final newShareLink = useState("");
+    const page = LibraryPages.sharedLinkEdit;
+
+    /// What the form would save, as plugins see it in `action.sharedLinkEdit.*`.
+    Map<String, dynamic> formArgs() => {
+      'link': existingLink == null ? null : LibraryJson.sharedLink(existingLink!),
+      'albumId': albumId,
+      'assetIds': assetsList,
+      'description': descriptionController.text,
+      'password': passwordController.text,
+      'slug': slugController.text,
+      'showMetadata': showMetadata.value,
+      'allowDownload': allowDownload.value,
+      'allowUpload': allowUpload.value,
+      'expiresAt': expiryAfter.value?.toUtc().toIso8601String(),
+    };
 
     Widget buildSharedLinkRow({required String leading, required String content}) {
       return Row(
@@ -291,12 +310,15 @@ class SharedLinkEditPage extends HookConsumerWidget {
     Widget buildLinkCopyField(String link) {
       return TextFormField(
         readOnly: true,
-        onTap: () => copyToClipboard(link),
+        onTap: () => libraryTap(context, page, 'copy', () => copyToClipboard(link), args: () => {'url': link}),
         initialValue: link,
         decoration: InputDecoration(
           border: const OutlineInputBorder(),
           enabledBorder: themeData.inputDecorationTheme.focusedBorder,
-          suffixIcon: IconButton(onPressed: () => Share.share(link), icon: const Icon(Icons.share)),
+          suffixIcon: IconButton(
+            onPressed: () => libraryTap(context, page, 'share', () => Share.share(link), args: () => {'url': link}),
+            icon: const Icon(Icons.share),
+          ),
         ),
       );
     }
@@ -308,14 +330,23 @@ class SharedLinkEditPage extends HookConsumerWidget {
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Icon(Icons.add_link, size: 100, color: themeData.colorScheme.primary),
-            const SizedBox(height: 20),
-            buildLinkCopyField(newShareLink.value),
-            const SizedBox(height: 20),
-            ElevatedButton.icon(
-              onPressed: () => context.maybePop(),
-              icon: const Icon(Icons.check),
-              label: Text(context.t.done, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
-            ),
+            ...LibraryPluginHooks.arrange(LibrarySlots.sharedLinkEditCreated, [
+              (
+                id: 'link',
+                item: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 20),
+                  child: buildLinkCopyField(newShareLink.value),
+                ),
+              ),
+              (
+                id: 'done',
+                item: ElevatedButton.icon(
+                  onPressed: () => context.maybePop(),
+                  icon: const Icon(Icons.check),
+                  label: Text(context.t.done, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
+                ),
+              ),
+            ]),
           ],
         ),
       );
@@ -455,67 +486,95 @@ class SharedLinkEditPage extends HookConsumerWidget {
                 child: ListView(
                   children: [
                     const SizedBox(height: 20),
-                    buildLinkTitle(),
-                    if (existingLink != null)
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.center,
-                        children: [
-                          const SizedBox(height: 16),
-                          buildLinkCopyField(
-                            buildSharedLinkUrl(
-                                  baseUrl: displayServerUrl,
-                                  slug: existingLink!.slug,
-                                  key: existingLink!.key,
-                                ) ??
-                                '',
+                    ...LibraryPluginHooks.arrange(LibrarySlots.sharedLinkEditFields, [
+                      (id: 'title', item: buildLinkTitle()),
+                      if (existingLink != null)
+                        (
+                          id: 'link',
+                          item: Column(
+                            crossAxisAlignment: CrossAxisAlignment.center,
+                            children: [
+                              const SizedBox(height: 16),
+                              buildLinkCopyField(
+                                buildSharedLinkUrl(
+                                      baseUrl: displayServerUrl,
+                                      slug: existingLink!.slug,
+                                      key: existingLink!.key,
+                                    ) ??
+                                    '',
+                              ),
+                              const SizedBox(height: 24),
+                              const Divider(),
+                            ],
                           ),
-                          const SizedBox(height: 24),
-                          const Divider(),
-                        ],
+                        ),
+                      (
+                        id: 'description',
+                        item: Padding(padding: const EdgeInsets.only(top: 24), child: buildDescriptionField()),
                       ),
-                    const SizedBox(height: 24),
-                    buildDescriptionField(),
-                    const SizedBox(height: 16),
-                    buildPasswordField(),
-                    const SizedBox(height: 16),
-                    buildSlugField(),
-                    const SizedBox(height: 16),
-                    buildShowMetaButton(),
-                    const SizedBox(height: 16),
-                    buildAllowDownloadButton(),
-                    const SizedBox(height: 16),
-                    buildAllowUploadButton(),
-                    const SizedBox(height: 16),
-                    buildExpiryAfterButton(),
+                      (
+                        id: 'password',
+                        item: Padding(padding: const EdgeInsets.only(top: 16), child: buildPasswordField()),
+                      ),
+                      (id: 'slug', item: Padding(padding: const EdgeInsets.only(top: 16), child: buildSlugField())),
+                      (
+                        id: 'showMetadata',
+                        item: Padding(padding: const EdgeInsets.only(top: 16), child: buildShowMetaButton()),
+                      ),
+                      (
+                        id: 'allowDownload',
+                        item: Padding(padding: const EdgeInsets.only(top: 16), child: buildAllowDownloadButton()),
+                      ),
+                      (
+                        id: 'allowUpload',
+                        item: Padding(padding: const EdgeInsets.only(top: 16), child: buildAllowUploadButton()),
+                      ),
+                      (
+                        id: 'expiry',
+                        item: Padding(padding: const EdgeInsets.only(top: 16), child: buildExpiryAfterButton()),
+                      ),
+                    ]),
                     const SizedBox(height: 24),
                     Align(
                       alignment: Alignment.centerRight,
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
                         spacing: 8,
-                        children: [
+                        children: LibraryPluginHooks.arrange(LibrarySlots.sharedLinkEditActions, [
                           if (existingLink != null)
-                            OutlinedButton.icon(
-                              style: OutlinedButton.styleFrom(
-                                foregroundColor: themeData.colorScheme.error,
-                                side: BorderSide(color: themeData.colorScheme.error),
+                            (
+                              id: 'delete',
+                              item: OutlinedButton.icon(
+                                style: OutlinedButton.styleFrom(
+                                  foregroundColor: themeData.colorScheme.error,
+                                  side: BorderSide(color: themeData.colorScheme.error),
+                                ),
+                                onPressed: () => libraryTap(context, page, 'delete', handleDeleteLink, args: formArgs),
+                                icon: const Icon(Icons.delete_outline),
+                                label: Text(
+                                  context.t.delete,
+                                  style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
+                                ),
                               ),
-                              onPressed: handleDeleteLink,
-                              icon: const Icon(Icons.delete_outline),
+                            ),
+                          (
+                            id: 'submit',
+                            item: ElevatedButton.icon(
+                              icon: const Icon(Icons.check),
+                              onPressed: () => libraryTap(
+                                context,
+                                page,
+                                'submit',
+                                existingLink != null ? handleEditLink : handleNewLink,
+                                args: formArgs,
+                              ),
                               label: Text(
-                                context.t.delete,
+                                existingLink != null ? context.t.shared_link_edit_submit_button : context.t.create_link,
                                 style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
                               ),
                             ),
-                          ElevatedButton.icon(
-                            icon: const Icon(Icons.check),
-                            onPressed: existingLink != null ? handleEditLink : handleNewLink,
-                            label: Text(
-                              existingLink != null ? context.t.shared_link_edit_submit_button : context.t.create_link,
-                              style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
-                            ),
                           ),
-                        ],
+                        ]),
                       ),
                     ),
                     const SizedBox(height: 40),

@@ -6,8 +6,10 @@ import 'package:flutter_hooks/flutter_hooks.dart' hide Store;
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:immich_mobile/extensions/build_context_extensions.dart';
 import 'package:immich_mobile/generated/translations.g.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/shell/shell_ids.dart';
 import 'package:immich_mobile/models/server_info/server_disk_info.model.dart';
 import 'package:immich_mobile/pages/common/settings.page.dart';
+import 'package:immich_mobile/presentation/widgets/shell/shell_list.widget.dart';
 import 'package:immich_mobile/providers/auth.provider.dart';
 import 'package:immich_mobile/providers/backup/backup_server.provider.dart';
 import 'package:immich_mobile/providers/infrastructure/readonly_mode.provider.dart';
@@ -182,12 +184,13 @@ class ImmichAppBarDialog extends HookConsumerWidget {
       );
     }
 
-    Padding buildFooter() {
-      return Padding(
-        padding: const EdgeInsets.only(top: 10, bottom: 20),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
+    Widget buildFooter() {
+      const separator = SizedBox(width: 20, child: Text("•", textAlign: TextAlign.center));
+      return ShellList(
+        slot: ShellSlots.profileMenuFooter,
+        items: [
+          ShellItem(
+            ProfileMenuIds.documentation,
             InkWell(
               onTap: () {
                 ContextHelper(context).pop();
@@ -195,7 +198,9 @@ class ImmichAppBarDialog extends HookConsumerWidget {
               },
               child: Text(context.t.documentation, style: context.textTheme.bodySmall),
             ),
-            const SizedBox(width: 20, child: Text("•", textAlign: TextAlign.center)),
+          ),
+          ShellItem(
+            ProfileMenuIds.github,
             InkWell(
               onTap: () {
                 ContextHelper(context).pop();
@@ -205,7 +210,9 @@ class ImmichAppBarDialog extends HookConsumerWidget {
               },
               child: Text(context.t.profile_drawer_github, style: context.textTheme.bodySmall),
             ),
-            const SizedBox(width: 20, child: Text("•", textAlign: TextAlign.center)),
+          ),
+          ShellItem(
+            ProfileMenuIds.licenses,
             InkWell(
               onTap: () async {
                 ContextHelper(context).pop();
@@ -225,7 +232,16 @@ class ImmichAppBarDialog extends HookConsumerWidget {
               },
               child: Text(context.t.licenses, style: context.textTheme.bodySmall),
             ),
-          ],
+          ),
+        ],
+        builder: (context, links) => Padding(
+          padding: const EdgeInsets.only(top: 10, bottom: 20),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              for (final (index, link) in links.indexed) ...[if (index > 0) separator, link],
+            ],
+          ),
         ),
       );
     }
@@ -270,27 +286,40 @@ class ImmichAppBarDialog extends HookConsumerWidget {
               mainAxisSize: MainAxisSize.min,
               children: [
                 Container(padding: const EdgeInsets.symmetric(horizontal: 8), child: buildTopRow()),
-                Container(
-                  decoration: BoxDecoration(
-                    color: context.colorScheme.surface,
-                    borderRadius: const BorderRadius.all(Radius.circular(10)),
-                  ),
-                  margin: const EdgeInsets.only(left: 12, right: 12, bottom: 8),
-                  child: Column(
-                    children: [
-                      const AppBarProfileInfoBox(),
-                      Divider(thickness: 4, color: context.colorScheme.surfaceContainer),
-                      buildStorageInformation(),
-                      Divider(thickness: 4, color: context.colorScheme.surfaceContainer),
-                      const AppBarServerInfo(),
-                    ],
+                ShellList(
+                  slot: ShellSlots.profileMenuSections,
+                  items: [
+                    const ShellItem(ProfileMenuIds.profile, AppBarProfileInfoBox()),
+                    ShellItem(ProfileMenuIds.storage, buildStorageInformation()),
+                    const ShellItem(ProfileMenuIds.server, AppBarServerInfo()),
+                  ],
+                  builder: (context, sections) => Container(
+                    decoration: BoxDecoration(
+                      color: context.colorScheme.surface,
+                      borderRadius: const BorderRadius.all(Radius.circular(10)),
+                    ),
+                    margin: const EdgeInsets.only(left: 12, right: 12, bottom: 8),
+                    child: Column(
+                      children: [
+                        for (final (index, section) in sections.indexed) ...[
+                          if (index > 0) Divider(thickness: 4, color: context.colorScheme.surfaceContainer),
+                          section,
+                        ],
+                      ],
+                    ),
                   ),
                 ),
-                if (isReadonlyModeEnabled) buildReadonlyMessage(),
-                buildAppLogButton(),
-                buildFreeUpSpaceButton(),
-                buildSettingButton(),
-                buildSignOutButton(),
+                ShellList(
+                  slot: ShellSlots.profileMenuItems,
+                  items: [
+                    if (isReadonlyModeEnabled) ShellItem(ProfileMenuIds.readonlyBanner, buildReadonlyMessage()),
+                    ShellItem(ProfileMenuIds.appLogs, buildAppLogButton()),
+                    ShellItem(ProfileMenuIds.freeUpSpace, buildFreeUpSpaceButton()),
+                    ShellItem(ProfileMenuIds.settings, buildSettingButton()),
+                    ShellItem(ProfileMenuIds.signOut, buildSignOutButton()),
+                  ],
+                  builder: (context, items) => Column(mainAxisSize: MainAxisSize.min, children: items),
+                ),
                 buildFooter(),
               ],
             ),

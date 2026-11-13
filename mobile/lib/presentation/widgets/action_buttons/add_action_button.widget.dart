@@ -8,11 +8,14 @@ import 'package:immich_mobile/domain/models/asset/base_asset.model.dart';
 import 'package:immich_mobile/extensions/build_context_extensions.dart';
 import 'package:immich_mobile/generated/translations.g.dart';
 import 'package:immich_mobile/presentation/actions/action.widget.dart';
+import 'package:immich_mobile/presentation/actions/action_ids.dart';
+import 'package:immich_mobile/presentation/actions/action_slots.dart';
 import 'package:immich_mobile/presentation/actions/archive.action.dart';
 import 'package:immich_mobile/presentation/actions/lock.action.dart';
 import 'package:immich_mobile/presentation/widgets/action_buttons/base_action_button.widget.dart';
 import 'package:immich_mobile/presentation/widgets/album/album_selector.widget.dart';
 import 'package:immich_mobile/presentation/widgets/bottom_sheet/base_bottom_sheet.widget.dart';
+import 'package:immich_mobile/presentation/widgets/timeline/plugins/timeline_plugin_bridge.dart';
 import 'package:immich_mobile/providers/asset_viewer/asset_viewer.provider.dart';
 import 'package:immich_mobile/providers/infrastructure/action.provider.dart';
 import 'package:immich_mobile/providers/infrastructure/album.provider.dart';
@@ -48,29 +51,40 @@ class _AddActionButtonState extends ConsumerState<AddActionButton> {
     final user = ref.read(currentUserProvider);
     final isOwner = asset is RemoteAsset && asset.ownerId == user?.id;
 
-    return [
-      Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-        child: Text(context.t.add_to_bottom_bar, style: context.textTheme.labelMedium),
-      ),
-      BaseActionButton(
-        iconData: Icons.photo_album_outlined,
-        label: context.t.album,
-        menuItem: true,
-        onPressed: () => _handleMenuSelection(AddToMenuItem.album),
-      ),
+    BaseActionButton album(String label) => BaseActionButton(
+      iconData: Icons.photo_album_outlined,
+      label: label,
+      menuItem: true,
+      onPressed: () => _handleMenuSelection(AddToMenuItem.album),
+    );
 
-      if (isOwner) ...[
-        const Divider(),
+    // Plugins hide, reorder and rename `album`, `archive` and `lock` and add their own entries (`viewer.addMenu`)
+    return arrangeActionWidgets(
+      ref,
+      const [ActionSlots.viewerAddMenu],
+      [
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-          child: Text(context.t.move_to, style: context.textTheme.labelMedium),
+          child: Text(context.t.add_to_bottom_bar, style: context.textTheme.labelMedium),
         ),
-        const ActionMenuItem(action: ArchiveAction(source: .viewer)),
-        const ActionMenuItem(action: LockAction(source: .viewer)),
+        BuiltinSlotItem(id: _albumItemId, relabel: album, child: album(context.t.album)),
+
+        if (isOwner) ...[
+          const Divider(),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            child: Text(context.t.move_to, style: context.textTheme.labelMedium),
+          ),
+          const ActionMenuItem(action: ArchiveAction(source: .viewer)),
+          const ActionMenuItem(action: LockAction(source: .viewer)),
+        ],
       ],
-    ];
+      present: (action) => ActionMenuItem(action: action),
+      source: .viewer,
+    );
   }
+
+  static const _albumItemId = 'album';
 
   void _openAlbumSelector() {
     final currentAsset = ref.read(assetViewerProvider).currentAsset;

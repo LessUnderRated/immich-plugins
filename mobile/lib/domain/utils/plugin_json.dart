@@ -73,6 +73,69 @@ abstract final class PluginJson {
     },
   };
 
+  /// Builds an asset from the [asset] JSON (as returned by `assets.query` or a hook), so plugins can answer query
+  /// hooks with assets the app did not load itself. `storage: "local"` (or a `localId` without `remoteId`) builds a
+  /// device asset, anything else a server asset. Returns null when required fields are missing.
+  static BaseAsset? parseAsset(Object? json) {
+    if (json is! Map) {
+      return null;
+    }
+    final id = PluginArgs.string(json['id']);
+    final name = PluginArgs.string(json['name']);
+    final type = parseAssetType(json['type']);
+    final createdAt = PluginArgs.date(json['createdAt']);
+    if (id == null || name == null || type == null || createdAt == null) {
+      return null;
+    }
+    final updatedAt = PluginArgs.date(json['updatedAt']) ?? createdAt;
+    final remoteId = PluginArgs.string(json['remoteId']);
+    final isLocal = json['storage'] == 'local' || (json['localId'] != null && remoteId == null);
+    if (isLocal) {
+      return LocalAsset(
+        id: id,
+        remoteId: remoteId,
+        cloudId: PluginArgs.string(json['cloudId']),
+        name: name,
+        checksum: PluginArgs.string(json['checksum']),
+        type: type,
+        createdAt: createdAt,
+        updatedAt: updatedAt,
+        width: PluginArgs.integer(json['width']),
+        height: PluginArgs.integer(json['height']),
+        durationMs: PluginArgs.integer(json['durationMs']),
+        isFavorite: PluginArgs.boolean(json['isFavorite']) ?? false,
+        orientation: PluginArgs.integer(json['orientation']) ?? 0,
+        playbackStyle:
+            AssetPlaybackStyle.values.where((style) => style.name == json['playbackStyle']).firstOrNull ??
+            (type == AssetType.video ? AssetPlaybackStyle.video : AssetPlaybackStyle.image),
+        latitude: PluginArgs.real(json['latitude']),
+        longitude: PluginArgs.real(json['longitude']),
+        isEdited: PluginArgs.boolean(json['isEdited']) ?? false,
+      );
+    }
+    return RemoteAsset(
+      id: remoteId ?? id,
+      localId: PluginArgs.string(json['localId']),
+      name: name,
+      ownerId: PluginArgs.string(json['ownerId']) ?? '',
+      checksum: PluginArgs.string(json['checksum']),
+      type: type,
+      createdAt: createdAt,
+      updatedAt: updatedAt,
+      uploadedAt: PluginArgs.date(json['uploadedAt']),
+      width: PluginArgs.integer(json['width']),
+      height: PluginArgs.integer(json['height']),
+      durationMs: PluginArgs.integer(json['durationMs']),
+      isFavorite: PluginArgs.boolean(json['isFavorite']) ?? false,
+      thumbHash: PluginArgs.string(json['thumbHash']),
+      visibility: parseVisibility(json['visibility']) ?? AssetVisibility.timeline,
+      livePhotoVideoId: PluginArgs.string(json['livePhotoVideoId']),
+      stackId: PluginArgs.string(json['stackId']),
+      isEdited: PluginArgs.boolean(json['isEdited']) ?? false,
+      deletedAt: PluginArgs.date(json['deletedAt']),
+    );
+  }
+
   static Map<String, dynamic> exif(ExifInfo exif) => {
     'fileSize': exif.fileSize,
     'description': exif.description,
@@ -210,7 +273,8 @@ abstract final class PluginJson {
   static PluginListCodec<T> list<T>(String Function(T item) id, Map<String, dynamic> Function(T item) toJson) =>
       PluginListCodec<T>(id: id, toJson: toJson);
 
-  static PluginListCodec<BaseAsset> assets() => PluginListCodec<BaseAsset>(id: (asset) => asset.id, toJson: asset);
+  static PluginListCodec<BaseAsset> assets() =>
+      PluginListCodec<BaseAsset>(id: (asset) => asset.id, toJson: asset, fromJson: parseAsset);
 
   static PluginListCodec<RemoteAlbum> remoteAlbums() =>
       PluginListCodec<RemoteAlbum>(id: (album) => album.id, toJson: remoteAlbum);

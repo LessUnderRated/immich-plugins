@@ -17,13 +17,7 @@ Future<T?> runLibraryAction<T>(
 }) async {
   final messenger = ScaffoldMessenger.maybeOf(context);
   try {
-    return await LibraryPluginHooks.action<T>(
-      page,
-      item,
-      original,
-      args: args ?? () => const {},
-      withArgs: withArgs,
-    );
+    return await LibraryPluginHooks.action<T>(page, item, original, args: args ?? () => const {}, withArgs: withArgs);
   } catch (error) {
     if (!LibraryPluginHooks.isCancelled(error)) {
       rethrow;

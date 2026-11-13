@@ -4,6 +4,8 @@ import 'dart:io';
 
 import 'package:flutter/services.dart';
 import 'package:immich_mobile/domain/models/asset/base_asset.model.dart';
+import 'package:immich_mobile/domain/utils/plugin_data_ids.dart';
+import 'package:immich_mobile/domain/utils/plugin_hooks.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
@@ -99,8 +101,28 @@ class PrivateFilesRepository {
     _changes.add(null);
   }
 
-  /// Returns the ids of the assets that were hidden.
-  Future<List<String>> hide(List<LocalAsset> assets) async {
+  /// Hides device assets from every app; runs as `private.hide`. Returns the ids of the assets that were hidden.
+  Future<List<String>> hide(List<LocalAsset> assets) => PluginHooks.run<List<String>>(
+    DataHooks.privateHide,
+    () => {
+      'ids': [for (final asset in assets) asset.id],
+      'mode': 'files',
+    },
+    () => _hide(assets),
+    withArgs: (args) {
+      final ids = PluginArgs.strings(args['ids']).toSet();
+      return _hide(assets.where((asset) => ids.contains(asset.id)).toList());
+    },
+    encode: (ids) => ids,
+    decode: PluginArgs.strings,
+    event: DataEvents.privateHidden,
+    eventData: (args, hidden) => {'ids': hidden, 'mode': 'files'},
+  );
+
+  Future<List<String>> _hide(List<LocalAsset> assets) async {
+    if (assets.isEmpty) {
+      return const [];
+    }
     final rows = await _channel.invokeListMethod<Map>('privateHide', {
       'items': [
         for (final asset in assets) {'id': asset.id, 'video': asset.type == AssetType.video},
@@ -116,7 +138,22 @@ class PrivateFilesRepository {
     return [for (final entry in hidden) entry.id];
   }
 
-  Future<int> unhide(List<PrivateFile> files) async {
+  /// Puts hidden files back into the gallery; runs as `private.unhide`. Returns how many were restored.
+  Future<int> unhide(List<PrivateFile> files) => PluginHooks.run<int>(
+    DataHooks.privateUnhide,
+    () => {
+      'files': [for (final file in files) file.toJson()],
+      'mode': 'files',
+    },
+    () => _unhide(files),
+    withArgs: (args) => _unhide(_select(files, args['files'])),
+    encode: (restored) => restored,
+    decode: (json) => PluginArgs.integer(json) ?? 0,
+    event: DataEvents.privateUnhidden,
+    eventData: (args, restored) => {...args, 'restored': restored},
+  );
+
+  Future<int> _unhide(List<PrivateFile> files) async {
     var restored = 0;
     final remaining = await list();
     for (final file in files) {
@@ -133,11 +170,31 @@ class PrivateFilesRepository {
     return restored;
   }
 
-  Future<void> delete(List<PrivateFile> files) async {
+  /// Deletes hidden files for good; runs as `private.delete`.
+  Future<void> delete(List<PrivateFile> files) => PluginHooks.run<void>(
+    DataHooks.privateDelete,
+    () => {
+      'files': [for (final file in files) file.toJson()],
+      'mode': 'files',
+    },
+    () => _delete(files),
+    withArgs: (args) => _delete(_select(files, args['files'])),
+    event: DataEvents.privateDeleted,
+  );
+
+  Future<void> _delete(List<PrivateFile> files) async {
     final paths = {for (final file in files) file.file};
     for (final path in paths) {
       await _channel.invokeMethod('privateDelete', {'file': path});
     }
     await _save((await list()).where((entry) => !paths.contains(entry.file)).toList());
+  }
+
+  /// The files of [files] that a plugin kept in its changed `files` argument (by `file` path).
+  static List<PrivateFile> _select(List<PrivateFile> files, Object? json) {
+    final kept = {
+      for (final entry in json is List ? json : const []) entry is Map ? '${entry['file']}' : '$entry',
+    };
+    return files.where((file) => kept.contains(file.file)).toList();
   }
 }

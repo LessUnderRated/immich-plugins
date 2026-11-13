@@ -6,12 +6,16 @@ import 'package:collection/collection.dart';
 import 'package:flutter/material.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:immich_mobile/domain/models/asset/base_asset.model.dart';
+import 'package:immich_mobile/domain/models/timeline_plugin.model.dart';
 import 'package:immich_mobile/domain/services/timeline.service.dart';
+import 'package:immich_mobile/domain/utils/plugin_hooks.dart';
 import 'package:immich_mobile/extensions/build_context_extensions.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/timeline/timeline_plugin_ids.dart';
 import 'package:immich_mobile/presentation/widgets/asset_viewer/asset_viewer.page.dart';
 import 'package:immich_mobile/presentation/widgets/images/thumbnail_tile.widget.dart';
 import 'package:immich_mobile/presentation/widgets/timeline/fixed/row.dart';
 import 'package:immich_mobile/presentation/widgets/timeline/header.widget.dart';
+import 'package:immich_mobile/presentation/widgets/timeline/plugins/timeline_slots.widget.dart';
 import 'package:immich_mobile/presentation/widgets/timeline/segment.model.dart';
 import 'package:immich_mobile/presentation/widgets/timeline/segment_builder.dart';
 import 'package:immich_mobile/presentation/widgets/timeline/timeline.state.dart';
@@ -22,7 +26,9 @@ import 'package:immich_mobile/providers/infrastructure/current_album.provider.da
 import 'package:immich_mobile/providers/infrastructure/readonly_mode.provider.dart';
 import 'package:immich_mobile/providers/infrastructure/timeline.provider.dart';
 import 'package:immich_mobile/providers/timeline/multiselect.provider.dart';
+import 'package:immich_mobile/providers/timeline/timeline_plugins.provider.dart';
 import 'package:immich_mobile/routing/router.dart';
+import 'package:immich_ui/immich_ui.dart';
 
 class FixedSegment extends Segment {
   final double tileHeight;
@@ -246,23 +252,49 @@ class _AssetTileWidget extends ConsumerWidget {
     if (multiSelectState.forceEnable || multiSelectState.isEnabled) {
       ref.read(multiSelectProvider.notifier).toggleAssetSelection(asset);
     } else {
-      await ref.read(timelineServiceProvider).loadAssets(assetIndex, 1);
-      if (!ctx.mounted) {
-        return;
+      Future<void> open() async {
+        await ref.read(timelineServiceProvider).loadAssets(assetIndex, 1);
+        if (!ctx.mounted) {
+          return;
+        }
+
+        ref.read(isPlayingMotionVideoProvider.notifier).playing = false;
+        AssetViewer.setAsset(ref, asset, thumbnailSize: remoteSize);
+        unawaited(
+          ctx.pushRoute(
+            AssetViewerRoute(
+              initialIndex: assetIndex,
+              timelineService: ref.read(timelineServiceProvider),
+              heroOffset: heroOffset,
+              currentAlbum: ref.read(currentRemoteAlbumProvider),
+            ),
+          ),
+        );
       }
 
-      ref.read(isPlayingMotionVideoProvider.notifier).playing = false;
-      AssetViewer.setAsset(ref, asset, thumbnailSize: remoteSize);
-      unawaited(
-        ctx.pushRoute(
-          AssetViewerRoute(
-            initialIndex: assetIndex,
-            timelineService: ref.read(timelineServiceProvider),
-            heroOffset: heroOffset,
-            currentAlbum: ref.read(currentRemoteAlbumProvider),
-          ),
-        ),
-      );
+      if (!PluginHooks.has(TimelineHooks.openAsset)) {
+        return open();
+      }
+      try {
+        await PluginHooks.run<void>(
+          TimelineHooks.openAsset,
+          () => {
+            'page': TimelinePageScope.of(ctx),
+            'origin': ref.read(timelineServiceProvider).origin.name,
+            'index': assetIndex,
+            'asset': TimelineAssetJson.encode(asset),
+          },
+          open,
+        );
+      } catch (error) {
+        if (!PluginHooks.isCancelled(error)) {
+          rethrow;
+        }
+        final message = PluginHooks.cancelMessage(error);
+        if (message != null && message.isNotEmpty) {
+          snackbar.show(message, SnackbarType.info);
+        }
+      }
     }
   }
 
@@ -301,18 +333,33 @@ class _AssetTileWidget extends ConsumerWidget {
     final isReadonlyModeEnabled = ref.watch(readonlyModeProvider);
     final showStackIndicator = ref.watch(timelineServiceProvider).origin != TimelineOrigin.trash;
 
+    Widget tile = ThumbnailTile(
+      asset,
+      remoteSize: remoteSize,
+      lockSelection: lockSelection,
+      showStorageIndicator: showStorageIndicator,
+      showStackIndicator: showStackIndicator,
+      heroOffset: heroOffset,
+    );
+    final bridge = ref.watch(timelinePluginBridgeProvider);
+    if (bridge.hasDecorations(TimelineSlots.tile)) {
+      final selected = ref.watch(multiSelectProvider.select((state) => state.selectedAssets.contains(asset)));
+      tile = bridge.decorate(TimelineSlots.tile, {
+        'page': TimelinePageScope.of(context),
+        'origin': ref.read(timelineServiceProvider).origin.name,
+        'index': assetIndex,
+        'selected': selected,
+        'width': size.width,
+        'height': size.height,
+        'asset': TimelineAssetJson.encode(asset),
+      }, tile);
+    }
+
     return RepaintBoundary(
       child: GestureDetector(
         onTap: () => lockSelection ? null : _handleOnTap(context, ref, assetIndex, asset, heroOffset, remoteSize),
         onLongPress: () => lockSelection || isReadonlyModeEnabled ? null : _handleOnLongPress(ref, asset),
-        child: ThumbnailTile(
-          asset,
-          remoteSize: remoteSize,
-          lockSelection: lockSelection,
-          showStorageIndicator: showStorageIndicator,
-          showStackIndicator: showStackIndicator,
-          heroOffset: heroOffset,
-        ),
+        child: tile,
       ),
     );
   }

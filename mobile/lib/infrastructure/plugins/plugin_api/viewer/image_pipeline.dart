@@ -125,6 +125,7 @@ abstract final class ImagePipeline {
   static final _waiting = Queue<Completer<void>>();
   static int _running = 0;
   static int _writes = 0;
+  static int _tempFiles = 0;
   static Future<Directory>? _root;
 
   static List<ImageTransformer> get transformers => List.unmodifiable(_transformers);
@@ -152,10 +153,8 @@ abstract final class ImagePipeline {
   static bool isActiveFor(ImagePipelineTarget target) =>
       PluginHooks.has(target.stage.hookId) || _transformers.any((t) => t.appliesTo(target.stage, target.subject));
 
-  static bool _stageOf(ImageTransformer transformer, ImageStage stage) => transformer.appliesTo(
-    stage,
-    const ImageSubject(type: AssetType.image),
-  );
+  static bool _stageOf(ImageTransformer transformer, ImageStage stage) =>
+      transformer.appliesTo(stage, const ImageSubject(type: AssetType.image));
 
   /// Drops every cached result and every decoded image so the next request runs the pipeline again.
   /// The kernel calls this when plugins change; plugins call it through `image.invalidate`.
@@ -217,6 +216,20 @@ abstract final class ImagePipeline {
     }
   }
 
+  /// A non-final image of a stage that is not processed, shown while [finalStage] is: blurred when [finalStage] is
+  /// processed (so it is never seen sharp before the plugins had their say), else [info] itself.
+  static ImageInfo pendingPlaceholder(ImageInfo info, ImageStage finalStage) {
+    if (!isActive(finalStage)) {
+      return info;
+    }
+    try {
+      return blurred(info);
+    } catch (error, stack) {
+      _log.warning('Could not blur placeholder', error, stack);
+      return info;
+    }
+  }
+
   /// A blurred copy of [info] (synchronous; disposes [info]).
   static ImageInfo blurred(ImageInfo info) {
     final image = info.image;
@@ -258,7 +271,9 @@ abstract final class ImagePipeline {
     final running = _inFlight[key];
     if (running != null) {
       // The first request owns its image; later ones read the stored result (a handle of their own).
-      return running.then((_) => _cached(key)).then((cached) => cached ?? _compute(key, target, image, hooked, transformers));
+      return running
+          .then((_) => _cached(key))
+          .then((cached) => cached ?? _compute(key, target, image, hooked, transformers));
     }
     final future = _compute(key, target, image, hooked, transformers);
     _inFlight[key] = future.then<void>((_) {}, onError: (_) {}).whenComplete(() => _inFlight.remove(key));
@@ -414,7 +429,9 @@ abstract final class ImagePipeline {
     if (data == null) {
       throw StateError('Could not read image pixels');
     }
-    final buffer = await ui.ImmutableBuffer.fromUint8List(data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes));
+    final buffer = await ui.ImmutableBuffer.fromUint8List(
+      data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes),
+    );
     final descriptor = ui.ImageDescriptor.raw(
       buffer,
       width: image.width,
@@ -433,11 +450,32 @@ abstract final class ImagePipeline {
     if (data == null) {
       return null;
     }
-    final dir = Directory(p.join((await _directory()).path, 'tmp'));
-    await dir.create(recursive: true);
-    final file = File(p.join(dir.path, '$prefix-${DateTime.now().microsecondsSinceEpoch}-${image.hashCode}.rgba'));
+    final file = await tempFile(prefix, 'rgba');
     await file.writeAsBytes(data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes), flush: true);
     return file;
+  }
+
+  /// A new file name in the pipeline's temporary folder. Files there older than ten minutes are swept now and then.
+  static Future<File> tempFile(String prefix, String extension) async {
+    final dir = Directory(p.join((await _directory()).path, 'tmp'));
+    await dir.create(recursive: true);
+    if (++_tempFiles % 25 == 0) {
+      unawaited(_sweep(dir));
+    }
+    return File(p.join(dir.path, '$prefix-${DateTime.now().microsecondsSinceEpoch}-$_tempFiles.$extension'));
+  }
+
+  static Future<void> _sweep(Directory dir) async {
+    final cutoff = DateTime.now().subtract(const Duration(minutes: 10));
+    try {
+      await for (final entry in dir.list()) {
+        if (entry is File && entry.statSync().modified.isBefore(cutoff)) {
+          await _deleteQuietly(entry);
+        }
+      }
+    } catch (_) {
+      // Best effort.
+    }
   }
 
   static Future<Directory> _directory() => _root ??= () async {

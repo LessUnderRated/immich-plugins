@@ -7,6 +7,8 @@ import 'package:immich_mobile/data/store.dart';
 import 'package:immich_mobile/domain/models/asset/base_asset.model.dart';
 import 'package:immich_mobile/extensions/build_context_extensions.dart';
 import 'package:immich_mobile/extensions/datetime_extensions.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/viewer/viewer_builtins.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/viewer/viewer_ids.dart';
 import 'package:immich_mobile/presentation/actions/action.widget.dart';
 import 'package:immich_mobile/presentation/actions/device_album.actions.dart';
 import 'package:immich_mobile/presentation/actions/favorite.action.dart';
@@ -60,30 +62,36 @@ class ViewerTopAppBar extends ConsumerWidget implements PreferredSizeWidget {
 
     final originalTheme = context.themeData;
 
-    final actions = <Widget>[
-      if (asset.isMotionPhoto) const MotionPhotoActionButton(iconOnly: true),
+    // Built-in ids: ViewerBuiltinIds.topBar. Plugins hide and reorder them through `builtins` rules.
+    final actions = arrangeViewerItems<Widget>(ViewerSlotIds.topBar, [
+      if (asset.isMotionPhoto) const ViewerSlotItem('motionPhoto', MotionPhotoActionButton(iconOnly: true)),
       if (album != null && album.isActivityEnabled && album.isShared)
-        IconButton(
-          icon: const Icon(Icons.chat_outlined),
-          onPressed: () {
-            unawaited(
-              context.router.push(
-                ActivitiesRoute(album: album, assetId: asset is RemoteAsset ? asset.id : null, assetName: asset.name),
-              ),
-            );
-          },
+        ViewerSlotItem(
+          'activity',
+          IconButton(
+            icon: const Icon(Icons.chat_outlined),
+            onPressed: () {
+              unawaited(
+                context.router.push(
+                  ActivitiesRoute(album: album, assetId: asset is RemoteAsset ? asset.id : null, assetName: asset.name),
+                ),
+              );
+            },
+          ),
         ),
 
-      const ActionIconButton(action: FavoriteAction(source: .viewer)),
-      const ActionIconButton(action: DeviceFavoriteAction(source: .viewer)),
-      const ActionIconButton(action: PluginAction(source: .viewer)),
-      const ViewerCensorButton(),
-      PluginSlotButtons(slot: 'viewer.topBar', assets: [if (asset is LocalAsset) asset]),
+      const ViewerSlotItem('favorite', ActionIconButton(action: FavoriteAction(source: .viewer))),
+      const ViewerSlotItem('deviceFavorite', ActionIconButton(action: DeviceFavoriteAction(source: .viewer))),
+      const ViewerSlotItem('pluginActions', ActionIconButton(action: PluginAction(source: .viewer))),
+      const ViewerSlotItem('censor', ViewerCensorButton()),
+      ViewerSlotItem(null, PluginSlotButtons(slot: ViewerSlotIds.topBar, assets: [if (asset is LocalAsset) asset])),
 
-      ImmichColorOverride(color: null, child: ViewerKebabMenu(originalTheme: originalTheme)),
-    ];
+      ViewerSlotItem('menu', ImmichColorOverride(color: null, child: ViewerKebabMenu(originalTheme: originalTheme))),
+    ]);
 
-    final lockedViewActions = <Widget>[ViewerKebabMenu(originalTheme: originalTheme)];
+    final lockedViewActions = arrangeViewerItems<Widget>(ViewerSlotIds.topBar, [
+      ViewerSlotItem('menu', ViewerKebabMenu(originalTheme: originalTheme)),
+    ]);
 
     return IgnorePointer(
       ignoring: opacity < 1.0,

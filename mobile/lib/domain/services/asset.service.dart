@@ -75,9 +75,20 @@ class AssetService {
     return _remoteRepository.watchExif(id);
   }
 
-  Future<List<(String, String)>> getPlaces(String userId) {
-    return _remoteRepository.getPlaces(userId);
-  }
+  /// Places as `(city, assetId)`; plugins can filter, sort or extend them through `place.query`.
+  Future<List<(String, String)>> getPlaces(String userId) async => PluginHooks.filterList<(String, String)>(
+    DataHooks.placeQuery,
+    () => {'userId': userId},
+    await _remoteRepository.getPlaces(userId),
+    () => PluginListCodec<(String, String)>(
+      id: (place) => place.$1,
+      toJson: (place) => {'id': place.$1, 'name': place.$1, 'assetId': place.$2},
+      fromJson: (json) => switch ((PluginArgs.string(json['name'] ?? json['id']), PluginArgs.string(json['assetId']))) {
+        (final String name, final String assetId) => (name, assetId),
+        _ => null,
+      },
+    ),
+  );
 
   Future<(int local, int remote)> getAssetCounts() async {
     return (await _localRepository.getCount(), await _remoteRepository.getCount());

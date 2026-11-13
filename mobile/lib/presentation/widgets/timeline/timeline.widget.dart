@@ -6,15 +6,21 @@ import 'package:collection/collection.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
+import 'package:immich_mobile/domain/models/asset/base_asset.model.dart';
 import 'package:immich_mobile/domain/models/events.model.dart';
 import 'package:immich_mobile/domain/models/timeline.model.dart';
+import 'package:immich_mobile/domain/models/timeline_plugin.model.dart';
 import 'package:immich_mobile/domain/utils/event_stream.dart';
+import 'package:immich_mobile/domain/utils/plugin_hooks.dart';
 import 'package:immich_mobile/extensions/asyncvalue_extensions.dart';
 import 'package:immich_mobile/extensions/build_context_extensions.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/timeline/timeline_plugin_ids.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/timeline/timeline_registry.dart';
 import 'package:immich_mobile/presentation/widgets/action_buttons/download_status_floating_button.widget.dart';
 import 'package:immich_mobile/presentation/widgets/bottom_sheet/general_bottom_sheet.widget.dart';
 import 'package:immich_mobile/presentation/widgets/timeline/constants.dart';
 import 'package:immich_mobile/presentation/widgets/timeline/multi_select_status_button.widget.dart';
+import 'package:immich_mobile/presentation/widgets/timeline/plugins/timeline_slots.widget.dart';
 import 'package:immich_mobile/presentation/widgets/timeline/scrubber.widget.dart';
 import 'package:immich_mobile/presentation/widgets/timeline/segment.model.dart';
 import 'package:immich_mobile/presentation/widgets/timeline/sliver_segmented_list.dart';
@@ -25,6 +31,7 @@ import 'package:immich_mobile/providers/infrastructure/readonly_mode.provider.da
 import 'package:immich_mobile/providers/infrastructure/settings.provider.dart';
 import 'package:immich_mobile/providers/infrastructure/timeline.provider.dart';
 import 'package:immich_mobile/providers/timeline/multiselect.provider.dart';
+import 'package:immich_mobile/providers/timeline/timeline_plugins.provider.dart';
 import 'package:immich_mobile/routing/app_navigation_observer.dart';
 import 'package:immich_mobile/utils/debounce.dart';
 import 'package:immich_mobile/widgets/common/immich_sliver_app_bar.dart';
@@ -47,7 +54,12 @@ class Timeline extends ConsumerWidget {
     this.readOnly = false,
     this.persistentBottomBar = false,
     this.loadingWidget,
+    this.page,
   });
+
+  /// Page id of the timeline (`mainTimeline`, `archive`, ...; see `TimelinePages`): names its plugin slots
+  /// (`<page>.header`, `.footer`, `.empty`, `.body`) and is passed to tile, header and hook contexts.
+  final String? page;
 
   final Widget? topSliverWidget;
   final double? topSliverWidgetHeight;
@@ -85,6 +97,7 @@ class Timeline extends ConsumerWidget {
             if (readOnly) readonlyModeProvider.overrideWith(() => _AlwaysReadOnlyNotifier()),
           ],
           child: _SliverTimeline(
+            page: page ?? TimelinePages.timeline,
             topSliverWidget: topSliverWidget,
             topSliverWidgetHeight: topSliverWidgetHeight,
             bottomSliverWidget: bottomSliverWidget,
@@ -115,6 +128,7 @@ class _AlwaysReadOnlyNotifier extends ReadOnlyModeNotifier {
 
 class _SliverTimeline extends ConsumerStatefulWidget {
   const _SliverTimeline({
+    required this.page,
     this.topSliverWidget,
     this.topSliverWidgetHeight,
     this.bottomSliverWidget,
@@ -137,12 +151,15 @@ class _SliverTimeline extends ConsumerStatefulWidget {
   final bool snapToMonth;
   final double? maxWidth;
   final Widget? loadingWidget;
+  final String page;
 
   @override
   ConsumerState createState() => _SliverTimelineState();
 }
 
-class _SliverTimelineState extends ConsumerState<_SliverTimeline> with WidgetsBindingObserver {
+class _SliverTimelineState extends ConsumerState<_SliverTimeline>
+    with WidgetsBindingObserver
+    implements TimelineHandle {
   late final ScrollController _scrollController;
   final _segmentedListKey = GlobalKey();
   StreamSubscription? _eventSubscription;
@@ -159,6 +176,8 @@ class _SliverTimelineState extends ConsumerState<_SliverTimeline> with WidgetsBi
     _eventSubscription = EventStream.shared.listen(_onEvent);
 
     ref.listenManual(multiSelectProvider.select((s) => s.isEnabled), _onMultiSelectionToggled);
+    ref.listenManual(multiSelectProvider, _onSelectionChanged);
+    TimelineRegistry.registerTimeline(this);
   }
 
   @override
@@ -278,6 +297,13 @@ class _SliverTimelineState extends ConsumerState<_SliverTimeline> with WidgetsBi
     EventStream.shared.emit(MultiSelectToggleEvent(isEnabled));
   }
 
+  void _onSelectionChanged(MultiSelectState? previous, MultiSelectState next) {
+    if (previous?.selectedAssets == next.selectedAssets) {
+      return;
+    }
+    PluginHooks.emit(TimelineEvents.selectionChanged, () => {'page': widget.page, 'origin': origin, ...selection()});
+  }
+
   int? _getCurrentAssetIndex(List<Segment> segments) {
     final currentOffset = _scrollController.offset.clamp(0.0, _scrollController.position.maxScrollExtent);
     final segment = segments.findByOffset(currentOffset) ?? segments.lastOrNull;
@@ -298,6 +324,7 @@ class _SliverTimelineState extends ConsumerState<_SliverTimeline> with WidgetsBi
 
   @override
   void dispose() {
+    TimelineRegistry.unregisterTimeline(this);
     WidgetsBinding.instance.removeObserver(this);
     _fastScrollDebouncer.dispose();
     _scrollController.dispose();
@@ -313,6 +340,8 @@ class _SliverTimelineState extends ConsumerState<_SliverTimeline> with WidgetsBi
     }
 
     // Use Flutter's built in fast velocity tracking
+    _emitScrolled();
+
     if (_scrollController.position.recommendDeferredLoading(context)) {
       ref.read(timelineStateProvider.notifier).setRecommendDeferredLoading(true);
 
@@ -331,7 +360,8 @@ class _SliverTimelineState extends ConsumerState<_SliverTimeline> with WidgetsBi
     _scrollController.animateTo(0, duration: const Duration(milliseconds: 250), curve: Curves.easeInOut);
   }
 
-  void _scrollToDate(DateTime date) {
+  bool _scrollToDate(DateTime date) {
+    var found = false;
     final asyncSegments = ref.read(timelineSegmentProvider);
     asyncSegments.whenData((segments) {
       // Find the segment that contains assets from the target date
@@ -356,6 +386,7 @@ class _SliverTimelineState extends ConsumerState<_SliverTimeline> with WidgetsBi
           });
 
       if (fallbackSegment != null) {
+        found = true;
         // Scroll to the segment with a small offset to show the header
         final targetOffset = fallbackSegment.startOffset - 50;
         _scrollController.animateTo(
@@ -365,10 +396,178 @@ class _SliverTimelineState extends ConsumerState<_SliverTimeline> with WidgetsBi
         );
       }
     });
+    return found;
+  }
+
+  // ---- plugin access (TimelineHandle) ------------------------------------------------------------------------
+
+  DateTime _lastScrolledEvent = DateTime.fromMillisecondsSinceEpoch(0);
+
+  void _emitScrolled() {
+    if (!PluginHooks.listens(TimelineEvents.scrolled)) {
+      return;
+    }
+    final now = DateTime.now();
+    if (now.difference(_lastScrolledEvent) < const Duration(milliseconds: 250)) {
+      return;
+    }
+    _lastScrolledEvent = now;
+    final range = _visibleIndexes();
+    PluginHooks.emit(
+      TimelineEvents.scrolled,
+      () => {
+        'page': widget.page,
+        'origin': origin,
+        'firstIndex': range?.first,
+        'lastIndex': range?.last,
+        'total': totalAssets,
+      },
+    );
+  }
+
+  @override
+  String get page => widget.page;
+
+  @override
+  String get origin => ref.read(timelineServiceProvider).origin.name;
+
+  @override
+  bool get isVisible => mounted && (ModalRoute.of(context)?.isCurrent ?? true) && TickerMode.valuesOf(context).enabled;
+
+  @override
+  int get totalAssets => ref.read(timelineServiceProvider).totalAssets;
+
+  @override
+  Future<void> refresh() => ref.read(timelineServiceProvider).refresh();
+
+  @override
+  Future<bool> scrollToAsset(String assetId) async {
+    final service = ref.read(timelineServiceProvider);
+    final assets = await service.loadAssets(0, service.totalAssets);
+    final index = assets.indexWhere((asset) => TimelineAssetJson.matches(asset, assetId));
+    return index >= 0 && await scrollToIndex(index);
+  }
+
+  @override
+  Future<bool> scrollToIndex(int index) async {
+    if (!mounted || index < 0 || index >= totalAssets || !_scrollController.hasClients) {
+      return false;
+    }
+    final segments = ref.read(timelineSegmentProvider).valueOrNull;
+    if (segments == null || _getAssetRowPosition(segments, index) == null) {
+      return false;
+    }
+    _scrollToAssetIfOffScreen(index);
+    return true;
+  }
+
+  @override
+  Future<bool> scrollToDate(DateTime date) async => mounted && _scrollToDate(date);
+
+  /// First and last asset index on screen.
+  ({int first, int last})? _visibleIndexes() {
+    final segments = ref.read(timelineSegmentProvider).valueOrNull;
+    final total = totalAssets;
+    if (segments == null || segments.isEmpty || total == 0 || !_scrollController.hasClients) {
+      return null;
+    }
+    final list = _segmentedListKey.currentContext?.findRenderObject() as RenderSliver?;
+    final preceding = list?.constraints.precedingScrollExtent ?? 0;
+    final position = _scrollController.position;
+    final columnCount = ref.read(timelineArgsProvider).columnCount;
+
+    int indexAt(double offset) {
+      final clamped = offset.clamp(0.0, segments.last.endOffset);
+      final segment = segments.findByOffset(clamped) ?? segments.last;
+      final rowIndex = segment.getMinChildIndexForScrollOffset(clamped);
+      if (rowIndex <= segment.firstIndex) {
+        return segment.firstAssetIndex;
+      }
+      return segment.firstAssetIndex + (rowIndex - segment.firstIndex - 1) * columnCount;
+    }
+
+    final first = indexAt(position.pixels - preceding);
+    final last = math.min(
+      total - 1,
+      indexAt(position.pixels + position.viewportDimension - preceding) + columnCount - 1,
+    );
+    return (first: math.min(first, last), last: last);
+  }
+
+  @override
+  Future<Map<String, dynamic>> visibleRange() async {
+    final range = _visibleIndexes();
+    final service = ref.read(timelineServiceProvider);
+    final assets = range == null ? const [] : await service.loadAssets(range.first, range.last - range.first + 1);
+    return {
+      'page': widget.page,
+      'origin': service.origin.name,
+      'firstIndex': range?.first,
+      'lastIndex': range?.last,
+      'total': service.totalAssets,
+      'assetIds': [for (final asset in assets) asset.id],
+    };
+  }
+
+  @override
+  Future<List<Map<String, dynamic>>> assets(int offset, int limit) async {
+    final service = ref.read(timelineServiceProvider);
+    final count = math.min(limit, service.totalAssets - offset);
+    if (count <= 0) {
+      return const [];
+    }
+    return TimelineAssetJson.encodeAll(await service.loadAssets(offset, count));
+  }
+
+  @override
+  Map<String, dynamic> selection() {
+    final state = ref.read(multiSelectProvider);
+    return {
+      'enabled': state.isEnabled || state.forceEnable,
+      'count': state.selectedAssets.length,
+      'assetIds': [for (final asset in state.selectedAssets) asset.id],
+    };
+  }
+
+  @override
+  Future<int> select(List<String> assetIds, SelectionChange change) async {
+    final notifier = ref.read(multiSelectProvider.notifier);
+    final current = ref.read(multiSelectProvider).selectedAssets;
+    bool named(BaseAsset asset) => assetIds.any((id) => TimelineAssetJson.matches(asset, id));
+    switch (change) {
+      case SelectionChange.remove:
+        notifier.replaceSelection(remove: current.where(named).toList(), add: const []);
+      case SelectionChange.add || SelectionChange.set:
+        final service = ref.read(timelineServiceProvider);
+        final found = (await service.loadAssets(0, service.totalAssets)).where(named).toList();
+        if (!mounted) {
+          return 0;
+        }
+        notifier.replaceSelection(remove: change == SelectionChange.set ? current : const [], add: found);
+    }
+    return ref.read(multiSelectProvider).selectedAssets.length;
+  }
+
+  @override
+  void clearSelection() {
+    final state = ref.read(multiSelectProvider);
+    final notifier = ref.read(multiSelectProvider.notifier);
+    if (state.forceEnable) {
+      notifier.replaceSelection(remove: state.selectedAssets, add: const []);
+    } else {
+      notifier.reset();
+    }
+  }
+
+  @override
+  Future<int> selectAll() async {
+    await ref.read(multiSelectProvider.notifier).selectAll(ref.read(timelineServiceProvider));
+    return mounted ? ref.read(multiSelectProvider).selectedAssets.length : 0;
   }
 
   @override
   Widget build(BuildContext _) {
+    final bridge = ref.watch(timelinePluginBridgeProvider);
     final asyncSegments = ref.watch(timelineSegmentProvider);
     final maxHeight = ref.watch(timelineArgsProvider.select((args) => args.maxHeight));
     final isSelectionMode = ref.watch(multiSelectProvider.select((s) => s.forceEnable));
@@ -401,11 +600,38 @@ class _SliverTimelineState extends ConsumerState<_SliverTimeline> with WidgetsBi
             // events when we provide our own
             primary: false,
             resizeToAvoidBottomInset: false,
-            floatingActionButton: const DownloadStatusFloatingButton(),
+            floatingActionButton: switch (timelineSlotContent(bridge, [
+              TimelineSlots.fab(widget.page),
+            ], () => {'page': widget.page, 'origin': origin})) {
+              final Widget fab => Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [fab, const DownloadStatusFloatingButton()],
+              ),
+              null => const DownloadStatusFloatingButton(),
+            },
             body: asyncSegments.widgetWhen(
               onLoading: widget.loadingWidget != null ? () => widget.loadingWidget! : null,
               onData: (segments) {
                 final childCount = (segments.lastOrNull?.lastIndex ?? -1) + 1;
+                final page = widget.page;
+                Map<String, dynamic> slotContext() => {
+                  'page': page,
+                  'origin': origin,
+                  'total': totalAssets,
+                  'selectionCount': ref.read(multiSelectProvider).selectedAssets.length,
+                };
+                final header = timelineSlotContent(bridge, [
+                  TimelineSlots.header(page),
+                  TimelineSlots.timelineHeader,
+                ], slotContext);
+                final footer = timelineSlotContent(bridge, [
+                  TimelineSlots.footer(page),
+                  TimelineSlots.timelineFooter,
+                ], slotContext);
+                final empty = childCount == 0
+                    ? timelineSlotContent(bridge, [TimelineSlots.empty(page), TimelineSlots.timelineEmpty], slotContext)
+                    : null;
                 final double appBarExpandedHeight = widget.appBar != null && widget.appBar is MesmerizingSliverAppBar
                     ? 200
                     : 0;
@@ -416,7 +642,7 @@ class _SliverTimelineState extends ConsumerState<_SliverTimeline> with WidgetsBi
                     context.padding.bottom + (isMultiSelectEnabled ? bottomSheetOpenModifier : 0);
                 final scrubberBottomPadding = contentBottomPadding + kScrubberThumbHeight;
 
-                return TimelinePinchZoom(
+                final body = TimelinePinchZoom(
                   onColumnCountWillChange: () {
                     final targetAssetIndex = _getCurrentAssetIndex(segments);
                     setState(() {
@@ -435,6 +661,8 @@ class _SliverTimelineState extends ConsumerState<_SliverTimeline> with WidgetsBi
                           else if (widget.appBar != null)
                             widget.appBar!,
                           if (widget.topSliverWidget != null) widget.topSliverWidget!,
+                          if (header != null) SliverToBoxAdapter(child: header),
+                          if (empty != null) SliverFillRemaining(hasScrollBody: false, child: empty),
                           SliverSegmentedList(
                             key: _segmentedListKey,
                             segments: segments,
@@ -453,6 +681,7 @@ class _SliverTimelineState extends ConsumerState<_SliverTimeline> with WidgetsBi
                             ),
                           ),
                           if (widget.bottomSliverWidget != null) widget.bottomSliverWidget!,
+                          if (footer != null) SliverToBoxAdapter(child: footer),
                           SliverPadding(padding: EdgeInsets.only(bottom: contentBottomPadding)),
                         ],
                       );
@@ -494,6 +723,11 @@ class _SliverTimelineState extends ConsumerState<_SliverTimeline> with WidgetsBi
                       );
                     },
                   ),
+                );
+                final bodySlot = TimelineSlots.body(page);
+                return TimelinePageScope(
+                  page: page,
+                  child: bridge.hasDecorations(bodySlot) ? bridge.decorate(bodySlot, slotContext(), body) : body,
                 );
               },
             ),

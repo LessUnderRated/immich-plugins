@@ -6,6 +6,8 @@ import 'package:immich_mobile/domain/models/timeline.model.dart';
 import 'package:immich_mobile/domain/services/timeline.service.dart';
 import 'package:immich_mobile/extensions/build_context_extensions.dart';
 import 'package:immich_mobile/generated/translations.g.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/timeline/timeline_plugin_ids.dart';
+import 'package:immich_mobile/presentation/widgets/sliver_app_bar/app_menu.widget.dart';
 import 'package:immich_mobile/presentation/widgets/timeline/timeline.widget.dart';
 import 'package:immich_mobile/providers/infrastructure/timeline.provider.dart';
 
@@ -24,6 +26,7 @@ class CleanupPreviewPage extends StatelessWidget {
         elevation: 0,
         scrolledUnderElevation: 0,
         backgroundColor: context.colorScheme.surface,
+        actions: const [PageAppBarActions(page: TimelinePages.cleanupPreview)],
       ),
       body: ProviderScope(
         overrides: [
@@ -35,7 +38,13 @@ class CleanupPreviewPage extends StatelessWidget {
             return timelineService;
           }),
         ],
-        child: const Timeline(appBar: null, bottomSheet: null, groupBy: GroupAssetsBy.day, readOnly: true),
+        child: const Timeline(
+          page: TimelinePages.cleanupPreview,
+          appBar: null,
+          bottomSheet: null,
+          groupBy: GroupAssetsBy.day,
+          readOnly: true,
+        ),
       ),
     );
   }

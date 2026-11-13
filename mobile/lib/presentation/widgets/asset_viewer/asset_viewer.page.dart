@@ -13,12 +13,15 @@ import 'package:immich_mobile/extensions/build_context_extensions.dart';
 import 'package:immich_mobile/extensions/platform_extensions.dart';
 import 'package:immich_mobile/extensions/scroll_extensions.dart';
 import 'package:immich_mobile/generated/translations.g.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/viewer/active_viewer.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/viewer/viewer_events.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/viewer/viewer_ids.dart';
 import 'package:immich_mobile/presentation/widgets/action_buttons/download_status_floating_button.widget.dart';
 import 'package:immich_mobile/presentation/widgets/asset_viewer/asset_page.widget.dart';
-import 'package:immich_mobile/presentation/widgets/asset_viewer/viewer_carousel.widget.dart';
 import 'package:immich_mobile/presentation/widgets/asset_viewer/asset_preloader.dart';
 import 'package:immich_mobile/presentation/widgets/asset_viewer/asset_stack.provider.dart';
 import 'package:immich_mobile/presentation/widgets/asset_viewer/viewer_bottom_app_bar.widget.dart';
+import 'package:immich_mobile/presentation/widgets/asset_viewer/viewer_carousel.widget.dart';
 import 'package:immich_mobile/presentation/widgets/asset_viewer/viewer_top_app_bar.widget.dart';
 import 'package:immich_mobile/providers/asset_viewer/asset_viewer.provider.dart';
 import 'package:immich_mobile/providers/cast.provider.dart';
@@ -94,13 +97,16 @@ class _AssetViewerState extends ConsumerState<AssetViewer> {
 
   StreamSubscription? _reloadSubscription;
   KeepAliveLink? _stackChildrenKeepAlive;
+  late final _handle = _AssetViewerHandle(this);
+  BaseAsset? _lastAsset;
 
-  void _jumpTo(int index) {
+  bool _jumpTo(int index) {
     if (index < 0 || index >= _totalAssets || !_pageController.hasClients) {
-      return;
+      return false;
     }
     _pageController.jumpToPage(index);
     unawaited(_onAssetChanged(index));
+    return true;
   }
 
   void _onTapNavigate(int direction) {
@@ -132,7 +138,21 @@ class _AssetViewerState extends ConsumerState<AssetViewer> {
 
     final assetViewer = ref.read(assetViewerProvider);
     unawaited(_setSystemUIMode(assetViewer.showingControls, assetViewer.showingDetails));
+
+    ActiveViewers.opened(_handle);
+    _lastAsset = asset;
+    if (ViewerEvents.listens(ViewerEventNames.opened)) {
+      final position = _position(widget.initialIndex);
+      ViewerEvents.emitAsset(ViewerEventNames.opened, asset, () => position);
+    }
   }
+
+  Map<String, dynamic> _position(int index) => {
+    'surface': 'viewer',
+    'index': index,
+    'total': _totalAssets,
+    'origin': ref.read(timelineServiceProvider).origin.name,
+  };
 
   @override
   void dispose() {
@@ -140,6 +160,9 @@ class _AssetViewerState extends ConsumerState<AssetViewer> {
     _preloader.dispose();
     unawaited(_reloadSubscription?.cancel());
     _stackChildrenKeepAlive?.close();
+
+    ActiveViewers.closed(_handle);
+    ViewerEvents.emitAsset(ViewerEventNames.closed, _lastAsset, () => {'surface': 'viewer', 'index': _currentPage});
 
     unawaited(restoreEdgeToEdge());
 
@@ -200,6 +223,13 @@ class _AssetViewerState extends ConsumerState<AssetViewer> {
     }
 
     ref.read(assetViewerProvider.notifier).setAsset(asset);
+    final previous = _lastAsset;
+    _lastAsset = asset;
+    if (ViewerEvents.listens(ViewerEventNames.assetChanged) &&
+        (previous == null || !previous.refersToSameAsset(asset))) {
+      final data = {..._position(index), 'previousAssetId': previous?.id};
+      ViewerEvents.emitAsset(ViewerEventNames.assetChanged, asset, () => data);
+    }
     _preloader.preload(index, context.sizeData, thumbnailSize: ref.read(assetViewerProvider).thumbnailSize);
     _handleCasting();
     _stackChildrenKeepAlive?.close();
@@ -300,9 +330,23 @@ class _AssetViewerState extends ConsumerState<AssetViewer> {
       });
     });
 
-    ref.listen(assetViewerProvider.select((value) => (value.showingControls, value.showingDetails)), (_, state) {
+    ref.listen(assetViewerProvider.select((value) => (value.showingControls, value.showingDetails)), (previous, state) {
       final (controls, details) = state;
       unawaited(_setSystemUIMode(controls, details));
+      if (previous?.$1 != controls) {
+        ViewerEvents.emit(ViewerEventNames.controlsChanged, () => {'surface': 'viewer', 'visible': controls});
+      }
+      if (previous?.$2 != details) {
+        ViewerEvents.emitAsset(
+          ViewerEventNames.detailsChanged,
+          ref.read(assetViewerProvider).currentAsset,
+          () => {'surface': 'viewer', 'visible': details},
+        );
+      }
+    });
+
+    ref.listen(assetViewerProvider.select((value) => value.isZoomed), (_, zoomed) {
+      ViewerEvents.emit(ViewerEventNames.zoomChanged, () => {'surface': 'viewer', 'zoomed': zoomed});
     });
 
     return AnnotatedRegion(
@@ -356,5 +400,56 @@ class _AssetViewerState extends ConsumerState<AssetViewer> {
         ),
       ),
     );
+  }
+}
+
+/// The asset viewer as plugins see it (`viewer.*` host functions).
+class _AssetViewerHandle implements ViewerHandle {
+  final _AssetViewerState _state;
+
+  _AssetViewerHandle(this._state);
+
+  AssetViewerState get _viewer => _state.ref.read(assetViewerProvider);
+
+  @override
+  String get surface => 'viewer';
+
+  @override
+  BaseAsset? get currentAsset => _viewer.currentAsset;
+
+  @override
+  int get index => _state._currentPage;
+
+  @override
+  int get total => _state._totalAssets;
+
+  @override
+  bool get controlsVisible => _viewer.showingControls;
+
+  @override
+  bool get detailsVisible => _viewer.showingDetails;
+
+  @override
+  bool get zoomed => _viewer.isZoomed;
+
+  @override
+  bool jumpTo(int index) => _state.mounted && _state._jumpTo(index);
+
+  @override
+  void showControls(bool show) {
+    if (_state.mounted) {
+      _state.ref.read(assetViewerProvider.notifier).setControls(show);
+    }
+  }
+
+  @override
+  void showDetails(bool show) =>
+      ActiveViewers.sendPageCommand(show ? ViewerPageCommand.showDetails : ViewerPageCommand.hideDetails);
+
+  @override
+  Future<void> close() async {
+    if (_state.mounted) {
+      await _state.context.maybePop();
+    }
   }
 }

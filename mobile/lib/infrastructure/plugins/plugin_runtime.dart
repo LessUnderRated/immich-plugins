@@ -10,7 +10,12 @@ class PluginRuntime {
   static const _channel = MethodChannel('immich/dex_plugins');
 
   HostFunctionHandler? _hostHandler;
+
+  /// `host.sendEvent(name, payload)`: app commands.
   PluginEventHandler? eventHandler;
+
+  /// `host.emit(event, payload)`: plugin-originated events for the kernel's event bus.
+  PluginEventHandler? emitHandler;
 
   PluginRuntime() {
     _channel.setMethodCallHandler(_onNativeCall);
@@ -23,6 +28,13 @@ class PluginRuntime {
     switch (call.method) {
       case 'event':
         await eventHandler?.call(args['plugin'] as String, args['name'] as String, args['payload'] as String? ?? '{}');
+        return null;
+      case 'emit':
+        await emitHandler?.call(
+          args['plugin'] as String,
+          '${args['event'] ?? args['name']}',
+          args['payload'] as String? ?? '{}',
+        );
         return null;
       case 'host':
         final handler = _hostHandler;

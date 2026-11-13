@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:immich_mobile/presentation/actions/action.dart';
+import 'package:immich_mobile/presentation/actions/action_slots.dart';
 import 'package:immich_ui/immich_ui.dart';
 
 abstract class ActionWidget extends ConsumerWidget {
@@ -10,9 +11,16 @@ abstract class ActionWidget extends ConsumerWidget {
 
   Widget builder(BuildContext context, WidgetRef ref, ActionItem action);
 
+  /// The same presentation for another action: used to rename built-ins and to show plugin actions in a list
+  /// (`arrangeActionWidgets`). Presentations that do not override it keep their action.
+  ActionWidget withAction(ActionBuilder action) => this;
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final actionItem = action.create(context, ref);
+    final actionItem = action.resolve(context, ref);
+    if (action.id case final id?) {
+      ActionSurfaceScope.maybeOf(context)?.record(id, actionItem);
+    }
     if (actionItem == null) {
       return const SizedBox.shrink();
     }
@@ -23,6 +31,9 @@ abstract class ActionWidget extends ConsumerWidget {
 
 class ActionColumnButton extends ActionWidget {
   const ActionColumnButton({super.key, required super.action});
+
+  @override
+  ActionColumnButton withAction(ActionBuilder action) => ActionColumnButton(key: key, action: action);
 
   @override
   Widget builder(BuildContext context, WidgetRef ref, ActionItem action) => ImmichColumnButton(
@@ -39,6 +50,9 @@ class ActionIconButton extends ActionWidget {
   const ActionIconButton({super.key, required super.action, this.variant = .ghost});
 
   @override
+  ActionIconButton withAction(ActionBuilder action) => ActionIconButton(key: key, action: action, variant: variant);
+
+  @override
   Widget builder(BuildContext context, WidgetRef ref, ActionItem action) => ImmichIconButton(
     icon: action.icon,
     onPressed: action.onAction,
@@ -53,6 +67,9 @@ class ActionButton extends ActionWidget {
   const ActionButton({super.key, required super.action, this.variant = .ghost});
 
   @override
+  ActionButton withAction(ActionBuilder action) => ActionButton(key: key, action: action, variant: variant);
+
+  @override
   Widget builder(BuildContext context, WidgetRef ref, ActionItem action) => ImmichTextButton(
     labelText: action.label,
     icon: action.icon,
@@ -64,6 +81,9 @@ class ActionButton extends ActionWidget {
 
 class ActionMenuItem extends ActionWidget {
   const ActionMenuItem({super.key, required super.action});
+
+  @override
+  ActionMenuItem withAction(ActionBuilder action) => ActionMenuItem(key: key, action: action);
 
   @override
   Widget builder(BuildContext context, WidgetRef ref, ActionItem action) =>

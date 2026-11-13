@@ -4,6 +4,7 @@ import 'package:flutter/widgets.dart';
 import 'package:immich_mobile/widgets/photo_view/photo_view.dart'
     show
         PhotoViewHeroAttributes,
+        PhotoViewImageDoubleTapCallback,
         PhotoViewImageDragEndCallback,
         PhotoViewImageDragStartCallback,
         PhotoViewImageDragUpdateCallback,
@@ -41,6 +42,7 @@ class PhotoViewCore extends StatefulWidget {
     required this.onDragCancel,
     required this.onScaleEnd,
     required this.onLongPressStart,
+    this.onDoubleTap,
     required this.gestureDetectorBehavior,
     required this.controller,
     required this.scaleBoundaries,
@@ -68,6 +70,7 @@ class PhotoViewCore extends StatefulWidget {
     this.onDragCancel,
     this.onScaleEnd,
     this.onLongPressStart,
+    this.onDoubleTap,
     this.gestureDetectorBehavior,
     required this.controller,
     required this.scaleBoundaries,
@@ -107,6 +110,7 @@ class PhotoViewCore extends StatefulWidget {
   final VoidCallback? onDragCancel;
 
   final PhotoViewImageLongPressStartCallback? onLongPressStart;
+  final PhotoViewImageDoubleTapCallback? onDoubleTap;
 
   final HitTestBehavior? gestureDetectorBehavior;
   final bool tightMode;
@@ -234,9 +238,20 @@ class PhotoViewCoreState extends State<PhotoViewCore>
     }
   }
 
+  TapDownDetails? _doubleTapDown;
+
   void onDoubleTap() {
-    nextScaleState();
+    final intercept = widget.onDoubleTap;
+    if (intercept == null) {
+      nextScaleState();
+      return;
+    }
+    final details = _doubleTapDown;
+    _doubleTapDown = null;
+    intercept(context, details, controller.value, nextScaleState);
   }
+
+  void onDoubleTapDown(TapDownDetails details) => _doubleTapDown = details;
 
   Future<void> animateScale(double from, double to) {
     if (!mounted) {
@@ -394,6 +409,7 @@ class PhotoViewCoreState extends State<PhotoViewCore>
           return PhotoViewGestureDetector(
             disableScaleGestures: widget.disableScaleGestures,
             onDoubleTap: widget.disableScaleGestures ? null : onDoubleTap,
+            onDoubleTapDown: widget.disableScaleGestures || widget.onDoubleTap == null ? null : onDoubleTapDown,
             onScaleStart: widget.disableScaleGestures ? null : onScaleStart,
             onScaleUpdate: widget.disableScaleGestures ? null : onScaleUpdate,
             onScaleEnd: widget.disableScaleGestures ? null : onScaleEnd,

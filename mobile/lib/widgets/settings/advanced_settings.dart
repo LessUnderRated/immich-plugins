@@ -8,6 +8,8 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:immich_mobile/domain/services/log.service.dart';
 import 'package:immich_mobile/extensions/build_context_extensions.dart';
 import 'package:immich_mobile/generated/translations.g.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/shell/shell_ids.dart';
+import 'package:immich_mobile/presentation/widgets/shell/shell_list.widget.dart';
 import 'package:immich_mobile/providers/infrastructure/platform.provider.dart';
 import 'package:immich_mobile/providers/infrastructure/readonly_mode.provider.dart';
 import 'package:immich_mobile/providers/infrastructure/settings.provider.dart';
@@ -65,119 +67,143 @@ class AdvancedSettings extends HookConsumerWidget {
     }, []);
 
     final advancedSettings = [
-      SettingsSwitchListTile(
-        enabled: true,
-        valueNotifier: advancedTroubleshooting,
-        title: context.t.advanced_settings_troubleshooting_title,
-        subtitle: context.t.advanced_settings_troubleshooting_subtitle,
+      ShellItem(
+        'troubleshooting',
+        SettingsSwitchListTile(
+          enabled: true,
+          valueNotifier: advancedTroubleshooting,
+          title: context.t.advanced_settings_troubleshooting_title,
+          subtitle: context.t.advanced_settings_troubleshooting_subtitle,
+        ),
       ),
       if (isManageMediaSupported.value)
-        Column(
-          children: [
-            SettingsSwitchListTile(
-              enabled: true,
-              valueNotifier: manageLocalMediaAndroid,
-              title: context.t.advanced_settings_sync_remote_deletions_title,
-              subtitle: context.t.advanced_settings_sync_remote_deletions_subtitle,
-              onChanged: (value) async {
-                if (value) {
-                  final result = await ref.read(permissionRepositoryProvider).requestManageMediaPermission();
-                  manageLocalMediaAndroid.value = result;
-                  manageMediaAndroidPermission.value = result;
-                }
-              },
-            ),
-            SettingsActionTile(
-              title: context.t.manage_media_access_title,
-              statusText: manageMediaAndroidPermission.value ? context.t.allowed : context.t.not_allowed,
-              subtitle: context.t.manage_media_access_rationale,
-              statusColor: manageLocalMediaAndroid.value && !manageMediaAndroidPermission.value
-                  ? const Color.fromARGB(255, 243, 188, 106)
-                  : null,
-              onActionTap: () async {
-                final result = await ref.read(permissionRepositoryProvider).manageMediaPermission();
-                manageMediaAndroidPermission.value = result;
-              },
-            ),
-          ],
-        ),
-      SettingsSliderListTile(
-        text: context.t.advanced_settings_log_level_title(level: logLevel),
-        valueNotifier: levelId,
-        maxValue: 8,
-        minValue: 1,
-        noDivisons: 7,
-        label: logLevel,
-      ),
-      SettingsSwitchListTile(
-        valueNotifier: preferRemote,
-        title: context.t.advanced_settings_prefer_remote_title,
-        subtitle: context.t.advanced_settings_prefer_remote_subtitle,
-      ),
-      const CustomProxyHeaderSettings(),
-      const SslClientCertSettings(),
-      SettingsSwitchListTile(
-        valueNotifier: readonlyModeEnabled,
-        title: context.t.advanced_settings_readonly_mode_title,
-        subtitle: context.t.advanced_settings_readonly_mode_subtitle,
-        onChanged: (value) {
-          readonlyModeEnabled.value = value;
-          ref.read(readonlyModeProvider.notifier).setReadonlyMode(value);
-          context.scaffoldMessenger.showSnackBar(
-            SnackBar(
-              duration: const Duration(seconds: 2),
-              content: Text(
-                value ? context.t.readonly_mode_enabled : context.t.readonly_mode_disabled,
-                style: context.textTheme.bodyLarge?.copyWith(color: context.primaryColor),
+        ShellItem(
+          'syncRemoteDeletions',
+          Column(
+            children: [
+              SettingsSwitchListTile(
+                enabled: true,
+                valueNotifier: manageLocalMediaAndroid,
+                title: context.t.advanced_settings_sync_remote_deletions_title,
+                subtitle: context.t.advanced_settings_sync_remote_deletions_subtitle,
+                onChanged: (value) async {
+                  if (value) {
+                    final result = await ref.read(permissionRepositoryProvider).requestManageMediaPermission();
+                    manageLocalMediaAndroid.value = result;
+                    manageMediaAndroidPermission.value = result;
+                  }
+                },
               ),
-            ),
-          );
-        },
+              SettingsActionTile(
+                title: context.t.manage_media_access_title,
+                statusText: manageMediaAndroidPermission.value ? context.t.allowed : context.t.not_allowed,
+                subtitle: context.t.manage_media_access_rationale,
+                statusColor: manageLocalMediaAndroid.value && !manageMediaAndroidPermission.value
+                    ? const Color.fromARGB(255, 243, 188, 106)
+                    : null,
+                onActionTap: () async {
+                  final result = await ref.read(permissionRepositoryProvider).manageMediaPermission();
+                  manageMediaAndroidPermission.value = result;
+                },
+              ),
+            ],
+          ),
+        ),
+      ShellItem(
+        'logLevel',
+        SettingsSliderListTile(
+          text: context.t.advanced_settings_log_level_title(level: logLevel),
+          valueNotifier: levelId,
+          maxValue: 8,
+          minValue: 1,
+          noDivisons: 7,
+          label: logLevel,
+        ),
       ),
-      ListTile(
-        title: Text(context.t.advanced_settings_clear_image_cache, style: const TextStyle(fontWeight: FontWeight.w500)),
-        leading: const Icon(Icons.playlist_remove_rounded),
-        onTap: () async {
-          final int clearedBytes;
-          try {
-            clearedBytes = await remoteImageApi.clearCache();
-          } catch (e) {
-            if (!context.mounted) {
-              return;
-            }
-
+      ShellItem(
+        'preferRemote',
+        SettingsSwitchListTile(
+          valueNotifier: preferRemote,
+          title: context.t.advanced_settings_prefer_remote_title,
+          subtitle: context.t.advanced_settings_prefer_remote_subtitle,
+        ),
+      ),
+      const ShellItem('proxyHeaders', CustomProxyHeaderSettings()),
+      const ShellItem('sslClientCert', SslClientCertSettings()),
+      ShellItem(
+        'readonlyMode',
+        SettingsSwitchListTile(
+          valueNotifier: readonlyModeEnabled,
+          title: context.t.advanced_settings_readonly_mode_title,
+          subtitle: context.t.advanced_settings_readonly_mode_subtitle,
+          onChanged: (value) {
+            readonlyModeEnabled.value = value;
+            ref.read(readonlyModeProvider.notifier).setReadonlyMode(value);
             context.scaffoldMessenger.showSnackBar(
               SnackBar(
                 duration: const Duration(seconds: 2),
                 content: Text(
-                  context.t.advanced_settings_clear_image_cache_error,
-                  style: context.textTheme.bodyLarge?.copyWith(color: context.themeData.colorScheme.error),
+                  value ? context.t.readonly_mode_enabled : context.t.readonly_mode_disabled,
+                  style: context.textTheme.bodyLarge?.copyWith(color: context.primaryColor),
                 ),
               ),
             );
-            return;
-          }
-
-          if (clearedBytes < 0 || !context.mounted) {
-            return;
-          }
-
-          // iOS always returns a small non-zero value
-          final clearedMB = clearedBytes < (256 * 1024) ? "0 MiB" : formatHumanReadableBytes(clearedBytes, 2);
-          context.scaffoldMessenger.showSnackBar(
-            SnackBar(
-              duration: const Duration(seconds: 2),
-              content: Text(
-                context.t.advanced_settings_clear_image_cache_success(size: clearedMB),
-                style: context.textTheme.bodyLarge?.copyWith(color: context.primaryColor),
-              ),
-            ),
-          );
-        },
+          },
+        ),
       ),
-      const SizedBox(height: 60),
+      ShellItem(
+        'clearImageCache',
+        ListTile(
+          title: Text(
+            context.t.advanced_settings_clear_image_cache,
+            style: const TextStyle(fontWeight: FontWeight.w500),
+          ),
+          leading: const Icon(Icons.playlist_remove_rounded),
+          onTap: () async {
+            final int clearedBytes;
+            try {
+              clearedBytes = await remoteImageApi.clearCache();
+            } catch (e) {
+              if (!context.mounted) {
+                return;
+              }
+
+              context.scaffoldMessenger.showSnackBar(
+                SnackBar(
+                  duration: const Duration(seconds: 2),
+                  content: Text(
+                    context.t.advanced_settings_clear_image_cache_error,
+                    style: context.textTheme.bodyLarge?.copyWith(color: context.themeData.colorScheme.error),
+                  ),
+                ),
+              );
+              return;
+            }
+
+            if (clearedBytes < 0 || !context.mounted) {
+              return;
+            }
+
+            // iOS always returns a small non-zero value
+            final clearedMB = clearedBytes < (256 * 1024) ? "0 MiB" : formatHumanReadableBytes(clearedBytes, 2);
+            context.scaffoldMessenger.showSnackBar(
+              SnackBar(
+                duration: const Duration(seconds: 2),
+                content: Text(
+                  context.t.advanced_settings_clear_image_cache_success(size: clearedMB),
+                  style: context.textTheme.bodyLarge?.copyWith(color: context.primaryColor),
+                ),
+              ),
+            );
+          },
+        ),
+      ),
     ];
 
-    return SettingsSubPageScaffold(settings: advancedSettings);
+    return ShellList(
+      slot: ShellSlots.settingsItems(SettingsEntryIds.advanced),
+      items: advancedSettings,
+      builder: (context, settings) => SettingsSubPageScaffold(settings: [...settings, const SizedBox(height: 60)]),
+    );
   }
 }

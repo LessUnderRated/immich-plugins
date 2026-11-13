@@ -9,6 +9,8 @@ import 'package:immich_mobile/domain/services/sync_linked_album.service.dart';
 import 'package:immich_mobile/extensions/build_context_extensions.dart';
 import 'package:immich_mobile/extensions/platform_extensions.dart';
 import 'package:immich_mobile/generated/translations.g.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/shell/shell_ids.dart';
+import 'package:immich_mobile/presentation/widgets/shell/shell_list.widget.dart';
 import 'package:immich_mobile/providers/background_sync.provider.dart';
 import 'package:immich_mobile/providers/backup/backup_album.provider.dart';
 import 'package:immich_mobile/providers/infrastructure/platform.provider.dart';
@@ -21,21 +23,41 @@ class BackupSettings extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return SettingsSubPageScaffold(
-      settings: [
-        SettingGroupTitle(title: context.t.network_requirements, icon: Icons.cell_tower),
-        const _UseCellularForVideosButton(),
-        const _UseCellularForPhotosButton(),
+    return ShellList(
+      slot: ShellSlots.settingsItems(SettingsEntryIds.backup),
+      items: [
+        ShellItem('networkTitle', SettingGroupTitle(title: context.t.network_requirements, icon: Icons.cell_tower)),
+        const ShellItem('cellularVideos', _UseCellularForVideosButton()),
+        const ShellItem('cellularPhotos', _UseCellularForPhotosButton()),
         if (CurrentPlatform.isAndroid) ...[
-          const Divider(),
-          SettingGroupTitle(title: context.t.background_options, icon: Icons.charging_station_rounded),
-          const _BackupOnlyWhenChargingButton(),
-          const _BackupDelaySlider(),
+          ShellItem(
+            'backgroundTitle',
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const Divider(),
+                const SizedBox(height: 10),
+                SettingGroupTitle(title: context.t.background_options, icon: Icons.charging_station_rounded),
+              ],
+            ),
+          ),
+          const ShellItem('charging', _BackupOnlyWhenChargingButton()),
+          const ShellItem('backupDelay', _BackupDelaySlider()),
         ],
-        const Divider(),
-        SettingGroupTitle(title: context.t.backup_albums_sync, icon: Icons.sync),
-        const _AlbumSyncActionButton(),
+        ShellItem(
+          'albumSyncTitle',
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const Divider(),
+              const SizedBox(height: 10),
+              SettingGroupTitle(title: context.t.backup_albums_sync, icon: Icons.sync),
+            ],
+          ),
+        ),
+        const ShellItem('albumSync', _AlbumSyncActionButton()),
       ],
+      builder: (context, settings) => SettingsSubPageScaffold(settings: settings),
     );
   }
 }

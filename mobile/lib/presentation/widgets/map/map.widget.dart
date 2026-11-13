@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:math';
 
+import 'package:collection/collection.dart';
 import 'package:flutter/material.dart';
 import 'package:fluttertoast/fluttertoast.dart';
 import 'package:geolocator/geolocator.dart';
@@ -11,15 +12,21 @@ import 'package:immich_mobile/domain/utils/event_stream.dart';
 import 'package:immich_mobile/extensions/asyncvalue_extensions.dart';
 import 'package:immich_mobile/extensions/build_context_extensions.dart';
 import 'package:immich_mobile/generated/translations.g.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/library/library_hooks.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/library/library_ids.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/library/map_plugin_layers.dart';
 import 'package:immich_mobile/presentation/widgets/bottom_sheet/base_bottom_sheet.widget.dart';
 import 'package:immich_mobile/presentation/widgets/bottom_sheet/map_bottom_sheet.widget.dart';
+import 'package:immich_mobile/presentation/widgets/library/library_plugins.widget.dart';
 import 'package:immich_mobile/presentation/widgets/map/map.state.dart';
 import 'package:immich_mobile/presentation/widgets/map/map_utils.dart';
+import 'package:immich_mobile/providers/map/map_plugin_layers.provider.dart';
 import 'package:immich_mobile/providers/routes.provider.dart';
 import 'package:immich_mobile/utils/async_mutex.dart';
 import 'package:immich_mobile/utils/debounce.dart';
 import 'package:immich_mobile/widgets/common/immich_toast.dart';
 import 'package:immich_mobile/widgets/map/map_theme_override.dart';
+import 'package:logging/logging.dart';
 import 'package:maplibre_gl/maplibre_gl.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -50,8 +57,16 @@ class MapView extends ConsumerStatefulWidget {
 }
 
 class _MapViewState extends ConsumerState<MapView> {
+  static final _log = Logger('MapView');
+
   MapLibreMapController? mapController;
   final _reloadMutex = AsyncMutex();
+  final _pluginLayerMutex = AsyncMutex();
+
+  /// Plugin layers currently added to the map style, by `<plugin>/<id>`.
+  final Map<String, MapPluginLayer> _shownPluginLayers = {};
+  bool _styleReady = false;
+  late final MapViewHandle _viewHandle;
   final _debouncer = Debouncer(interval: const Duration(milliseconds: 500), maxWaitTime: const Duration(seconds: 2));
   final ValueNotifier<double> bottomSheetOffset = ValueNotifier(0.25);
   final GlobalKey _bottomSheetKey = GlobalKey();
@@ -62,10 +77,27 @@ class _MapViewState extends ConsumerState<MapView> {
   void initState() {
     super.initState();
     _eventSubscription = EventStream.shared.listen<MapMarkerReloadEvent>(_onEvent);
+    _viewHandle = ref.read(mapViewHandleProvider);
+    final initialLocation = widget.initialLocation;
+    LibraryPluginHooks.emit(
+      LibraryEvents.mapOpened,
+      () => {
+        'initialLocation': initialLocation == null
+            ? null
+            : {'lat': initialLocation.latitude, 'lng': initialLocation.longitude},
+      },
+    );
   }
 
   @override
   void dispose() {
+    final controller = mapController;
+    if (controller != null) {
+      controller.onFeatureTapped.remove(_onFeatureTapped);
+      if (identical(_viewHandle.controller, controller)) {
+        _viewHandle.controller = null;
+      }
+    }
     _debouncer.dispose();
     bottomSheetOffset.dispose();
     unawaited(_eventSubscription?.cancel());
@@ -74,6 +106,7 @@ class _MapViewState extends ConsumerState<MapView> {
 
   void onMapCreated(MapLibreMapController controller) {
     mapController = controller;
+    _viewHandle.controller = controller;
   }
 
   void _onEvent(_) => _debouncer.run(() => setBounds(forceReload: true));
@@ -118,6 +151,9 @@ class _MapViewState extends ConsumerState<MapView> {
 
     _debouncer.run(() => setBounds(forceReload: true));
     controller.addListener(onMapMoved);
+    controller.onFeatureTapped.add(_onFeatureTapped);
+    _styleReady = true;
+    unawaited(_syncPluginLayers());
 
     final attribution = await attributionLoaded;
     if (mounted) {
@@ -152,8 +188,175 @@ class _MapViewState extends ConsumerState<MapView> {
         if (mounted && (ref.read(mapStateProvider.notifier).setBounds(bounds) || forceReload)) {
           final markers = await ref.read(mapMarkerProvider(bounds).future);
           await reloadMarkers(markers);
+          LibraryPluginHooks.emit(
+            LibraryEvents.mapMoved,
+            () => {'bounds': mapBoundsJson(bounds), 'zoom': controller.cameraPosition?.zoom},
+          );
         }
       }),
+    );
+  }
+
+  /// Brings the plugin layers on the map in line with [mapPluginLayersProvider].
+  Future<void> _syncPluginLayers() => _pluginLayerMutex.run(() async {
+    final controller = mapController;
+    if (controller == null || !_styleReady || !mounted) {
+      return;
+    }
+    final wanted = ref.read(mapPluginLayersProvider);
+    for (final key in _shownPluginLayers.keys.toList()) {
+      if (!wanted.containsKey(key)) {
+        await _removePluginLayer(controller, _shownPluginLayers.remove(key)!);
+      }
+    }
+    for (final layer in wanted.values) {
+      final shown = _shownPluginLayers[layer.key];
+      if (identical(shown, layer)) {
+        continue;
+      }
+      try {
+        if (shown == null || shown.minZoom != layer.minZoom || shown.maxZoom != layer.maxZoom) {
+          if (shown != null) {
+            await _removePluginLayer(controller, shown);
+          }
+          await _addPluginLayer(controller, layer);
+        } else {
+          await controller.setGeoJsonSource(layer.sourceId, MapPluginGeoJson.source(layer));
+        }
+        if ((shown?.visible ?? true) != layer.visible) {
+          for (final id in MapPluginGeoJson.styleLayerIds(layer)) {
+            await controller.setLayerVisibility(id, layer.visible);
+          }
+        }
+        _shownPluginLayers[layer.key] = layer;
+      } catch (error, stack) {
+        _log.warning('Cannot show map layer ${layer.key}', error, stack);
+      }
+    }
+  });
+
+  Future<void> _addPluginLayer(MapLibreMapController controller, MapPluginLayer layer) async {
+    final source = layer.sourceId;
+    await controller.addGeoJsonSource(source, MapPluginGeoJson.source(layer));
+    await controller.addFillLayer(
+      source,
+      MapPluginGeoJson.fillLayerId(layer),
+      const FillLayerProperties(
+        fillColor: ['get', 'color'],
+        fillOpacity: ['get', 'opacity'],
+        fillOutlineColor: ['get', 'outlineColor'],
+      ),
+      filter: MapPluginGeoJson.polygonFilter,
+      minzoom: layer.minZoom,
+      maxzoom: layer.maxZoom,
+    );
+    await controller.addLineLayer(
+      source,
+      MapPluginGeoJson.lineLayerId(layer),
+      const LineLayerProperties(
+        lineColor: ['get', 'color'],
+        lineWidth: ['get', 'width'],
+        lineOpacity: ['get', 'opacity'],
+        lineJoin: 'round',
+        lineCap: 'round',
+      ),
+      filter: MapPluginGeoJson.lineFilter,
+      minzoom: layer.minZoom,
+      maxzoom: layer.maxZoom,
+    );
+    await controller.addCircleLayer(
+      source,
+      MapPluginGeoJson.circleLayerId(layer),
+      const CircleLayerProperties(
+        circleColor: ['get', 'color'],
+        circleRadius: ['get', 'radius'],
+        circleOpacity: ['get', 'opacity'],
+        circleStrokeColor: '#FFFFFF',
+        circleStrokeWidth: 2,
+      ),
+      filter: MapPluginGeoJson.pointFilter,
+      minzoom: layer.minZoom,
+      maxzoom: layer.maxZoom,
+    );
+    try {
+      // Labels need glyphs in the map style; a style without them still shows the shapes
+      await controller.addSymbolLayer(
+        source,
+        MapPluginGeoJson.labelLayerId(layer),
+        const SymbolLayerProperties(
+          textField: ['get', 'label'],
+          textSize: 12,
+          textOffset: [0, 1.6],
+          textColor: ['get', 'labelColor'],
+          textHaloColor: '#FFFFFF',
+          textHaloWidth: 1,
+          textAllowOverlap: true,
+        ),
+        filter: MapPluginGeoJson.labelFilter,
+        minzoom: layer.minZoom,
+        maxzoom: layer.maxZoom,
+        enableInteraction: false,
+      );
+    } catch (error) {
+      _log.fine('No labels for map layer ${layer.key}: $error');
+    }
+    if (!layer.visible) {
+      for (final id in MapPluginGeoJson.styleLayerIds(layer)) {
+        await controller.setLayerVisibility(id, false);
+      }
+    }
+  }
+
+  Future<void> _removePluginLayer(MapLibreMapController controller, MapPluginLayer layer) async {
+    for (final id in MapPluginGeoJson.styleLayerIds(layer)) {
+      try {
+        await controller.removeLayer(id);
+      } catch (_) {
+        // The label layer may not exist
+      }
+    }
+    try {
+      await controller.removeSource(layer.sourceId);
+    } catch (error, stack) {
+      _log.warning('Cannot remove map layer ${layer.key}', error, stack);
+    }
+  }
+
+  void _onFeatureTapped(Point<double> point, LatLng coordinates, String id, String layerId, Annotation? annotation) {
+    if (layerId == MapUtils.defaultHeatMapLayerId) {
+      LibraryPluginHooks.emit(
+        LibraryEvents.mapMarkerTapped,
+        () => {'assetId': id, 'lat': coordinates.latitude, 'lng': coordinates.longitude},
+      );
+      return;
+    }
+    final layer = _shownPluginLayers.values.firstWhereOrNull((layer) => layerId.startsWith('${layer.sourceId}.'));
+    final feature = layer?.feature(id);
+    if (layer == null || feature == null) {
+      return;
+    }
+    final data = <String, dynamic>{
+      'plugin': layer.plugin,
+      'layer': layer.id,
+      'featureId': feature.id,
+      'feature': feature.toJson(),
+      'lat': coordinates.latitude,
+      'lng': coordinates.longitude,
+      'data': feature.data,
+    };
+    LibraryPluginHooks.emit(LibraryEvents.mapFeatureTapped, () => data);
+    final action = feature.action ?? layer.action;
+    final handler = ref.read(mapPluginActionsProvider).handler;
+    if (action == null || handler == null) {
+      return;
+    }
+    unawaited(
+      runLibraryFlow<void>(
+        context,
+        LibraryHooks.mapFeatureTap,
+        () => handler(layer.plugin, action, data),
+        args: () => {...data, 'action': action},
+      ),
     );
   }
 
@@ -196,12 +399,13 @@ class _MapViewState extends ConsumerState<MapView> {
         _debouncer.run(() => setBounds(forceReload: true));
       }
     });
+    ref.listen(mapPluginLayersProvider, (_, _) => unawaited(_syncPluginLayers()));
     return Stack(
       children: [
         _Map(initialLocation: widget.initialLocation, onMapCreated: onMapCreated, onMapReady: onMapReady),
         _DynamicBottomSheet(bottomSheetOffset: bottomSheetOffset, sheetKey: _bottomSheetKey),
         _DynamicBottomButtons(
-          onZoomToLocation: onZoomToLocation,
+          onZoomToLocation: () => libraryTap(context, LibraryPages.map, 'myLocation', onZoomToLocation),
           bottomSheetOffset: bottomSheetOffset,
           attribution: _attribution,
         ),
@@ -292,13 +496,19 @@ class _DynamicBottomButtons extends StatelessWidget {
             duration: const Duration(milliseconds: 150),
             child: Row(
               children: [
+                // The map data's attribution must stay visible, so it is not a hideable item
                 if (attribution case final attribution?) _AttributionButton(attribution: attribution),
                 const Spacer(),
-                ElevatedButton(
-                  onPressed: onZoomToLocation,
-                  style: ElevatedButton.styleFrom(shape: const CircleBorder()),
-                  child: const Icon(Icons.my_location),
-                ),
+                ...LibraryPluginHooks.arrange(LibrarySlots.mapControls, [
+                  (
+                    id: 'myLocation',
+                    item: ElevatedButton(
+                      onPressed: onZoomToLocation,
+                      style: ElevatedButton.styleFrom(shape: const CircleBorder()),
+                      child: const Icon(Icons.my_location),
+                    ),
+                  ),
+                ]),
               ],
             ),
           ),

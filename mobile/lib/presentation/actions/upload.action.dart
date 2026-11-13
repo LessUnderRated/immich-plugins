@@ -6,6 +6,7 @@ import 'package:immich_mobile/constants/enums.dart';
 import 'package:immich_mobile/domain/models/asset/base_asset.model.dart';
 import 'package:immich_mobile/generated/translations.g.dart';
 import 'package:immich_mobile/presentation/actions/action.dart';
+import 'package:immich_mobile/presentation/actions/action_ids.dart';
 import 'package:immich_mobile/providers/backup/asset_upload_progress.provider.dart';
 import 'package:immich_mobile/providers/infrastructure/toast.provider.dart';
 import 'package:immich_mobile/services/foreground_upload.service.dart';
@@ -22,6 +23,9 @@ class UploadAction extends AssetActionBuilder {
   final bool showProgress;
 
   const UploadAction({required super.source, this.showProgress = false});
+
+  @override
+  String get id => ActionIds.upload;
 
   @override
   ActionItem? create(BuildContext context, WidgetRef ref) {

@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:immich_mobile/extensions/build_context_extensions.dart';
 import 'package:immich_mobile/generated/translations.g.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/shell/shell_ids.dart';
+import 'package:immich_mobile/presentation/widgets/shell/shell_list.widget.dart';
 import 'package:immich_mobile/providers/permission.provider.dart';
 import 'package:immich_ui/immich_ui.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -39,29 +41,37 @@ class NotificationSetting extends HookConsumerWidget {
     }
 
     final notificationSettings = [
-      if (!hasPermission)
-        SettingsButtonListTile(
-          icon: Icons.notifications_outlined,
-          title: context.t.notification_permission_list_tile_title,
-          subtileText: context.t.notification_permission_list_tile_content,
-          buttonText: context.t.notification_permission_list_tile_enable_button,
-          onButtonTap: () =>
-              ref.read(notificationPermissionProvider.notifier).requestNotificationPermission().then((permission) {
-                if (permission == PermissionStatus.permanentlyDenied) {
-                  showPermissionsDialog();
-                }
-              }),
-        )
-      else
-        SettingsButtonListTile(
-          icon: Icons.notifications_active_outlined,
-          title: context.t.notification_enabled_list_tile_title,
-          subtileText: context.t.notification_enabled_list_tile_content,
-          buttonText: context.t.notification_enabled_list_tile_open_button,
-          onButtonTap: () => openAppSettings(),
-        ),
+      ShellItem(
+        'permission',
+        !hasPermission
+            ? SettingsButtonListTile(
+                icon: Icons.notifications_outlined,
+                title: context.t.notification_permission_list_tile_title,
+                subtileText: context.t.notification_permission_list_tile_content,
+                buttonText: context.t.notification_permission_list_tile_enable_button,
+                onButtonTap: () => ref
+                    .read(notificationPermissionProvider.notifier)
+                    .requestNotificationPermission()
+                    .then((permission) {
+                      if (permission == PermissionStatus.permanentlyDenied) {
+                        showPermissionsDialog();
+                      }
+                    }),
+              )
+            : SettingsButtonListTile(
+                icon: Icons.notifications_active_outlined,
+                title: context.t.notification_enabled_list_tile_title,
+                subtileText: context.t.notification_enabled_list_tile_content,
+                buttonText: context.t.notification_enabled_list_tile_open_button,
+                onButtonTap: () => openAppSettings(),
+              ),
+      ),
     ];
 
-    return SettingsSubPageScaffold(settings: notificationSettings);
+    return ShellList(
+      slot: ShellSlots.settingsItems(SettingsEntryIds.notifications),
+      items: notificationSettings,
+      builder: (context, settings) => SettingsSubPageScaffold(settings: settings),
+    );
   }
 }

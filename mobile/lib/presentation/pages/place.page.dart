@@ -4,13 +4,19 @@ import 'package:flutter_hooks/flutter_hooks.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:immich_mobile/extensions/build_context_extensions.dart';
 import 'package:immich_mobile/generated/translations.g.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/library/library_hooks.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/library/library_ids.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/library/library_json.dart';
 import 'package:immich_mobile/pages/common/large_leading_tile.dart';
 import 'package:immich_mobile/presentation/widgets/images/thumbnail.widget.dart';
+import 'package:immich_mobile/presentation/widgets/library/library_plugins.widget.dart';
 import 'package:immich_mobile/providers/infrastructure/asset.provider.dart';
 import 'package:immich_mobile/routing/router.dart';
 import 'package:immich_mobile/widgets/common/search_field.dart';
 import 'package:immich_mobile/widgets/map/map_thumbnail.dart';
 import 'package:maplibre_gl/maplibre_gl.dart';
+
+const _page = LibraryPages.place;
 
 @RoutePage()
 class PlacePage extends StatelessWidget {
@@ -29,8 +35,10 @@ class PlacePage extends StatelessWidget {
           return CustomScrollView(
             slivers: [
               _PlaceSliverAppBar(search: search),
-              _Map(search: search, currentLocation: currentLocation),
-              _PlaceList(search: search),
+              ...LibraryPluginHooks.arrange(LibrarySlots.placeSections, [
+                (id: 'map', item: _Map(search: search, currentLocation: currentLocation)),
+                (id: 'list', item: _PlaceList(search: search)),
+              ]),
             ],
           );
         },
@@ -66,14 +74,17 @@ class _PlaceSliverAppBar extends HookWidget {
               autofocus: true,
             )
           : Text(context.t.places),
-      actions: [
-        IconButton(
-          icon: Icon(search.value != null ? Icons.close : Icons.search),
-          onPressed: () {
-            search.value = search.value == null ? '' : null;
-          },
+      actions: LibraryPluginHooks.arrange(LibrarySlots.appBarActions(_page), [
+        (
+          id: 'search',
+          item: IconButton(
+            icon: Icon(search.value != null ? Icons.close : Icons.search),
+            onPressed: () => libraryTap(context, _page, 'search', () {
+              search.value = search.value == null ? '' : null;
+            }, args: () => {'open': search.value == null}),
+          ),
         ),
-      ],
+      ]),
     );
   }
 }
@@ -94,7 +105,12 @@ class _Map extends StatelessWidget {
                 height: 200,
                 width: context.width,
                 child: MapThumbnail(
-                  onTap: (_, _) => context.pushRoute(MapRoute(initialLocation: currentLocation)),
+                  onTap: (_, _) => libraryTap(
+                    context,
+                    _page,
+                    'map',
+                    () => context.pushRoute(MapRoute(initialLocation: currentLocation)),
+                  ),
                   zoom: 8,
                   centre: currentLocation ?? const LatLng(21.44950, -157.91959),
                   showAttribution: false,
@@ -143,12 +159,26 @@ class _PlaceList extends ConsumerWidget {
           filtered = places;
         }
 
-        return SliverList.builder(
-          itemCount: filtered.length,
-          itemBuilder: (context, index) {
-            final place = filtered[index];
-            return _PlaceTile(place: place);
+        return LibraryQueryBuilder<(String, String)>(
+          hook: LibraryHooks.placesQuery,
+          items: filtered,
+          argsKey: search.value,
+          id: (place) => place.$1,
+          toJson: LibraryJson.place,
+          fromJson: (json) {
+            final name = json['name'] ?? json['id'];
+            final assetId = json['assetId'];
+            return name == null || assetId == null ? null : ('$name', '$assetId');
           },
+          args: () => {'search': search.value},
+          placeholder: (_) => const SliverToBoxAdapter(child: SizedBox.shrink()),
+          builder: (context, filtered) => SliverList.builder(
+            itemCount: filtered.length,
+            itemBuilder: (context, index) {
+              final place = filtered[index];
+              return _PlaceTile(place: place);
+            },
+          ),
         );
       },
     );
@@ -163,7 +193,13 @@ class _PlaceTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return LargeLeadingTile(
-      onTap: () => context.pushRoute(PlaceDetailRoute(place: place.$1)),
+      onTap: () => libraryTap(
+        context,
+        _page,
+        'open',
+        () => context.pushRoute(PlaceDetailRoute(place: place.$1)),
+        args: () => {'place': LibraryJson.place(place)},
+      ),
       title: Text(place.$1, style: context.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w500)),
       leading: ClipRRect(
         borderRadius: const BorderRadius.all(Radius.circular(20)),

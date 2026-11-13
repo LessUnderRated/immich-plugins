@@ -8,6 +8,9 @@ import 'package:immich_mobile/extensions/asyncvalue_extensions.dart';
 import 'package:immich_mobile/extensions/build_context_extensions.dart';
 import 'package:immich_mobile/extensions/maplibrecontroller_extensions.dart';
 import 'package:immich_mobile/generated/translations.g.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/library/library_hooks.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/library/library_ids.dart';
+import 'package:immich_mobile/presentation/widgets/library/library_plugins.widget.dart';
 import 'package:immich_mobile/utils/map_utils.dart';
 import 'package:immich_mobile/widgets/map/map_theme_override.dart';
 import 'package:maplibre_gl/maplibre_gl.dart';
@@ -56,7 +59,7 @@ class MapLocationPickerPage extends HookWidget {
       mapBuilder: (style) => Builder(
         builder: (ctx) => Scaffold(
           backgroundColor: ctx.themeData.cardColor,
-          appBar: _AppBar(onClose: onClose),
+          appBar: _AppBar(onClose: () => libraryTap(ctx, LibraryPages.mapLocationPicker, 'back', onClose)),
           extendBodyBehindAppBar: true,
           primary: true,
           body: style.widgetWhen(
@@ -83,8 +86,23 @@ class MapLocationPickerPage extends HookWidget {
           ),
           bottomNavigationBar: _BottomBar(
             selectedLatLng: selectedLatLng,
-            onUseLocation: () => onClose(selectedLatLng.value),
-            onGetCurrentLocation: getCurrentLocation,
+            // `before` may change the location (`{ "lat", "lng" }`) or cancel
+            onUseLocation: () => unawaited(
+              runLibraryAction<void>(
+                ctx,
+                LibraryPages.mapLocationPicker,
+                'useLocation',
+                () async => onClose(selectedLatLng.value),
+                args: () => {'lat': selectedLatLng.value.latitude, 'lng': selectedLatLng.value.longitude},
+                withArgs: (args) async {
+                  final lat = args['lat'];
+                  final lng = args['lng'];
+                  onClose(lat is num && lng is num ? LatLng(lat.toDouble(), lng.toDouble()) : selectedLatLng.value);
+                },
+              ),
+            ),
+            onGetCurrentLocation: () =>
+                libraryTap(ctx, LibraryPages.mapLocationPicker, 'currentLocation', getCurrentLocation),
           ),
         ),
       ),
@@ -147,10 +165,19 @@ class _BottomBar extends StatelessWidget {
             ),
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-              children: [
-                ElevatedButton(onPressed: onUseLocation, child: Text(context.t.map_location_picker_page_use_location)),
-                ElevatedButton(onPressed: onGetCurrentLocation, child: const Icon(Icons.my_location)),
-              ],
+              children: LibraryPluginHooks.arrange(LibrarySlots.mapLocationPickerActions, [
+                (
+                  id: 'useLocation',
+                  item: ElevatedButton(
+                    onPressed: onUseLocation,
+                    child: Text(context.t.map_location_picker_page_use_location),
+                  ),
+                ),
+                (
+                  id: 'currentLocation',
+                  item: ElevatedButton(onPressed: onGetCurrentLocation, child: const Icon(Icons.my_location)),
+                ),
+              ]),
             ),
           ],
         ),

@@ -152,6 +152,34 @@ class MapUtils {
 
 typedef MapAttribution = ({String text, Uri? url});
 
+/// Map bounds as plugins see them: `{ "north", "south", "east", "west" }` in degrees.
+Map<String, dynamic> mapBoundsJson(LatLngBounds bounds) => {
+  'north': bounds.northeast.latitude,
+  'east': bounds.northeast.longitude,
+  'south': bounds.southwest.latitude,
+  'west': bounds.southwest.longitude,
+};
+
+/// Reads `{ "north", "south", "east", "west" }`; null when a side is missing.
+LatLngBounds? mapBoundsFromJson(Object? json) {
+  if (json is! Map) {
+    return null;
+  }
+  double? read(String key) => switch (json[key]) {
+    final num n => n.toDouble(),
+    final String s => double.tryParse(s),
+    _ => null,
+  };
+  final north = read('north');
+  final south = read('south');
+  final east = read('east');
+  final west = read('west');
+  if (north == null || south == null || east == null || west == null) {
+    return null;
+  }
+  return LatLngBounds(northeast: LatLng(north, east), southwest: LatLng(south, west));
+}
+
 class _LocationServiceDisabledDialog extends ConfirmDialog {
   _LocationServiceDisabledDialog(BuildContext context)
     : super(

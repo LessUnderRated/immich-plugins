@@ -52,6 +52,7 @@ abstract final class TimelineSlots {
   static String footer(String page) => '$page.footer';
   static String empty(String page) => '$page.empty';
   static String body(String page) => '$page.body';
+  static String fab(String page) => '$page.fab';
 
   /// Above the grid of every timeline (after the page's own header).
   static const timelineHeader = 'timeline.header';

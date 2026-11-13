@@ -104,12 +104,7 @@ abstract final class SettingsSectionIds {
     media: [SettingsEntryIds.timeline, SettingsEntryIds.assetViewer, SettingsEntryIds.freeUpSpace],
     plugins: [SettingsEntryIds.plugins],
     privacy: [SettingsEntryIds.privateGallery, SettingsEntryIds.lockedFolder],
-    account: [
-      SettingsEntryIds.networking,
-      SettingsEntryIds.backup,
-      SettingsEntryIds.sync,
-      SettingsEntryIds.passkeys,
-    ],
+    account: [SettingsEntryIds.networking, SettingsEntryIds.backup, SettingsEntryIds.sync, SettingsEntryIds.passkeys],
     advanced: [SettingsEntryIds.advanced, SettingsEntryIds.appLogs, SettingsEntryIds.sync],
     about: [SettingsEntryIds.whatsNew, SettingsEntryIds.version, SettingsEntryIds.licenses],
   };
@@ -172,7 +167,18 @@ abstract final class SettingsItemIds {
   static const passkeys = ['create', 'passkeys'];
   static const preferences = ['theme', 'haptics', 'share'];
   static const timeline = ['storageIndicator', 'smoothScrubbing', 'layout', 'groupBy'];
-  static const sync = ['stats', 'syncLocal', 'syncRemote', 'syncCloudIds', 'hashAssets', 'clearFileCache', 'exportDatabase', 'resetDatabase'];
+  static const sync = [
+    'stats',
+    'jobsTitle',
+    'syncLocal',
+    'syncRemote',
+    'syncCloudIds',
+    'hashAssets',
+    'actionsTitle',
+    'clearFileCache',
+    'exportDatabase',
+    'resetDatabase',
+  ];
 
   static const bySection = {
     SettingsEntryIds.advanced: advanced,
@@ -242,7 +248,10 @@ abstract final class LoginIds {
   static const oauth = 'oauth';
   static const passkey = 'passkey';
   static const back = 'back';
-  static const methods = [password, oauth, passkey, back];
+
+  /// The "login disabled" note shown when the server allows no method.
+  static const disabled = 'disabled';
+  static const methods = [password, oauth, passkey, disabled, back];
 
   static const version = 'version';
   static const logs = 'logs';
@@ -322,9 +331,6 @@ abstract final class ShellHooks {
   /// Starting a foreground backup. args `{ userId }`; cancellable.
   static const backupStart = 'backup.start';
 
-  /// Stopping the foreground backup. args `{ reason }`; cancellable.
-  static const backupStop = 'backup.stop';
-
   /// Selecting, deselecting or excluding a device album for backup. args `{ albumId, name }`; cancellable.
   static const backupAlbumSelect = 'backupAlbum.select';
   static const backupAlbumDeselect = 'backupAlbum.deselect';
@@ -341,7 +347,6 @@ abstract final class ShellHooks {
     logsQuery,
     localeSet,
     backupStart,
-    backupStop,
     backupAlbumSelect,
     backupAlbumDeselect,
     backupAlbumExclude,

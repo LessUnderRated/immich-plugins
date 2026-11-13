@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:immich_mobile/domain/services/timeline.service.dart';
 import 'package:immich_mobile/extensions/build_context_extensions.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/viewer/viewer_builtins.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/viewer/viewer_ids.dart';
 import 'package:immich_mobile/presentation/actions/action.dart';
 import 'package:immich_mobile/presentation/actions/delete.action.dart';
 import 'package:immich_mobile/presentation/actions/edit_asset.action.dart';
@@ -19,14 +21,24 @@ import 'package:immich_mobile/widgets/asset_viewer/video_controls.dart';
 import 'package:immich_ui/immich_ui.dart';
 
 // Resolved here rather than as an ActionColumnButton so a hidden restore
-// takes no slot in the spaceEvenly row below.
-List<Widget> _actionColumnButtons(BuildContext context, WidgetRef ref, List<ActionBuilder> actions) => actions
-    .map((a) => a.create(context, ref))
-    .nonNulls
-    .map<ImmichColumnButton>(
-      (item) => .new(icon: item.icon, label: item.label, onPressed: item.onAction, onLongPress: item.onSecondaryAction),
-    )
-    .toList(growable: false);
+// takes no slot in the spaceEvenly row below. Each button keeps its catalog id (ViewerBuiltinIds.bottomBar).
+List<ViewerSlotItem<Widget>> _actionColumnButtons(
+  BuildContext context,
+  WidgetRef ref,
+  List<(String, ActionBuilder)> actions,
+) => [
+  for (final (id, action) in actions)
+    if (action.create(context, ref) case final item?)
+      ViewerSlotItem(
+        id,
+        ImmichColumnButton(
+          icon: item.icon,
+          label: item.label,
+          onPressed: item.onAction,
+          onLongPress: item.onSecondaryAction,
+        ),
+      ),
+];
 
 class ViewerBottomBar extends ConsumerWidget {
   const ViewerBottomBar({super.key});
@@ -45,20 +57,42 @@ class ViewerBottomBar extends ConsumerWidget {
 
     final originalTheme = context.themeData;
 
-    final actions = <Widget>[
-      ..._actionColumnButtons(context, ref, const [RestoreAction(source: .viewer), ShareAction(source: .viewer)]),
+    final actions = arrangeViewerItems<Widget>(ViewerSlotIds.bottomBar, [
+      ..._actionColumnButtons(context, ref, const [
+        ('restore', RestoreAction(source: .viewer)),
+        ('share', ShareAction(source: .viewer)),
+      ]),
 
       if (!isInLockedView) ...[
         if (!isInTrash) ...[
           ..._actionColumnButtons(context, ref, const [
-            EditAssetAction(source: .viewer),
-            MoveToPrivateAction(source: .viewer),
+            ('edit', EditAssetAction(source: .viewer)),
+            ('moveToPrivate', MoveToPrivateAction(source: .viewer)),
           ]),
-          if (asset.hasRemote) ImmichColorOverride(color: null, child: AddActionButton(originalTheme: originalTheme)),
+          if (asset.hasRemote)
+            ViewerSlotItem(
+              'add',
+              ImmichColorOverride(color: null, child: AddActionButton(originalTheme: originalTheme)),
+            ),
         ],
-        ..._actionColumnButtons(context, ref, const [DeleteAction(source: .viewer)]),
+        ..._actionColumnButtons(context, ref, const [('delete', DeleteAction(source: .viewer))]),
       ],
-    ];
+    ]);
+
+    // Rows above the action row (ViewerBuiltinIds.bottomPanels).
+    final panels = arrangeViewerItems<Widget>(ViewerSlotIds.bottomPanels, [
+      if (asset.isImage) ViewerSlotItem('ocr', OcrToggleButton(asset: asset)),
+      if (asset.isVideo) ViewerSlotItem('videoControls', VideoControls(videoPlayerName: asset.id)),
+      const ViewerSlotItem('carousel', Padding(padding: EdgeInsets.symmetric(vertical: 6), child: ViewerCarousel())),
+      if (!isReadonlyModeEnabled)
+        ViewerSlotItem(
+          'actions',
+          ImmichColorOverride(
+            color: Colors.white,
+            child: Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: actions),
+          ),
+        ),
+    ]);
 
     return AnimatedSwitcher(
       duration: Durations.short4,
@@ -91,19 +125,7 @@ class ViewerBottomBar extends ConsumerWidget {
                     top: false,
                     child: Padding(
                       padding: const EdgeInsets.only(top: 8),
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          if (asset.isImage) OcrToggleButton(asset: asset),
-                          if (asset.isVideo) VideoControls(videoPlayerName: asset.id),
-                          const Padding(padding: EdgeInsets.symmetric(vertical: 6), child: ViewerCarousel()),
-                          if (!isReadonlyModeEnabled)
-                            ImmichColorOverride(
-                              color: Colors.white,
-                              child: Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: actions),
-                            ),
-                        ],
-                      ),
+                      child: Column(mainAxisSize: MainAxisSize.min, children: panels),
                     ),
                   ),
                 ],

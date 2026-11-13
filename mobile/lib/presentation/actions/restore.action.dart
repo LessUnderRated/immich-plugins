@@ -3,6 +3,7 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:immich_mobile/constants/enums.dart';
 import 'package:immich_mobile/generated/translations.g.dart';
 import 'package:immich_mobile/presentation/actions/action.dart';
+import 'package:immich_mobile/presentation/actions/action_ids.dart';
 import 'package:immich_mobile/providers/infrastructure/asset.provider.dart';
 import 'package:immich_mobile/providers/infrastructure/toast.provider.dart';
 import 'package:immich_mobile/utils/error_handler.dart';
@@ -15,6 +16,9 @@ final _stateProvider = Provider.family.autoDispose<List<String>?, ActionSource>(
 
 class RestoreAction extends AssetActionBuilder {
   const RestoreAction({required super.source});
+
+  @override
+  String get id => ActionIds.restoreTrash;
 
   @override
   ActionItem? create(BuildContext context, WidgetRef ref) {

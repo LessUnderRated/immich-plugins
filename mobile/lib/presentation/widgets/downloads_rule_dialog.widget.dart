@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/shell/shell_ids.dart';
 import 'package:immich_mobile/infrastructure/repositories/device_album.repository.dart';
 import 'package:immich_mobile/infrastructure/repositories/downloads_rule.repository.dart';
+import 'package:immich_mobile/presentation/widgets/shell/shell_list.widget.dart';
 import 'package:immich_mobile/providers/background_sync.provider.dart';
 import 'package:immich_mobile/providers/downloads_rule.provider.dart';
 
@@ -114,8 +116,20 @@ class _DownloadsRuleDialogState extends ConsumerState<_DownloadsRuleDialog> {
               ],
             ),
       actions: [
-        TextButton(onPressed: _running || rule == null ? null : _runNow, child: const Text('Run now')),
-        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Done')),
+        ShellList(
+          slot: ShellSlots.downloadsRuleDialogActions,
+          items: [
+            ShellItem(
+              DownloadsRuleDialogIds.runNow,
+              TextButton(onPressed: _running || rule == null ? null : _runNow, child: const Text('Run now')),
+            ),
+            ShellItem(
+              DownloadsRuleDialogIds.done,
+              TextButton(onPressed: () => Navigator.pop(context), child: const Text('Done')),
+            ),
+          ],
+          builder: (context, actions) => OverflowBar(alignment: MainAxisAlignment.end, spacing: 8, children: actions),
+        ),
       ],
     );
   }

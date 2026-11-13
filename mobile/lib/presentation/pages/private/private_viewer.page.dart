@@ -4,7 +4,10 @@ import 'dart:io';
 import 'package:auto_route/auto_route.dart';
 import 'package:flutter/material.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/library/library_hooks.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/library/library_ids.dart';
 import 'package:immich_mobile/infrastructure/repositories/private_vault.repository.dart';
+import 'package:immich_mobile/presentation/widgets/library/library_plugins.widget.dart';
 import 'package:immich_mobile/providers/background_sync.provider.dart';
 import 'package:immich_mobile/providers/private_vault.provider.dart';
 import 'package:native_video_player/native_video_player.dart';
@@ -21,6 +24,16 @@ class PrivateViewerPage extends ConsumerStatefulWidget {
 }
 
 class _PrivateViewerPageState extends ConsumerState<PrivateViewerPage> {
+  static const _page = LibraryPages.privateViewer;
+
+  void _action(String id, Future<void> Function() original) => libraryTap(
+    context,
+    _page,
+    id,
+    original,
+    args: () => {'id': _current.id, 'name': _current.name, 'isVideo': _current.isVideo},
+  );
+
   late final PageController _controller = PageController(initialPage: widget.initialIndex);
   late int _index = widget.initialIndex;
   bool _showControls = true;
@@ -88,10 +101,24 @@ class _PrivateViewerPageState extends ConsumerState<PrivateViewerPage> {
                 ),
               ),
               title: Text(_current.name, style: const TextStyle(fontSize: 14)),
-              actions: [
-                IconButton(tooltip: 'Move back to gallery', icon: const Icon(Icons.lock_open), onPressed: _restore),
-                IconButton(tooltip: 'Delete', icon: const Icon(Icons.delete_outline), onPressed: _delete),
-              ],
+              actions: LibraryPluginHooks.arrange(LibrarySlots.appBarActions(_page), [
+                (
+                  id: 'restore',
+                  item: IconButton(
+                    tooltip: 'Move back to gallery',
+                    icon: const Icon(Icons.lock_open),
+                    onPressed: () => _action('restore', _restore),
+                  ),
+                ),
+                (
+                  id: 'delete',
+                  item: IconButton(
+                    tooltip: 'Delete',
+                    icon: const Icon(Icons.delete_outline),
+                    onPressed: () => _action('delete', _delete),
+                  ),
+                ),
+              ]),
             )
           : null,
       body: PageView.builder(

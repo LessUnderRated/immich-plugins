@@ -4,6 +4,7 @@ import 'package:immich_mobile/constants/enums.dart';
 import 'package:immich_mobile/domain/models/asset/base_asset.model.dart';
 import 'package:immich_mobile/domain/models/device_plugin.model.dart';
 import 'package:immich_mobile/presentation/actions/action.dart';
+import 'package:immich_mobile/presentation/actions/action_ids.dart';
 import 'package:immich_mobile/presentation/pages/plugins/schema_form.widget.dart';
 import 'package:immich_mobile/presentation/plugins/plugin_ui.dart';
 import 'package:immich_mobile/providers/background_sync.provider.dart';
@@ -17,6 +18,9 @@ final _stateProvider = Provider.family.autoDispose<List<LocalAsset>?, ActionSour
 
 class PluginAction extends AssetActionBuilder {
   const PluginAction({required super.source});
+
+  @override
+  String get id => ActionIds.plugins;
 
   @override
   ActionItem? create(BuildContext context, WidgetRef ref) {

@@ -212,7 +212,7 @@ const Map<String, List<String>> libraryBuiltins = {
   LibrarySlots.libraryActions: ['favorites', 'archived', 'sharedLinks', 'trash'],
   LibrarySlots.libraryCollections: ['people', 'places', 'onThisDevice', 'memories'],
   LibrarySlots.libraryQuickAccess: ['folders', 'lockedFolder', 'partners', 'partner:*'],
-  'localAlbums.appBar.actions': ['trash', 'downloads', 'findDuplicates', 'newAlbum'],
+  'localAlbums.appBar.actions': ['trash', 'downloads', 'findDuplicates', 'newAlbum', 'settings'],
   LibrarySlots.localAlbumsSections: ['appAlbums', 'deviceTitle', 'deviceAlbums'],
   'remoteAlbum.appBar.actions': ['slideshow', 'activity', 'menu'],
   'remoteAlbum.appBar.menu': [
@@ -226,7 +226,7 @@ const Map<String, List<String>> libraryBuiltins = {
     'deleteAlbum',
   ],
   'remoteAlbum.header': ['pendingUploads'],
-  LibrarySlots.remoteAlbumPendingUploadsActions: ['cancel', 'clearFailed'],
+  LibrarySlots.remoteAlbumPendingUploadsActions: ['cancelUploads', 'clearFailed'],
   LibrarySlots.remoteAlbumEditDialog: ['name', 'description'],
   'peopleCollection.appBar.actions': ['search'],
   LibrarySlots.peopleCollectionTileActions: ['open', 'editName'],
@@ -235,8 +235,16 @@ const Map<String, List<String>> libraryBuiltins = {
   'place.appBar.actions': ['search'],
   LibrarySlots.placeSections: ['map', 'list'],
   'map.appBar.actions': ['back', 'settings'],
-  LibrarySlots.mapControls: ['attribution', 'myLocation'],
-  LibrarySlots.mapSettings: ['systemTheme', 'darkMode', 'favoritesOnly', 'includeArchived', 'withPartners', 'timeRange'],
+  LibrarySlots.mapControls: ['myLocation'],
+  LibrarySlots.mapSettings: [
+    'systemTheme',
+    'darkMode',
+    'divider',
+    'favoritesOnly',
+    'includeArchived',
+    'withPartners',
+    'timeRange',
+  ],
   'mapLocationPicker.appBar.actions': ['back'],
   LibrarySlots.mapLocationPickerActions: ['useLocation', 'currentLocation'],
   'partnerDetail.header': ['inTimeline'],
@@ -248,7 +256,7 @@ const Map<String, List<String>> libraryBuiltins = {
   'activities.footer': ['input'],
   'downloadInfo.footer': ['clearAll'],
   LibrarySlots.pinAuthActions: ['biometric'],
-  'privateGallery.appBar.actions': ['olderItems', 'lock'],
+  'privateGallery.appBar.actions': ['olderItems', 'lock', 'settings'],
   LibrarySlots.privateGallerySelectionAppBarActions: ['close', 'selectAll'],
   LibrarySlots.privateGallerySelectionActions: ['share', 'unhide', 'delete'],
   LibrarySlots.privateGalleryTimelineActions: ['share', 'moveToPrivate', 'delete'],
@@ -341,6 +349,7 @@ abstract final class LibraryEvents {
   static const mapMoved = 'map.moved';
   static const mapSettingsChanged = 'map.settingsChanged';
   static const mapFeatureTapped = 'map.featureTapped';
+  static const mapMarkerTapped = 'map.markerTapped';
   static const searchPerformed = 'search.performed';
   static const searchCleared = 'search.cleared';
   static const searchTypeChanged = 'search.typeChanged';
@@ -362,6 +371,7 @@ abstract final class LibraryEvents {
     mapMoved,
     mapSettingsChanged,
     mapFeatureTapped,
+    mapMarkerTapped,
     searchPerformed,
     searchCleared,
     searchTypeChanged,

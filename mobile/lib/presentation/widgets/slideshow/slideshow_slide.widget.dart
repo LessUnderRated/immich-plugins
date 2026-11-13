@@ -149,6 +149,7 @@ class _SlideshowVideo extends ConsumerWidget {
       child: NativeVideoViewer(
         asset: asset,
         isCurrent: isCurrent,
+        surface: 'slideshow',
         // Disable video looping
         loopOverride: false,
         image: ProgressiveImage(

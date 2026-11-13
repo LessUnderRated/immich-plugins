@@ -720,6 +720,10 @@ class DeviceWorkflowEngine {
     }
   }
 
+  /// Runs host function [name] for [plugin] exactly as a `host.callHost` call would (registered functions first, then
+  /// the built-in names). Throws [HostFunctionException] for unknown names.
+  Future<Object?> dispatchHost(String plugin, String name, List<dynamic> args) => _dispatch(plugin, name, args);
+
   Future<Object?> _dispatch(String plugin, String name, List<dynamic> args) {
     final registered = hostLookup?.call(name);
     if (registered != null) {

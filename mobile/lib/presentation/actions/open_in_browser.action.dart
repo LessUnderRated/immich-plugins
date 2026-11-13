@@ -3,6 +3,7 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:immich_mobile/domain/services/timeline.service.dart';
 import 'package:immich_mobile/generated/translations.g.dart';
 import 'package:immich_mobile/presentation/actions/action.dart';
+import 'package:immich_mobile/presentation/actions/action_ids.dart';
 import 'package:immich_mobile/providers/infrastructure/store.provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -11,6 +12,12 @@ class OpenInBrowserAction extends ActionBuilder {
   final TimelineOrigin origin;
 
   const OpenInBrowserAction({required this.remoteId, required this.origin});
+
+  @override
+  String get id => ActionIds.openInBrowser;
+
+  @override
+  Map<String, dynamic> get hookArgs => {'remoteId': remoteId, 'origin': origin.name};
 
   @override
   ActionItem create(BuildContext context, WidgetRef ref) =>

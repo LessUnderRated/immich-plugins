@@ -2,6 +2,7 @@ import 'package:auto_route/auto_route.dart';
 import 'package:flutter/widgets.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:immich_mobile/generated/translations.g.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/timeline/timeline_plugin_ids.dart';
 import 'package:immich_mobile/presentation/widgets/timeline/timeline.widget.dart';
 import 'package:immich_mobile/providers/infrastructure/timeline.provider.dart';
 import 'package:immich_mobile/providers/user.provider.dart';
@@ -26,7 +27,10 @@ class RecentlyTakenPage extends StatelessWidget {
           return timelineService;
         }),
       ],
-      child: Timeline(appBar: MesmerizingSliverAppBar(title: context.t.recently_taken)),
+      child: Timeline(
+        page: TimelinePages.recentlyTaken,
+        appBar: MesmerizingSliverAppBar(title: context.t.recently_taken),
+      ),
     );
   }
 }

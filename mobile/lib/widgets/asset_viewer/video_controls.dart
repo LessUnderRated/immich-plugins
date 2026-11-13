@@ -5,6 +5,8 @@ import 'package:flutter/material.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:immich_mobile/constants/colors.dart';
 import 'package:immich_mobile/extensions/duration_extensions.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/viewer/video_hooks.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/viewer/video_sessions.dart';
 import 'package:immich_mobile/models/cast/cast_manager_state.dart';
 import 'package:immich_mobile/providers/asset_viewer/asset_viewer.provider.dart';
 import 'package:immich_mobile/providers/asset_viewer/video_player_provider.dart';
@@ -24,6 +26,9 @@ class VideoControls extends ConsumerStatefulWidget {
 
 class _VideoControlsState extends ConsumerState<VideoControls> {
   late final RestartableTimer _hideTimer;
+
+  /// Where a seek drag started, for the `video.control` hook (a cancelled seek jumps back here).
+  Duration? _seekFrom;
 
   AutoDisposeStateNotifierProvider<VideoPlayerNotifier, VideoPlayerState> get _provider =>
       videoPlayerProvider(widget.videoPlayerName);
@@ -63,7 +68,64 @@ class _VideoControlsState extends ConsumerState<VideoControls> {
       return;
     }
 
-    ref.read(_provider.notifier).toggle();
+    final notifier = ref.read(_provider.notifier);
+    final asset = ref.read(assetViewerProvider).currentAsset;
+    if (!VideoControlHook.isHooked || asset == null) {
+      notifier.toggle();
+      return;
+    }
+    final player = ref.read(_provider);
+    VideoControlHook.dispatch(
+      switch (player.status) {
+        VideoPlaybackStatus.paused => 'play',
+        VideoPlaybackStatus.playing || VideoPlaybackStatus.buffering => 'pause',
+        VideoPlaybackStatus.completed => 'restart',
+      },
+      asset,
+      session: _session,
+      positionMs: player.position.inMilliseconds,
+      builtin: notifier.toggle,
+    );
+  }
+
+  VideoSession? get _session {
+    VideoSession? found;
+    for (final session in VideoSessions.instance.ofAsset(widget.videoPlayerName)) {
+      found = session;
+      if (session.isCurrent) {
+        break;
+      }
+    }
+    return found;
+  }
+
+  void _onSeekStart(VideoPlayerNotifier notifier) {
+    _seekFrom = ref.read(_provider).position;
+    notifier.hold();
+  }
+
+  void _onSeekEnd(VideoPlayerNotifier notifier, bool isCasting, double value) {
+    notifier.release();
+    final from = _seekFrom;
+    _seekFrom = null;
+    final asset = ref.read(assetViewerProvider).currentAsset;
+    if (isCasting || from == null || asset == null || !VideoControlHook.isHooked) {
+      return;
+    }
+    // The seek already happened while dragging; a plugin that cancels or replaces it sends the video back.
+    VideoControlHook.dispatch(
+      'seek',
+      asset,
+      session: _session,
+      positionMs: Duration(microseconds: value.toInt()).inMilliseconds,
+      fromMs: from.inMilliseconds,
+      builtin: () {},
+      onSkipped: () {
+        if (mounted) {
+          ref.read(_provider.notifier).seekTo(from);
+        }
+      },
+    );
   }
 
   void _onSeek(bool isCasting, double value) {
@@ -132,8 +194,8 @@ class _VideoControlsState extends ConsumerState<VideoControls> {
                 activeColor: Colors.white,
                 inactiveColor: whiteOpacity75.withValues(alpha: 0.35),
                 padding: const EdgeInsets.symmetric(horizontal: 8),
-                onChangeStart: (_) => notifier.hold(),
-                onChangeEnd: (_) => notifier.release(),
+                onChangeStart: (_) => _onSeekStart(notifier),
+                onChangeEnd: (value) => _onSeekEnd(notifier, isCasting, value),
                 onChanged: isLoaded ? (value) => _onSeek(isCasting, value) : null,
               ),
             ),

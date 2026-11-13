@@ -11,6 +11,8 @@ import 'package:immich_mobile/entities/store.entity.dart';
 import 'package:immich_mobile/extensions/build_context_extensions.dart';
 import 'package:immich_mobile/extensions/platform_extensions.dart';
 import 'package:immich_mobile/generated/translations.g.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/shell/shell_ids.dart';
+import 'package:immich_mobile/presentation/widgets/shell/shell_list.widget.dart';
 import 'package:immich_mobile/providers/app_settings.provider.dart';
 import 'package:immich_mobile/providers/auth.provider.dart';
 import 'package:immich_mobile/providers/background_sync.provider.dart';
@@ -172,79 +174,114 @@ class _SyncStatusAndActionsState extends ConsumerState<SyncStatusAndActions> {
       );
     }
 
-    return ListView(
-      padding: const EdgeInsets.only(top: 16, bottom: 96),
-      children: [
-        const _SyncStatsCounts(),
-        const Divider(height: 10),
-        const SizedBox(height: 16),
-        SettingGroupTitle(title: context.t.jobs),
-        SettingListTile(
-          title: context.t.sync_local,
-          subtitle: context.t.tap_to_run_job,
-          leading: const Icon(Icons.sync),
-          trailing: _SyncStatusIcon(status: ref.watch(syncStatusProvider).localSyncStatus),
-          onTap: () {
-            unawaited(ref.read(backgroundSyncProvider).syncLocal(full: true));
-          },
+    final syncStatus = ref.watch(syncStatusProvider);
+    return ShellList(
+      slot: ShellSlots.settingsItems(SettingsEntryIds.sync),
+      builder: (context, children) => ListView(padding: const EdgeInsets.only(top: 16, bottom: 96), children: children),
+      items: [
+        const ShellItem(
+          'stats',
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [_SyncStatsCounts(), Divider(height: 10), SizedBox(height: 16)],
+          ),
         ),
-        SettingListTile(
-          title: context.t.sync_remote,
-          subtitle: context.t.tap_to_run_job,
-          leading: const Icon(Icons.cloud_sync),
-          trailing: _SyncStatusIcon(status: ref.watch(syncStatusProvider).remoteSyncStatus),
-          onTap: () {
-            unawaited(ref.read(backgroundSyncProvider).syncRemote());
-          },
+        ShellItem('jobsTitle', SettingGroupTitle(title: context.t.jobs)),
+        ShellItem(
+          'syncLocal',
+          SettingListTile(
+            title: context.t.sync_local,
+            subtitle: context.t.tap_to_run_job,
+            leading: const Icon(Icons.sync),
+            trailing: _SyncStatusIcon(status: syncStatus.localSyncStatus),
+            onTap: () {
+              unawaited(ref.read(backgroundSyncProvider).syncLocal(full: true));
+            },
+          ),
+        ),
+        ShellItem(
+          'syncRemote',
+          SettingListTile(
+            title: context.t.sync_remote,
+            subtitle: context.t.tap_to_run_job,
+            leading: const Icon(Icons.cloud_sync),
+            trailing: _SyncStatusIcon(status: syncStatus.remoteSyncStatus),
+            onTap: () {
+              unawaited(ref.read(backgroundSyncProvider).syncRemote());
+            },
+          ),
         ),
         if (CurrentPlatform.isIOS && serverVersion.supports(.cloudIdMetadata))
-          SettingListTile(
-            title: 'Sync Cloud Ids',
-            leading: const Icon(Icons.cloud_circle_rounded),
-            subtitle: context.t.tap_to_run_job,
-            trailing: _SyncStatusIcon(status: ref.watch(syncStatusProvider).cloudIdSyncStatus),
-            onTap: ref.watch(backgroundSyncProvider).syncCloudIds,
+          ShellItem(
+            'syncCloudIds',
+            SettingListTile(
+              title: 'Sync Cloud Ids',
+              leading: const Icon(Icons.cloud_circle_rounded),
+              subtitle: context.t.tap_to_run_job,
+              trailing: _SyncStatusIcon(status: syncStatus.cloudIdSyncStatus),
+              onTap: ref.watch(backgroundSyncProvider).syncCloudIds,
+            ),
           ),
-        SettingListTile(
-          title: context.t.hash_asset,
-          leading: const Icon(Icons.tag),
-          subtitle: context.t.tap_to_run_job,
-          trailing: _SyncStatusIcon(status: ref.watch(syncStatusProvider).hashJobStatus),
-          onTap: () {
-            unawaited(ref.read(backgroundSyncProvider).hashAssets());
-          },
+        ShellItem(
+          'hashAssets',
+          SettingListTile(
+            title: context.t.hash_asset,
+            leading: const Icon(Icons.tag),
+            subtitle: context.t.tap_to_run_job,
+            trailing: _SyncStatusIcon(status: syncStatus.hashJobStatus),
+            onTap: () {
+              unawaited(ref.read(backgroundSyncProvider).hashAssets());
+            },
+          ),
         ),
-        const Divider(height: 1),
-        const SizedBox(height: 16),
-        SettingGroupTitle(title: context.t.actions),
-        ListTile(
-          title: Text(context.t.clear_file_cache, style: const TextStyle(fontWeight: FontWeight.w500)),
-          leading: const Icon(Icons.playlist_remove_rounded),
-          onTap: clearFileCache,
+        ShellItem(
+          'actionsTitle',
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const Divider(height: 1),
+              const SizedBox(height: 16),
+              SettingGroupTitle(title: context.t.actions),
+            ],
+          ),
+        ),
+        ShellItem(
+          'clearFileCache',
+          ListTile(
+            title: Text(context.t.clear_file_cache, style: const TextStyle(fontWeight: FontWeight.w500)),
+            leading: const Icon(Icons.playlist_remove_rounded),
+            onTap: clearFileCache,
+          ),
         ),
         if (!kReleaseMode)
+          ShellItem(
+            'exportDatabase',
+            ListTile(
+              title: Text(context.t.export_database, style: const TextStyle(fontWeight: FontWeight.w500)),
+              subtitle: Text(context.t.export_database_description),
+              leading: const Icon(Icons.download),
+              onTap: exportDatabase,
+            ),
+          ),
+        ShellItem(
+          'resetDatabase',
           ListTile(
-            title: Text(context.t.export_database, style: const TextStyle(fontWeight: FontWeight.w500)),
-            subtitle: Text(context.t.export_database_description),
-            leading: const Icon(Icons.download),
-            onTap: exportDatabase,
-          ),
-        ListTile(
-          title: Text(
-            context.t.reset_sqlite,
-            style: TextStyle(color: context.colorScheme.error, fontWeight: FontWeight.w500),
-          ),
-          leading: Icon(Icons.settings_backup_restore_rounded, color: context.colorScheme.error),
-          trailing: _isResetting
-              ? const SizedBox.square(dimension: 20, child: CircularProgressIndicator(strokeWidth: 2))
-              : null,
-          onTap: () async {
-            if (_isResetting) {
-              return;
-            }
+            title: Text(
+              context.t.reset_sqlite,
+              style: TextStyle(color: context.colorScheme.error, fontWeight: FontWeight.w500),
+            ),
+            leading: Icon(Icons.settings_backup_restore_rounded, color: context.colorScheme.error),
+            trailing: _isResetting
+                ? const SizedBox.square(dimension: 20, child: CircularProgressIndicator(strokeWidth: 2))
+                : null,
+            onTap: () async {
+              if (_isResetting) {
+                return;
+              }
 
-            await resetSqliteDb(context);
-          },
+              await resetSqliteDb(context);
+            },
+          ),
         ),
       ],
     );

@@ -231,25 +231,12 @@ Future<_MosaicMasks?> _lowResMosaic(
     return null;
   }
 
-  final small = await Isolate.run(() {
-    final image = _decodeOriented(bytes);
-    final scale = min(1.0, maxDimension / max(image.width, image.height));
-    final resized = scale >= 1
-        ? image
-        : img.copyResize(
-            image,
-            width: max(1, (image.width * scale).round()),
-            height: max(1, (image.height * scale).round()),
-            interpolation: img.Interpolation.average,
-          );
-    return (width: image.width, height: image.height, small: resized.toUint8List(), sw: resized.width, sh: resized.height);
-  });
-
+  final small = await _runDecodeSmall(bytes, maxDimension);
   final source = await _imageFromRgba(small.small, small.sw, small.sh);
   final effects = <Uint8List>[];
   final labels = <_CensorGroup, int>{};
   try {
-    for (final group in groups) {
+    for (final group in groups.take(254)) {
       final options = Map<String, Object?>.from(jsonDecode(group.$3) as Map);
       final effect = await censorEffects(group.$1, options, source, group.$2, small.width, small.height);
       if (effect == null) {
@@ -307,6 +294,32 @@ Future<_MosaicMasks?> _lowResMosaic(
   } finally {
     mask.dispose();
   }
+}
+
+typedef _SmallImage = ({int width, int height, Uint8List small, int sw, int sh});
+
+// Separate function so the isolate closure captures only its arguments.
+Future<_SmallImage> _runDecodeSmall(Uint8List bytes, int maxDimension) =>
+    Isolate.run(() => _decodeSmall(bytes, maxDimension));
+
+_SmallImage _decodeSmall(Uint8List bytes, int maxDimension) {
+  final image = _decodeOriented(bytes);
+  final scale = min(1.0, maxDimension / max(image.width, image.height));
+  final resized = scale >= 1
+      ? image
+      : img.copyResize(
+          image,
+          width: max(1, (image.width * scale).round()),
+          height: max(1, (image.height * scale).round()),
+          interpolation: img.Interpolation.average,
+        );
+  return (
+    width: image.width,
+    height: image.height,
+    small: resized.toUint8List(),
+    sw: resized.width,
+    sh: resized.height,
+  );
 }
 
 void _drawLabelStroke(Canvas canvas, MosaicStroke stroke, int? label) {

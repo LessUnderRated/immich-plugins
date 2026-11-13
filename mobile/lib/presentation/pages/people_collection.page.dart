@@ -8,7 +8,11 @@ import 'package:immich_mobile/domain/models/person.model.dart';
 import 'package:immich_mobile/extensions/build_context_extensions.dart';
 import 'package:immich_mobile/extensions/string_extensions.dart';
 import 'package:immich_mobile/generated/translations.g.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/library/library_hooks.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/library/library_ids.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/library/library_json.dart';
 import 'package:immich_mobile/presentation/widgets/images/remote_image_provider.dart';
+import 'package:immich_mobile/presentation/widgets/library/library_plugins.widget.dart';
 import 'package:immich_mobile/routing/router.dart';
 import 'package:immich_mobile/utils/image_url_builder.dart';
 import 'package:immich_mobile/utils/people.utils.dart';
@@ -23,6 +27,7 @@ class PeopleCollectionPage extends ConsumerStatefulWidget {
 }
 
 class _PeopleCollectionPageState extends ConsumerState<PeopleCollectionPage> {
+  static const _page = LibraryPages.peopleCollection;
   final FocusNode _formFocus = FocusNode();
   String? _search;
 
@@ -54,14 +59,17 @@ class _PeopleCollectionPageState extends ConsumerState<PeopleCollectionPage> {
                     autofocus: true,
                   )
                 : Text(context.t.people),
-            actions: [
-              IconButton(
-                icon: Icon(_search != null ? Icons.close : Icons.search),
-                onPressed: () {
-                  setState(() => _search = _search == null ? '' : null);
-                },
+            actions: LibraryPluginHooks.arrange(LibrarySlots.appBarActions(_page), [
+              (
+                id: 'search',
+                item: IconButton(
+                  icon: Icon(_search != null ? Icons.close : Icons.search),
+                  onPressed: () => libraryTap(context, _page, 'search', () {
+                    setState(() => _search = _search == null ? '' : null);
+                  }, args: () => {'open': _search == null}),
+                ),
               ),
-            ],
+            ]),
           ),
           body: SafeArea(
             child: people.when(
@@ -76,59 +84,78 @@ class _PeopleCollectionPageState extends ConsumerState<PeopleCollectionPage> {
                 } else {
                   filtered = people;
                 }
-                return GridView.builder(
-                  gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                    crossAxisCount: isTablet ? 6 : 3,
-                    childAspectRatio: 0.85,
-                    mainAxisSpacing: isPortrait && isTablet ? 36 : 0,
-                  ),
-                  padding: const EdgeInsets.symmetric(vertical: 32),
-                  itemCount: filtered.length,
-                  itemBuilder: (context, index) {
-                    final person = filtered[index];
+                return LibraryQueryBuilder<Person>(
+                  hook: LibraryHooks.peopleQuery,
+                  items: filtered,
+                  argsKey: _search,
+                  id: (person) => person.id,
+                  toJson: LibraryJson.person,
+                  fromJson: (json) => LibraryJson.personFromJson(json),
+                  args: () => {'search': _search},
+                  builder: (context, filtered) => GridView.builder(
+                    gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                      crossAxisCount: isTablet ? 6 : 3,
+                      childAspectRatio: 0.85,
+                      mainAxisSpacing: isPortrait && isTablet ? 36 : 0,
+                    ),
+                    padding: const EdgeInsets.symmetric(vertical: 32),
+                    itemCount: filtered.length,
+                    itemBuilder: (context, index) {
+                      final person = filtered[index];
 
-                    return Column(
-                      key: ValueKey(person.id),
-                      children: [
-                        GestureDetector(
-                          onTap: () {
-                            unawaited(context.pushRoute(PersonRoute(person: person)));
-                          },
-                          child: Material(
-                            shape: const CircleBorder(side: BorderSide.none),
-                            elevation: 3,
-                            child: CircleAvatar(
-                              key: ValueKey(person.id),
-                              maxRadius: isTablet ? 100 / 2 : 96 / 2,
-                              backgroundImage: RemoteImageProvider(
-                                url: getFaceThumbnailUrl(person.id, updatedAt: person.updatedAt),
+                      return Column(
+                        key: ValueKey(person.id),
+                        children: [
+                          GestureDetector(
+                            onTap: () => libraryTap(
+                              context,
+                              _page,
+                              'open',
+                              () => unawaited(context.pushRoute(PersonRoute(person: person))),
+                              args: () => {'person': LibraryJson.person(person)},
+                            ),
+                            child: Material(
+                              shape: const CircleBorder(side: BorderSide.none),
+                              elevation: 3,
+                              child: CircleAvatar(
+                                key: ValueKey(person.id),
+                                maxRadius: isTablet ? 100 / 2 : 96 / 2,
+                                backgroundImage: RemoteImageProvider(
+                                  url: getFaceThumbnailUrl(person.id, updatedAt: person.updatedAt),
+                                ),
                               ),
                             ),
                           ),
-                        ),
-                        const SizedBox(height: 12),
-                        GestureDetector(
-                          onTap: () => showNameEditModal(context, person),
-                          child: person.name.isEmpty
-                              ? Text(
-                                  context.t.add_a_name,
-                                  style: context.textTheme.titleSmall?.copyWith(
-                                    fontWeight: FontWeight.w500,
-                                    color: context.colorScheme.primary,
+                          const SizedBox(height: 12),
+                          GestureDetector(
+                            onTap: () => libraryTap(
+                              context,
+                              _page,
+                              'editName',
+                              () => showNameEditModal(context, person),
+                              args: () => {'person': LibraryJson.person(person)},
+                            ),
+                            child: person.name.isEmpty
+                                ? Text(
+                                    context.t.add_a_name,
+                                    style: context.textTheme.titleSmall?.copyWith(
+                                      fontWeight: FontWeight.w500,
+                                      color: context.colorScheme.primary,
+                                    ),
+                                  )
+                                : Padding(
+                                    padding: const EdgeInsets.symmetric(horizontal: 16.0),
+                                    child: Text(
+                                      person.name,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: context.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w500),
+                                    ),
                                   ),
-                                )
-                              : Padding(
-                                  padding: const EdgeInsets.symmetric(horizontal: 16.0),
-                                  child: Text(
-                                    person.name,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: context.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w500),
-                                  ),
-                                ),
-                        ),
-                      ],
-                    );
-                  },
+                          ),
+                        ],
+                      );
+                    },
+                  ),
                 );
               },
               error: (error, stack) => const Text("error"),

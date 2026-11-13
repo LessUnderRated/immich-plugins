@@ -11,12 +11,15 @@ import 'package:immich_mobile/domain/services/timeline.service.dart';
 import 'package:immich_mobile/domain/utils/event_stream.dart';
 import 'package:immich_mobile/extensions/build_context_extensions.dart';
 import 'package:immich_mobile/extensions/scroll_extensions.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/viewer/active_viewer.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/viewer/viewer_gestures.dart';
 import 'package:immich_mobile/presentation/plugins/plugin_ui.dart';
 import 'package:immich_mobile/presentation/widgets/asset_viewer/asset_details.widget.dart';
 import 'package:immich_mobile/presentation/widgets/asset_viewer/asset_stack.provider.dart';
 import 'package:immich_mobile/presentation/widgets/asset_viewer/asset_stack.widget.dart';
 import 'package:immich_mobile/presentation/widgets/asset_viewer/ocr_overlay.widget.dart';
 import 'package:immich_mobile/presentation/widgets/asset_viewer/video_viewer.widget.dart';
+import 'package:immich_mobile/presentation/widgets/asset_viewer/viewer_carousel.widget.dart';
 import 'package:immich_mobile/presentation/widgets/asset_viewer/viewer_censor.widget.dart';
 import 'package:immich_mobile/presentation/widgets/images/image_provider.dart';
 import 'package:immich_mobile/presentation/widgets/images/progressive_image.widget.dart';
@@ -47,6 +50,8 @@ class _AssetPageState extends ConsumerState<AssetPage> {
   PhotoViewControllerBase? _viewController;
   StreamSubscription? _scaleBoundarySub;
   StreamSubscription? _eventSubscription;
+  void Function()? _stopCommands;
+  double? _scaleAtLastPinch;
 
   AssetViewerStateNotifier get _viewer => ref.read(assetViewerProvider.notifier);
 
@@ -73,6 +78,7 @@ class _AssetPageState extends ConsumerState<AssetPage> {
   void initState() {
     super.initState();
     _eventSubscription = EventStream.shared.listen(_onEvent);
+    _stopCommands = ActiveViewers.onPageCommand(_onCommand);
     _asset = ref.read(timelineServiceProvider).getAssetSafe(widget.index);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || !_scrollController.hasClients) {
@@ -98,6 +104,7 @@ class _AssetPageState extends ConsumerState<AssetPage> {
     _scrollController.dispose();
     unawaited(_scaleBoundarySub?.cancel());
     unawaited(_eventSubscription?.cancel());
+    _stopCommands?.call();
     super.dispose();
   }
 
@@ -113,6 +120,53 @@ class _AssetPageState extends ConsumerState<AssetPage> {
           setState(() => _asset = asset);
         }
       default:
+    }
+  }
+
+  /// Plugin commands (`viewer.showDetails`, ...) for the page on screen.
+  void _onCommand(ViewerPageCommand command) {
+    if (!mounted || ref.read(viewerCurrentIndexProvider) != widget.index) {
+      return;
+    }
+    switch (command) {
+      case ViewerPageCommand.showDetails:
+        _showDetails();
+      case ViewerPageCommand.hideDetails:
+        _hideDetails();
+      case ViewerPageCommand.resetZoom:
+        _resetZoom();
+    }
+  }
+
+  void _hideDetails() {
+    if (!_showingDetails || !_scrollController.hasClients) {
+      return;
+    }
+    _viewer.setShowingDetails(false);
+    unawaited(_scrollController.animateTo(0, duration: Durations.medium2, curve: Curves.easeOutCubic));
+  }
+
+  void _resetZoom() {
+    final controller = _viewController;
+    if (controller == null) {
+      return;
+    }
+    unawaited(controller.animateMultiple(position: Offset.zero, scale: controller.initialScale, rotation: 0));
+  }
+
+  ViewerGesture _gesture(ViewerGestureKind kind, {Offset? position, double? distance, double? velocity}) =>
+      ViewerGesture(
+        kind: kind,
+        viewport: context.sizeData,
+        position: position,
+        zoomed: _isZoomed,
+        distance: distance,
+        velocity: velocity,
+      );
+
+  void _showGestureMessage(String message) {
+    if (mounted) {
+      context.scaffoldMessenger.showSnackBar(SnackBar(content: Text(message)));
     }
   }
 
@@ -204,33 +258,66 @@ class _AssetPageState extends ConsumerState<AssetPage> {
       case _DragIntent.none:
       case _DragIntent.scroll:
         final scrollVelocity = -(details.primaryVelocity ?? 0.0);
-        _viewer.setShowingDetails(!_willClose(scrollVelocity));
+        final wasShowing = ref.read(assetViewerProvider).showingDetails;
+        final opens = !_willClose(scrollVelocity);
+        _viewer.setShowingDetails(opens);
 
         _drag?.end(details);
         _drag = null;
+
+        // Opening the details sheet by swiping up is the `swipeUp` gesture; a plugin may cancel or replace it.
+        if (opens && !wasShowing && ViewerGestures.isHooked) {
+          ViewerGestures.dispatch(
+            _gesture(ViewerGestureKind.swipeUp, position: details.localPosition, velocity: details.primaryVelocity),
+            _asset,
+            () {},
+            onSkipped: _hideDetails,
+            onMessage: _showGestureMessage,
+          );
+        }
       case _DragIntent.dismiss:
         const popThreshold = 75.0;
-        if (details.localPosition.dy - start!.localPosition.dy > popThreshold) {
-          unawaited(context.maybePop());
+        final distance = details.localPosition.dy - start!.localPosition.dy;
+        if (distance > popThreshold) {
+          ViewerGestures.dispatch(
+            _gesture(
+              ViewerGestureKind.swipeDown,
+              position: details.localPosition,
+              distance: distance,
+              velocity: details.primaryVelocity,
+            ),
+            _asset,
+            () => unawaited(context.maybePop()),
+            onSkipped: _settleAfterDismissDrag,
+            onMessage: _showGestureMessage,
+          );
           return;
         }
-        _viewer.setOpacity(1.0);
-        _isDismissAnimating = true;
-        unawaited(
-          _viewController
-              ?.animateMultiple(
-                position: _initialPhotoViewState.position,
-                scale: _viewController?.initialScale ?? _initialPhotoViewState.scale,
-                rotation: _initialPhotoViewState.rotation,
-              )
-              .whenComplete(() {
-                if (!mounted) {
-                  return;
-                }
-                setState(() => _isDismissAnimating = false);
-              }),
-        );
+        _settleAfterDismissDrag();
     }
+  }
+
+  /// Animates the photo back after a dismiss drag that does not close the viewer.
+  void _settleAfterDismissDrag() {
+    if (!mounted) {
+      return;
+    }
+    _viewer.setOpacity(1.0);
+    _isDismissAnimating = true;
+    unawaited(
+      _viewController
+          ?.animateMultiple(
+            position: _initialPhotoViewState.position,
+            scale: _viewController?.initialScale ?? _initialPhotoViewState.scale,
+            rotation: _initialPhotoViewState.rotation,
+          )
+          .whenComplete(() {
+            if (!mounted) {
+              return;
+            }
+            setState(() => _isDismissAnimating = false);
+          }),
+    );
   }
 
   void _onDragStart(
@@ -272,6 +359,18 @@ class _AssetPageState extends ConsumerState<AssetPage> {
       return;
     }
 
+    ViewerGestures.dispatch(
+      _gesture(ViewerGestureKind.tap, position: details.globalPosition),
+      _asset,
+      () => _onTap(details),
+      onMessage: _showGestureMessage,
+    );
+  }
+
+  void _onTap(TapUpDetails details) {
+    if (!mounted) {
+      return;
+    }
     _restoreControlsAfterZoom = false;
 
     final tapToNavigate = ref.read(appConfigProvider).viewer.tapToNavigate;
@@ -297,7 +396,50 @@ class _AssetPageState extends ConsumerState<AssetPage> {
   }
 
   void _onLongPress(BuildContext context, LongPressStartDetails details, PhotoViewControllerValue controllerValue) =>
-      ref.read(isPlayingMotionVideoProvider.notifier).playing = true;
+      ViewerGestures.dispatch(_gesture(ViewerGestureKind.longPress, position: details.globalPosition), _asset, () {
+        if (mounted && (_asset?.isMotionPhoto ?? false)) {
+          ref.read(isPlayingMotionVideoProvider.notifier).playing = true;
+        }
+      }, onMessage: _showGestureMessage);
+
+  /// Only installed while a plugin hooks `viewer.gesture`; the photo view zooms by itself otherwise.
+  void _onDoubleTap(BuildContext context, TapDownDetails? details, PhotoViewControllerValue value, VoidCallback zoom) =>
+      ViewerGestures.dispatch(
+        _gesture(ViewerGestureKind.doubleTap, position: details?.globalPosition),
+        _asset,
+        zoom,
+        onMessage: _showGestureMessage,
+      );
+
+  /// Only installed while a plugin hooks `viewer.gesture`: a finished pinch that changed the zoom.
+  void _onScaleEnd(BuildContext context, ScaleEndDetails details, PhotoViewControllerValue value) {
+    final scale = value.scale;
+    final initial = _viewController?.initialScale;
+    if (scale == null || initial == null || initial <= 0) {
+      return;
+    }
+    final previous = _scaleAtLastPinch ?? initial;
+    if ((scale - previous).abs() < 0.001) {
+      return;
+    }
+    _scaleAtLastPinch = scale;
+    ViewerGestures.dispatch(
+      ViewerGesture(
+        kind: ViewerGestureKind.pinch,
+        viewport: context.sizeData,
+        zoomed: _isZoomed,
+        scale: scale / initial,
+        previousScale: previous / initial,
+      ),
+      _asset,
+      () {},
+      onSkipped: () {
+        _scaleAtLastPinch = previous;
+        unawaited(_viewController?.animateMultiple(scale: previous));
+      },
+      onMessage: _showGestureMessage,
+    );
+  }
 
   void _onScaleStateChanged(PhotoViewScaleState scaleState) {
     _isZoomed = scaleState == PhotoViewScaleState.zoomedIn || scaleState == PhotoViewScaleState.covering;
@@ -390,7 +532,9 @@ class _AssetPageState extends ConsumerState<AssetPage> {
         onDragEnd: _onDragEnd,
         onDragCancel: _onDragCancel,
         onTapUp: _onTapUp,
-        onLongPressStart: asset.isMotionPhoto ? _onLongPress : null,
+        onLongPressStart: asset.isMotionPhoto || ViewerGestures.isHooked ? _onLongPress : null,
+        onDoubleTap: ViewerGestures.isHooked ? _onDoubleTap : null,
+        onScaleEnd: ViewerGestures.isHooked ? _onScaleEnd : null,
         errorBuilder: (_, _, _) => SizedBox(
           width: size.width,
           height: size.height,
@@ -417,6 +561,8 @@ class _AssetPageState extends ConsumerState<AssetPage> {
       onDragEnd: _onDragEnd,
       onDragCancel: _onDragCancel,
       onTapUp: _onTapUp,
+      onDoubleTap: ViewerGestures.isHooked ? _onDoubleTap : null,
+      onLongPressStart: ViewerGestures.isHooked ? _onLongPress : null,
       scaleStateChangedCallback: _onScaleStateChanged,
       heroAttributes: heroAttributes,
       filterQuality: FilterQuality.high,

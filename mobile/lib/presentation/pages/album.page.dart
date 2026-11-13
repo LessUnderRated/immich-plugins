@@ -4,7 +4,10 @@ import 'package:auto_route/auto_route.dart';
 import 'package:flutter/material.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:immich_mobile/extensions/build_context_extensions.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/library/library_hooks.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/library/library_ids.dart';
 import 'package:immich_mobile/presentation/widgets/album/album_selector.widget.dart';
+import 'package:immich_mobile/presentation/widgets/library/library_plugins.widget.dart';
 import 'package:immich_mobile/providers/infrastructure/album.provider.dart';
 import 'package:immich_mobile/routing/router.dart';
 import 'package:immich_mobile/widgets/common/immich_sliver_app_bar.dart';
@@ -21,7 +24,12 @@ class _AlbumsPageState extends ConsumerState<AlbumsPage> {
   final ScrollController _scrollController = ScrollController();
 
   Future<void> onRefresh() async {
-    await ref.read(remoteAlbumProvider.notifier).refresh();
+    await runLibraryAction<void>(
+      context,
+      LibraryPages.albums,
+      'refresh',
+      () => ref.read(remoteAlbumProvider.notifier).refresh(),
+    );
   }
 
   @override
@@ -43,15 +51,24 @@ class _AlbumsPageState extends ConsumerState<AlbumsPage> {
           snap: false,
           floating: false,
           pinned: true,
-          actions: [
-            IconButton(
-              onPressed: () => context.pushRoute(const CreateAlbumRoute()),
-              icon: const Icon(Icons.add_rounded),
+          actions: LibraryPluginHooks.arrange(LibrarySlots.appBarActions(LibraryPages.albums), [
+            (
+              id: 'create',
+              item: IconButton(
+                onPressed: () => libraryTap(
+                  context,
+                  LibraryPages.albums,
+                  'create',
+                  () => context.pushRoute(const CreateAlbumRoute()),
+                ),
+                icon: const Icon(Icons.add_rounded),
+              ),
             ),
-          ],
+          ]),
           showUploadButton: false,
         ),
         AlbumSelector(
+          scope: LibraryPages.albums,
           onAlbumSelected: (album) {
             unawaited(context.router.push(RemoteAlbumRoute(album: album)));
           },

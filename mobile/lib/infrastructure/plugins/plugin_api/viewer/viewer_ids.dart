@@ -81,15 +81,7 @@ abstract final class ViewerSlotIds {
 
 /// Built-in item ids per slot, in the order the app shows them.
 abstract final class ViewerBuiltinIds {
-  static const topBar = [
-    'motionPhoto',
-    'activity',
-    'favorite',
-    'deviceFavorite',
-    'pluginActions',
-    'censor',
-    'menu',
-  ];
+  static const topBar = ['motionPhoto', 'activity', 'favorite', 'deviceFavorite', 'pluginActions', 'censor', 'menu'];
 
   /// The ⋮ menu uses the action button type names; which of them appear depends on the asset and the context.
   static const menu = [

@@ -78,6 +78,14 @@ abstract final class ActionIds {
     upload,
   ];
 
+  /// Page actions that are not `ActionBuilder`s but run through `action.<id>` hooks too.
+  static const emptyTrash = 'emptyTrash';
+  static const restoreAllTrash = 'restoreAllTrash';
+  static const deviceTrashRestore = 'deviceTrashRestore';
+  static const deviceTrashDelete = 'deviceTrashDelete';
+
+  static const pageActions = [emptyTrash, restoreAllTrash, deviceTrashRestore, deviceTrashDelete];
+
   /// Ids of the viewer bar and menu entries that are not `ActionBuilder`s.
   static const openInfo = 'openInfo';
   static const viewInTimeline = 'viewInTimeline';
@@ -138,9 +146,12 @@ abstract final class ActionSlots {
   /// menus are named by the viewer area.
   static const viewerAddMenu = 'viewer.addMenu';
 
-  /// `<page>.appBar.actions` and `<page>.appBar.menu`.
+  /// `<page>.appBar.actions` and `<page>.appBar.menu` (same as `TimelineSlots.appBarActions` / `appBarMenu`).
   static String appBarActions(String page) => '$page.appBar.actions';
   static String appBarMenu(String page) => '$page.appBar.menu';
+
+  /// The device trash page's selection bar (built-ins: `restore`, `deleteForever`).
+  static const deviceTrashSelection = 'deviceTrash.selection.actions';
 }
 
 /// Names of the selection sheets (`sheet` in the slot context, `<sheet>` in `selection.<sheet>.actions`).

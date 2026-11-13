@@ -10,8 +10,10 @@ class ImmichTheme {
   const ImmichTheme({required this.light, required this.dark});
 }
 
-ThemeData getThemeData({required ColorScheme colorScheme, required Locale locale}) {
+/// [fontFamily] overrides the app font (plugin theme override); null keeps the font chosen for [locale].
+ThemeData getThemeData({required ColorScheme colorScheme, required Locale locale, String? fontFamily}) {
   final isDark = colorScheme.brightness == Brightness.dark;
+  final appFont = fontFamily ?? _getFontFamilyFromLocale(locale);
 
   return ThemeData(
     useMaterial3: true,
@@ -24,19 +26,15 @@ ThemeData getThemeData({required ColorScheme colorScheme, required Locale locale
     splashColor: colorScheme.primary.withValues(alpha: 0.1),
     highlightColor: colorScheme.primary.withValues(alpha: 0.1),
     bottomSheetTheme: BottomSheetThemeData(backgroundColor: colorScheme.surfaceContainer),
-    fontFamily: _getFontFamilyFromLocale(locale),
+    fontFamily: appFont,
     snackBarTheme: SnackBarThemeData(
-      contentTextStyle: TextStyle(
-        fontFamily: _getFontFamilyFromLocale(locale),
-        color: colorScheme.primary,
-        fontWeight: FontWeight.bold,
-      ),
+      contentTextStyle: TextStyle(fontFamily: appFont, color: colorScheme.primary, fontWeight: FontWeight.bold),
       backgroundColor: colorScheme.surfaceContainerHighest,
     ),
     appBarTheme: AppBarTheme(
       titleTextStyle: TextStyle(
         color: colorScheme.primary,
-        fontFamily: _getFontFamilyFromLocale(locale),
+        fontFamily: appFont,
         fontWeight: FontWeight.w600,
         fontSize: 18,
       ),

@@ -62,7 +62,8 @@ abstract final class ActionHooks {
     String actionId,
     FutureOr<void> Function() original,
     ActionHookCall Function() call,
-  ) => () => run(actionId, original, call);
+  ) =>
+      () => run(actionId, original, call);
 
   static FutureOr<void> run(String actionId, FutureOr<void> Function() original, ActionHookCall Function() call) {
     final hooked = has(actionId);

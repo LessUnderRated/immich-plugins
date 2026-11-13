@@ -6,7 +6,6 @@ import 'dart:ui' as ui;
 
 import 'package:collection/collection.dart';
 import 'package:flutter/painting.dart';
-import 'package:immich_mobile/domain/models/device_plugin.model.dart';
 import 'package:immich_mobile/infrastructure/plugins/device_workflow_engine.dart';
 import 'package:immich_mobile/utils/asset_edit_renderer.utils.dart';
 import 'package:immich_mobile/utils/censor_geometry.dart';

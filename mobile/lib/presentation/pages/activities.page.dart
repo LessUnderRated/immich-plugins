@@ -8,8 +8,13 @@ import 'package:immich_mobile/data/store.dart';
 import 'package:immich_mobile/domain/models/album/album.model.dart';
 import 'package:immich_mobile/extensions/asyncvalue_extensions.dart';
 import 'package:immich_mobile/extensions/build_context_extensions.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/library/library_hooks.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/library/library_ids.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/library/library_json.dart';
+import 'package:immich_mobile/models/activities/activity.model.dart';
 import 'package:immich_mobile/presentation/widgets/action_buttons/like_activity_action_button.widget.dart';
 import 'package:immich_mobile/presentation/widgets/album/activity_text_field.dart';
+import 'package:immich_mobile/presentation/widgets/library/library_plugins.widget.dart';
 import 'package:immich_mobile/providers/infrastructure/current_album.provider.dart';
 import 'package:immich_mobile/widgets/activities/comment_bubble.dart';
 
@@ -34,7 +39,7 @@ class ActivitiesPage extends HookConsumerWidget {
       );
     }
 
-    Future<void> onAddComment(String comment) async {
+    Future<void> addComment(String comment) async {
       try {
         await ref.read(Store.activity).addComment(album.id, comment, assetId: assetId);
       } catch (e) {
@@ -42,6 +47,18 @@ class ActivitiesPage extends HookConsumerWidget {
       }
 
       unawaited(scrollToBottom());
+    }
+
+    // `before` may change `comment` or cancel
+    Future<void> onAddComment(String comment) async {
+      await runLibraryAction<void>(
+        context,
+        LibraryPages.activities,
+        'comment',
+        () => addComment(comment),
+        args: () => {'album': LibraryJson.remoteAlbum(album), 'assetId': assetId, 'comment': comment},
+        withArgs: (args) => addComment('${args['comment'] ?? comment}'),
+      );
     }
 
     return ProviderScope(
@@ -55,44 +72,61 @@ class ActivitiesPage extends HookConsumerWidget {
               if (assetName != null) Text(assetName!, style: context.textTheme.bodySmall),
             ],
           ),
-          actions: const [LikeActivityActionButton(iconOnly: true)],
+          actions: LibraryPluginHooks.arrange(LibrarySlots.appBarActions(LibraryPages.activities), const [
+            (id: 'like', item: LikeActivityActionButton(iconOnly: true)),
+          ]),
           actionsPadding: const EdgeInsets.only(right: 8),
         ),
         body: activities.widgetWhen(
-          onData: (data) {
-            final List<Widget> activityWidgets = [];
-            for (final activity in data.reversed) {
-              activityWidgets.add(
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-                  child: CommentBubble(activity: activity, isAssetActivity: assetId != null),
+          onData: (all) => LibraryQueryBuilder<Activity>(
+            hook: LibraryHooks.activitiesQuery,
+            items: all,
+            id: (activity) => activity.id,
+            toJson: LibraryJson.activity,
+            args: () => {'album': LibraryJson.remoteAlbum(album), 'assetId': assetId},
+            builder: (context, data) {
+              final List<Widget> activityWidgets = [];
+              for (final activity in data.reversed) {
+                activityWidgets.add(
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                    child: CommentBubble(activity: activity, isAssetActivity: assetId != null),
+                  ),
+                );
+              }
+
+              return SafeArea(
+                child: Stack(
+                  children: [
+                    ListView(
+                      controller: listViewScrollController,
+                      padding: const EdgeInsets.only(top: 8, bottom: 80),
+                      reverse: true,
+                      children: activityWidgets,
+                    ),
+                    Align(
+                      alignment: Alignment.bottomCenter,
+                      child: DecoratedBox(
+                        decoration: BoxDecoration(
+                          color: context.scaffoldBackgroundColor,
+                          border: Border(top: BorderSide(color: context.colorScheme.secondaryContainer, width: 1)),
+                        ),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: LibraryPluginHooks.arrange(LibrarySlots.footer(LibraryPages.activities), [
+                            (
+                              id: 'input',
+                              item: ActivityTextField(isEnabled: album.isActivityEnabled, onSubmit: onAddComment),
+                            ),
+                          ]),
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               );
-            }
-
-            return SafeArea(
-              child: Stack(
-                children: [
-                  ListView(
-                    controller: listViewScrollController,
-                    padding: const EdgeInsets.only(top: 8, bottom: 80),
-                    reverse: true,
-                    children: activityWidgets,
-                  ),
-                  Align(
-                    alignment: Alignment.bottomCenter,
-                    child: DecoratedBox(
-                      decoration: BoxDecoration(
-                        color: context.scaffoldBackgroundColor,
-                        border: Border(top: BorderSide(color: context.colorScheme.secondaryContainer, width: 1)),
-                      ),
-                      child: ActivityTextField(isEnabled: album.isActivityEnabled, onSubmit: onAddComment),
-                    ),
-                  ),
-                ],
-              ),
-            );
-          },
+            },
+          ),
         ),
         resizeToAvoidBottomInset: true,
       ),

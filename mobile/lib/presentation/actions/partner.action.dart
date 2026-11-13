@@ -3,6 +3,7 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:immich_mobile/domain/models/user.model.dart';
 import 'package:immich_mobile/generated/translations.g.dart';
 import 'package:immich_mobile/presentation/actions/action.dart';
+import 'package:immich_mobile/presentation/actions/action_ids.dart';
 import 'package:immich_mobile/presentation/widgets/people/partner_user_avatar.widget.dart';
 import 'package:immich_mobile/providers/infrastructure/user.provider.dart';
 import 'package:immich_mobile/providers/user.provider.dart';
@@ -11,6 +12,9 @@ import 'package:immich_mobile/widgets/common/confirm_dialog.dart';
 
 class PartnerAddAction extends ActionBuilder {
   const PartnerAddAction();
+
+  @override
+  String get id => ActionIds.partnerAdd;
 
   @override
   ActionItem create(BuildContext context, WidgetRef ref) =>
@@ -35,6 +39,12 @@ class PartnerAddAction extends ActionBuilder {
 
 class PartnerRemoveAction extends ActionBuilder {
   const PartnerRemoveAction({required this.sharedWithId, required this.partnerName});
+
+  @override
+  String get id => ActionIds.partnerRemove;
+
+  @override
+  Map<String, dynamic> get hookArgs => {'sharedWithId': sharedWithId, 'partnerName': partnerName};
 
   final String sharedWithId;
   final String partnerName;

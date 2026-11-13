@@ -59,7 +59,9 @@ abstract final class TimelineAssetJson {
     return json;
   }
 
-  static List<Map<String, dynamic>> encodeAll(Iterable<BaseAsset> assets) => [for (final asset in assets) encode(asset)];
+  static List<Map<String, dynamic>> encodeAll(Iterable<BaseAsset> assets) => [
+    for (final asset in assets) encode(asset),
+  ];
 
   /// Whether [asset] is the one a plugin names with [id] (its id, local id or remote id).
   static bool matches(BaseAsset asset, String id) => asset.id == id || asset.localId == id || asset.remoteId == id;

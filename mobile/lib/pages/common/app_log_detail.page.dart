@@ -7,6 +7,9 @@ import 'package:flutter_hooks/flutter_hooks.dart';
 import 'package:immich_mobile/domain/models/log.model.dart';
 import 'package:immich_mobile/extensions/build_context_extensions.dart';
 import 'package:immich_mobile/generated/translations.g.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/shell/log_json.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/shell/shell_ids.dart';
+import 'package:immich_mobile/presentation/widgets/shell/shell_list.widget.dart';
 
 @RoutePage()
 class AppLogDetailPage extends HookWidget {
@@ -108,13 +111,18 @@ class AppLogDetailPage extends HookWidget {
     return Scaffold(
       appBar: AppBar(title: Text(context.t.log_detail_title)),
       body: SafeArea(
-        child: ListView(
-          children: [
-            buildTextWithCopyButton("MESSAGE", logMessage.message),
-            if (logMessage.error != null) buildTextWithCopyButton("DETAILS", logMessage.error.toString()),
-            if (logMessage.logger != null) buildLogContext(logMessage.logger.toString()),
-            if (logMessage.stack != null) buildTextWithCopyButton("STACK TRACE", logMessage.stack.toString()),
+        child: ShellList(
+          slot: ShellSlots.appLogDetailSections,
+          slotContext: {'log': logMessageToJson(logMessage)},
+          items: [
+            ShellItem(AppLogIds.message, buildTextWithCopyButton("MESSAGE", logMessage.message)),
+            if (logMessage.error != null)
+              ShellItem(AppLogIds.details, buildTextWithCopyButton("DETAILS", logMessage.error.toString())),
+            if (logMessage.logger != null) ShellItem(AppLogIds.logger, buildLogContext(logMessage.logger.toString())),
+            if (logMessage.stack != null)
+              ShellItem(AppLogIds.stack, buildTextWithCopyButton("STACK TRACE", logMessage.stack.toString())),
           ],
+          builder: (context, children) => ListView(children: children),
         ),
       ),
     );

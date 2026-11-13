@@ -30,6 +30,7 @@ class ImageWrapper extends StatefulWidget {
     required this.onDragCancel,
     required this.onScaleEnd,
     required this.onLongPressStart,
+    this.onDoubleTap,
     required this.outerSize,
     required this.gestureDetectorBehavior,
     required this.tightMode,
@@ -65,6 +66,7 @@ class ImageWrapper extends StatefulWidget {
   final VoidCallback? onDragCancel;
   final PhotoViewImageScaleEndCallback? onScaleEnd;
   final PhotoViewImageLongPressStartCallback? onLongPressStart;
+  final PhotoViewImageDoubleTapCallback? onDoubleTap;
   final Size outerSize;
   final HitTestBehavior? gestureDetectorBehavior;
   final bool? tightMode;
@@ -204,6 +206,7 @@ class _ImageWrapperState extends State<ImageWrapper> {
         onDragCancel: widget.onDragCancel,
         onScaleEnd: widget.onScaleEnd,
         onLongPressStart: widget.onLongPressStart,
+        onDoubleTap: widget.onDoubleTap,
         outerSize: widget.outerSize,
         gestureDetectorBehavior: widget.gestureDetectorBehavior,
         tightMode: widget.tightMode,
@@ -235,6 +238,7 @@ class _ImageWrapperState extends State<ImageWrapper> {
       onDragCancel: widget.onDragCancel,
       onScaleEnd: widget.onScaleEnd,
       onLongPressStart: widget.onLongPressStart,
+      onDoubleTap: widget.onDoubleTap,
       gestureDetectorBehavior: widget.gestureDetectorBehavior,
       tightMode: widget.tightMode ?? false,
       filterQuality: widget.filterQuality ?? FilterQuality.none,
@@ -284,6 +288,7 @@ class CustomChildWrapper extends StatelessWidget {
     this.onDragCancel,
     this.onScaleEnd,
     this.onLongPressStart,
+    this.onDoubleTap,
     required this.outerSize,
     this.gestureDetectorBehavior,
     required this.tightMode,
@@ -317,6 +322,7 @@ class CustomChildWrapper extends StatelessWidget {
   final VoidCallback? onDragCancel;
   final PhotoViewImageScaleEndCallback? onScaleEnd;
   final PhotoViewImageLongPressStartCallback? onLongPressStart;
+  final PhotoViewImageDoubleTapCallback? onDoubleTap;
   final Size outerSize;
   final HitTestBehavior? gestureDetectorBehavior;
   final bool? tightMode;
@@ -353,6 +359,7 @@ class CustomChildWrapper extends StatelessWidget {
       onDragCancel: onDragCancel,
       onScaleEnd: onScaleEnd,
       onLongPressStart: onLongPressStart,
+      onDoubleTap: onDoubleTap,
       gestureDetectorBehavior: gestureDetectorBehavior,
       tightMode: tightMode ?? false,
       filterQuality: filterQuality ?? FilterQuality.none,

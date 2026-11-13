@@ -15,8 +15,11 @@ import 'package:immich_mobile/domain/models/store.model.dart';
 import 'package:immich_mobile/entities/store.entity.dart';
 import 'package:immich_mobile/extensions/build_context_extensions.dart';
 import 'package:immich_mobile/generated/translations.g.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/shell/shell_hooks.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/shell/shell_ids.dart';
 import 'package:immich_mobile/infrastructure/repositories/settings.repository.dart';
 import 'package:immich_mobile/models/auth/login_response.model.dart';
+import 'package:immich_mobile/presentation/widgets/shell/shell_list.widget.dart';
 import 'package:immich_mobile/providers/auth.provider.dart';
 import 'package:immich_mobile/providers/background_sync.provider.dart';
 import 'package:immich_mobile/providers/feature_message.provider.dart';
@@ -259,7 +262,18 @@ class LoginForm extends HookConsumerWidget {
 
     bool isSyncRemoteDeletionsMode() => Platform.isAndroid && Store.get(StoreKey.manageLocalMediaAndroid, false);
 
+    var loginMethod = LoginIds.password;
+
+    void emitLoginFailed(Object error) => ShellHookRunner.emit(
+      ShellEvents.loginFailed,
+      () => {'method': loginMethod, 'serverUrl': serverEndpointController.text, 'error': '$error'},
+    );
+
     Future<void> finishLogin() async {
+      ShellHookRunner.emit(
+        ShellEvents.loginSucceeded,
+        () => {'method': loginMethod, 'serverUrl': serverEndpointController.text},
+      );
       await ref.read(galleryPermissionNotifier.notifier).requestGalleryPermission();
       if (isSyncRemoteDeletionsMode()) {
         await getManageMediaPermission();
@@ -286,19 +300,32 @@ class LoginForm extends HookConsumerWidget {
 
     Future<void> login() async {
       TextInput.finishAutofillContext();
+      loginMethod = LoginIds.password;
 
       // Invalidate all api repository provider instance to take into account new access token
       invalidateAllApiRepositoryProviders(ref);
 
       try {
-        final result = await ref.read(authProvider.notifier).login(emailController.text, passwordController.text);
+        final result = await ShellHookRunner.guard<LoginResponse>(
+          ShellHooks.loginSubmit,
+          {
+            'method': LoginIds.password,
+            'email': emailController.text,
+            'password': passwordController.text,
+            'serverUrl': serverEndpointController.text,
+          },
+          (args) => ref
+              .read(authProvider.notifier)
+              .login('${args['email'] ?? emailController.text}', '${args['password'] ?? passwordController.text}'),
+        );
 
-        if (!context.mounted) {
+        if (result == null || !context.mounted) {
           return;
         }
 
         await onLogin(result);
       } catch (error) {
+        emitLoginFailed(error);
         if (!context.mounted) {
           return;
         }
@@ -336,7 +363,7 @@ class LoginForm extends HookConsumerWidget {
       return base64Url.encode(digest.bytes).replaceAll('=', '');
     }
 
-    Future<void> oAuthLogin() async {
+    Future<void> oAuthLoginFlow() async {
       final oAuthService = ref.read(oAuthServiceProvider);
       String? oAuthServerUrl;
 
@@ -356,6 +383,7 @@ class LoginForm extends HookConsumerWidget {
         invalidateAllApiRepositoryProviders(ref);
       } catch (error, stack) {
         log.severe('Error getting OAuth server Url: $error', stack);
+        emitLoginFailed(error);
 
         if (!context.mounted) {
           return;
@@ -390,6 +418,7 @@ class LoginForm extends HookConsumerWidget {
           }
         } catch (error, stack) {
           log.severe('Error logging in with OAuth: $error', stack);
+          emitLoginFailed(error);
 
           if (!context.mounted) {
             return;
@@ -417,7 +446,15 @@ class LoginForm extends HookConsumerWidget {
       }
     }
 
-    Future<void> passkeyLogin() async {
+    Future<void> oAuthLogin() async {
+      loginMethod = LoginIds.oauth;
+      await ShellHookRunner.guard<void>(ShellHooks.loginSubmit, {
+        'method': LoginIds.oauth,
+        'serverUrl': serverEndpointController.text,
+      }, (_) => oAuthLoginFlow());
+    }
+
+    Future<void> passkeyLoginFlow() async {
       invalidateAllApiRepositoryProviders(ref);
 
       try {
@@ -427,6 +464,7 @@ class LoginForm extends HookConsumerWidget {
         }
       } catch (error, stack) {
         log.severe('Error logging in with passkey', error, stack);
+        emitLoginFailed(error);
 
         if (!context.mounted) {
           return;
@@ -439,6 +477,14 @@ class LoginForm extends HookConsumerWidget {
           gravity: ToastGravity.TOP,
         );
       }
+    }
+
+    Future<void> passkeyLogin() async {
+      loginMethod = LoginIds.passkey;
+      await ShellHookRunner.guard<void>(ShellHooks.loginSubmit, {
+        'method': LoginIds.passkey,
+        'serverUrl': serverEndpointController.text,
+      }, (_) => passkeyLoginFlow());
     }
 
     SingleChildRenderObjectWidget buildVersionCompatWarning() {
@@ -514,64 +560,86 @@ class LoginForm extends HookConsumerWidget {
                     textAlign: TextAlign.center,
                   ),
                 ),
-                if (isPasswordLoginEnable.value)
-                  ImmichForm(
-                    onSubmit: login,
-                    submitText: context.t.login,
-                    submitIcon: Icons.login_rounded,
-                    builder: (context, form) => Column(
-                      spacing: ImmichSpacing.md,
-                      children: [
-                        ImmichEmailInput(
-                          controller: emailController,
-                          label: context.t.email,
-                          hintText: context.t.login_form_email_hint,
-                          validator: _validateEmail,
-                          keyboardAction: TextInputAction.next,
-                          onSubmit: (_) => passwordFocusNode.requestFocus(),
+                ShellList(
+                  slot: ShellSlots.loginMethods,
+                  builder: (context, methods) => Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    mainAxisSize: MainAxisSize.min,
+                    children: methods,
+                  ),
+                  items: [
+                    if (isPasswordLoginEnable.value)
+                      ShellItem(
+                        LoginIds.password,
+                        ImmichForm(
+                          onSubmit: login,
+                          submitText: context.t.login,
+                          submitIcon: Icons.login_rounded,
+                          builder: (context, form) => Column(
+                            spacing: ImmichSpacing.md,
+                            children: [
+                              ImmichEmailInput(
+                                controller: emailController,
+                                label: context.t.email,
+                                hintText: context.t.login_form_email_hint,
+                                validator: _validateEmail,
+                                keyboardAction: TextInputAction.next,
+                                onSubmit: (_) => passwordFocusNode.requestFocus(),
+                              ),
+                              ImmichPasswordInput(
+                                controller: passwordController,
+                                focusNode: passwordFocusNode,
+                                label: context.t.password,
+                                hintText: context.t.login_form_password_hint,
+                                keyboardAction: TextInputAction.go,
+                                onSubmit: (_) => form.submit(),
+                              ),
+                            ],
+                          ),
                         ),
-                        ImmichPasswordInput(
-                          controller: passwordController,
-                          focusNode: passwordFocusNode,
-                          label: context.t.password,
-                          hintText: context.t.login_form_password_hint,
-                          keyboardAction: TextInputAction.go,
-                          onSubmit: (_) => form.submit(),
+                      ),
+                    if (isOauthEnable.value)
+                      ShellItem(
+                        LoginIds.oauth,
+                        ImmichForm(
+                          onSubmit: oAuthLogin,
+                          submitText: oAuthButtonLabel.value,
+                          submitIcon: Icons.pin_outlined,
+                          builder: (context, _) => isPasswordLoginEnable.value
+                              ? Padding(
+                                  padding: const EdgeInsets.only(left: 18.0, right: 18.0, top: 12.0),
+                                  child: Divider(color: context.isDarkTheme ? Colors.white : Colors.black, height: 5),
+                                )
+                              : const SizedBox.shrink(),
                         ),
-                      ],
+                      ),
+                    if (isPasskeyEnable.value)
+                      ShellItem(
+                        LoginIds.passkey,
+                        ImmichForm(
+                          onSubmit: passkeyLogin,
+                          submitText: context.t.login_with_passkey,
+                          submitIcon: Icons.key_outlined,
+                          builder: (context, _) => isPasswordLoginEnable.value || isOauthEnable.value
+                              ? Padding(
+                                  padding: const EdgeInsets.only(left: 18.0, right: 18.0, top: 12.0),
+                                  child: Divider(color: context.colorScheme.onSurface, height: 5),
+                                )
+                              : const SizedBox.shrink(),
+                        ),
+                      ),
+                    if (!isOauthEnable.value && !isPasswordLoginEnable.value && !isPasskeyEnable.value)
+                      ShellItem(LoginIds.disabled, Center(child: Text(context.t.login_disabled))),
+                    ShellItem(
+                      LoginIds.back,
+                      ImmichTextButton(
+                        labelText: context.t.back,
+                        icon: Icons.arrow_back,
+                        variant: ImmichVariant.ghost,
+                        onPressed: () => serverEndpoint.value = null,
+                      ),
                     ),
-                  ),
-                if (isOauthEnable.value)
-                  ImmichForm(
-                    onSubmit: oAuthLogin,
-                    submitText: oAuthButtonLabel.value,
-                    submitIcon: Icons.pin_outlined,
-                    builder: (context, _) => isPasswordLoginEnable.value
-                        ? Padding(
-                            padding: const EdgeInsets.only(left: 18.0, right: 18.0, top: 12.0),
-                            child: Divider(color: context.isDarkTheme ? Colors.white : Colors.black, height: 5),
-                          )
-                        : const SizedBox.shrink(),
-                  ),
-                if (isPasskeyEnable.value)
-                  ImmichForm(
-                    onSubmit: passkeyLogin,
-                    submitText: context.t.login_with_passkey,
-                    submitIcon: Icons.key_outlined,
-                    builder: (context, _) => isPasswordLoginEnable.value || isOauthEnable.value
-                        ? Padding(
-                            padding: const EdgeInsets.only(left: 18.0, right: 18.0, top: 12.0),
-                            child: Divider(color: context.colorScheme.onSurface, height: 5),
-                          )
-                        : const SizedBox.shrink(),
-                  ),
-                if (!isOauthEnable.value && !isPasswordLoginEnable.value && !isPasskeyEnable.value)
-                  Center(child: Text(context.t.login_disabled)),
-                ImmichTextButton(
-                  labelText: context.t.back,
-                  icon: Icons.arrow_back,
-                  variant: ImmichVariant.ghost,
-                  onPressed: () => serverEndpoint.value = null,
+                  ],
                 ),
               ],
             ),

@@ -1,4 +1,6 @@
 import 'package:hooks_riverpod/hooks_riverpod.dart';
+import 'package:immich_mobile/domain/utils/plugin_data_ids.dart';
+import 'package:immich_mobile/domain/utils/plugin_hooks.dart';
 import 'package:immich_mobile/models/shared_link/shared_link.model.dart';
 import 'package:immich_mobile/providers/api.provider.dart';
 import 'package:immich_mobile/services/api.service.dart';
@@ -14,17 +16,48 @@ class SharedLinkService {
 
   SharedLinkService(this._apiService);
 
+  /// Plugins can filter or sort the list through `sharedLink.query`.
   Future<AsyncValue<List<SharedLink>>> getAllSharedLinks() async {
     try {
       final list = await _apiService.sharedLinksApi.getAllSharedLinks();
-      return list != null ? AsyncData(list.map(SharedLink.fromDto).toList()) : const AsyncData([]);
+      final links = list?.map(SharedLink.fromDto).toList() ?? <SharedLink>[];
+      return AsyncData(
+        await PluginHooks.filterList<SharedLink>(
+          DataHooks.sharedLinkQuery,
+          () => const {},
+          links,
+          () => PluginListCodec<SharedLink>(id: (link) => link.id, toJson: sharedLinkJson),
+        ),
+      );
     } catch (e, stack) {
       _log.severe("Failed to fetch shared links", e, stack);
       return AsyncError(e, stack);
     }
   }
 
-  Future<void> deleteSharedLink(String id) async {
+  static Map<String, dynamic> sharedLinkJson(SharedLink link) => {
+    'id': link.id,
+    'title': link.title,
+    'type': link.type.name,
+    'key': link.key,
+    'slug': link.slug,
+    'description': link.description,
+    'allowDownload': link.allowDownload,
+    'allowUpload': link.allowUpload,
+    'showMetadata': link.showMetadata,
+    'hasPassword': link.password != null,
+    'expiresAt': link.expiresAt?.toUtc().toIso8601String(),
+    'thumbAssetId': link.thumbAssetId,
+  };
+
+  Future<void> deleteSharedLink(String id) => PluginHooks.run<void>(
+    DataHooks.sharedLinkDelete,
+    () => {'id': id},
+    () => _deleteSharedLink(id),
+    event: DataEvents.sharedLinkDeleted,
+  );
+
+  Future<void> _deleteSharedLink(String id) async {
     try {
       return await _apiService.sharedLinksApi.removeSharedLink(id);
     } catch (e) {
@@ -33,6 +66,56 @@ class SharedLinkService {
   }
 
   Future<SharedLink?> createSharedLink({
+    required bool showMeta,
+    required bool allowDownload,
+    required bool allowUpload,
+    String? description,
+    String? password,
+    String? slug,
+    String? albumId,
+    List<String>? assetIds,
+    DateTime? expiresAt,
+  }) => PluginHooks.run<SharedLink?>(
+    DataHooks.sharedLinkCreate,
+    () => {
+      'albumId': albumId,
+      'assetIds': assetIds,
+      'showMetadata': showMeta,
+      'allowDownload': allowDownload,
+      'allowUpload': allowUpload,
+      'description': description,
+      'slug': slug,
+      'hasPassword': password != null,
+      'expiresAt': expiresAt?.toUtc().toIso8601String(),
+    },
+    () => _createSharedLink(
+      showMeta: showMeta,
+      allowDownload: allowDownload,
+      allowUpload: allowUpload,
+      description: description,
+      password: password,
+      slug: slug,
+      albumId: albumId,
+      assetIds: assetIds,
+      expiresAt: expiresAt,
+    ),
+    withArgs: (args) => _createSharedLink(
+      showMeta: PluginArgs.boolean(args['showMetadata']) ?? showMeta,
+      allowDownload: PluginArgs.boolean(args['allowDownload']) ?? allowDownload,
+      allowUpload: PluginArgs.boolean(args['allowUpload']) ?? allowUpload,
+      description: PluginArgs.string(args['description']),
+      password: password,
+      slug: PluginArgs.string(args['slug']),
+      albumId: PluginArgs.string(args['albumId']),
+      assetIds: args['assetIds'] == null ? null : PluginArgs.strings(args['assetIds']),
+      expiresAt: PluginArgs.date(args['expiresAt']),
+    ),
+    encode: (link) => link == null ? null : sharedLinkJson(link),
+    event: DataEvents.sharedLinkCreated,
+    eventData: (args, link) => link == null ? args : sharedLinkJson(link),
+  );
+
+  Future<SharedLink?> _createSharedLink({
     required bool showMeta,
     required bool allowDownload,
     required bool allowUpload,
@@ -85,6 +168,40 @@ class SharedLinkService {
   }
 
   Future<SharedLink?> updateSharedLink(
+    String id, {
+    required bool? showMeta,
+    required bool? allowDownload,
+    required bool? allowUpload,
+    Option<String?> password = const Option.none(),
+    Option<String?> description = const Option.none(),
+    String? slug,
+    Option<DateTime?> expiresAt = const Option.none(),
+  }) => PluginHooks.run<SharedLink?>(
+    DataHooks.sharedLinkUpdate,
+    () => {
+      'id': id,
+      'showMetadata': ?showMeta,
+      'allowDownload': ?allowDownload,
+      'allowUpload': ?allowUpload,
+      if (description case Some(:final value)) 'description': value,
+      'slug': ?slug,
+      if (expiresAt case Some(:final value)) 'expiresAt': value?.toUtc().toIso8601String(),
+    },
+    () => _updateSharedLink(
+      id,
+      showMeta: showMeta,
+      allowDownload: allowDownload,
+      allowUpload: allowUpload,
+      password: password,
+      description: description,
+      slug: slug,
+      expiresAt: expiresAt,
+    ),
+    encode: (link) => link == null ? null : sharedLinkJson(link),
+    event: DataEvents.sharedLinkUpdated,
+  );
+
+  Future<SharedLink?> _updateSharedLink(
     String id, {
     required bool? showMeta,
     required bool? allowDownload,

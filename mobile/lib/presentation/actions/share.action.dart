@@ -8,6 +8,7 @@ import 'package:immich_mobile/extensions/build_context_extensions.dart';
 import 'package:immich_mobile/extensions/platform_extensions.dart';
 import 'package:immich_mobile/generated/translations.g.dart';
 import 'package:immich_mobile/presentation/actions/action.dart';
+import 'package:immich_mobile/presentation/actions/action_ids.dart';
 import 'package:immich_mobile/providers/infrastructure/settings.provider.dart';
 import 'package:immich_mobile/providers/infrastructure/toast.provider.dart';
 import 'package:immich_mobile/repositories/asset_media.repository.dart';
@@ -20,6 +21,9 @@ final _stateProvider = Provider.family.autoDispose<List<BaseAsset>?, ActionSourc
 
 class ShareAction extends AssetActionBuilder {
   const ShareAction({required super.source});
+
+  @override
+  String get id => ActionIds.share;
 
   @override
   ActionItem? create(BuildContext context, WidgetRef ref) {

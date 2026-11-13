@@ -5,6 +5,8 @@ import 'package:flutter/material.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:immich_mobile/extensions/asyncvalue_extensions.dart';
 import 'package:immich_mobile/generated/translations.g.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/viewer/viewer_builtins.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/viewer/viewer_ids.dart';
 import 'package:immich_mobile/presentation/pages/memory.page.dart';
 import 'package:immich_mobile/presentation/widgets/images/thumbnail.widget.dart';
 import 'package:immich_mobile/presentation/widgets/memory/memory_title.widget.dart';
@@ -31,14 +33,18 @@ class _MemoryListPageState extends ConsumerState<MemoryListPage> {
         return Scaffold(
           appBar: AppBar(
             title: Text(context.t.memories),
-            actions: [
-              IconButton(
-                icon: Icon(_onlyFavorites ? Icons.favorite : Icons.favorite_outline),
-                onPressed: () {
-                  setState(() => _onlyFavorites = !_onlyFavorites);
-                },
+            // Built-in ids: ViewerBuiltinIds.memoryListActions.
+            actions: arrangeViewerItems<Widget>(ViewerSlotIds.memoryListActions, [
+              ViewerSlotItem(
+                'favorites',
+                IconButton(
+                  icon: Icon(_onlyFavorites ? Icons.favorite : Icons.favorite_outline),
+                  onPressed: () {
+                    setState(() => _onlyFavorites = !_onlyFavorites);
+                  },
+                ),
               ),
-            ],
+            ]),
           ),
           body: SafeArea(
             child: memories.widgetWhen(

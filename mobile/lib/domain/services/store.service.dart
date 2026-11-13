@@ -1,6 +1,9 @@
 import 'dart:async';
 
 import 'package:immich_mobile/domain/models/store.model.dart';
+import 'package:immich_mobile/domain/utils/plugin_data_ids.dart';
+import 'package:immich_mobile/domain/utils/plugin_hooks.dart';
+import 'package:immich_mobile/domain/utils/plugin_settings.dart';
 import 'package:immich_mobile/infrastructure/repositories/store.repository.dart';
 
 /// Provides access to a persistent key-value store with an in-memory cache.
@@ -78,10 +81,31 @@ class StoreService {
   }
 
   /// Stores the [value] for the [key]. Skips write if value hasn't changed.
+  ///
+  /// Runs as `settings.set` (`store: "store"`) and emits `settings.changed`.
   Future<void> put<U extends StoreKey<T>, T>(U key, T value) async {
     if (_cache[key.id] == value) {
       return;
     }
+    final previous = _cache[key.id];
+    await PluginHooks.run<void>(
+      DataHooks.settingsSet,
+      () => {
+        'key': PluginSettings.storeKey(key),
+        'store': 'store',
+        'value': PluginSettings.encodeStore(value),
+        'previous': PluginSettings.encodeStore(previous),
+      },
+      () => _put(key, value),
+      withArgs: (args) {
+        final changed = PluginSettings.decodeStore(key, args['value']);
+        return changed == null ? _delete(key) : _put(key, changed as T);
+      },
+      event: DataEvents.settingsChanged,
+    );
+  }
+
+  Future<void> _put<T>(StoreKey<T> key, T value) async {
     await _storeRepository.upsert(key, value);
     _cache[key.id] = value;
   }
@@ -89,11 +113,33 @@ class StoreService {
   /// Returns a stream that emits the value for [key] on change.
   Stream<T?> watch<T>(StoreKey<T> key) => _storeRepository.watch(key);
 
-  /// Removes the value for [key]
-  Future<void> delete<T>(StoreKey<T> key) async {
+  /// Removes the value for [key]; runs as `settings.set` with `reset: true` and emits `settings.changed`.
+  Future<void> delete<T>(StoreKey<T> key) {
+    final previous = _cache[key.id];
+    return PluginHooks.run<void>(
+      DataHooks.settingsSet,
+      () => {
+        'key': PluginSettings.storeKey(key),
+        'store': 'store',
+        'value': null,
+        'previous': PluginSettings.encodeStore(previous),
+        'reset': true,
+      },
+      () => _delete(key),
+      event: DataEvents.settingsChanged,
+    );
+  }
+
+  Future<void> _delete<T>(StoreKey<T> key) async {
     await _storeRepository.deleteValue(key);
     _cache.remove(key.id);
   }
+
+  /// Every key with a cached value, for `settings.list`.
+  Map<StoreKey, Object?> get values => {
+    for (final key in StoreKey.values)
+      if (_cache.containsKey(key.id)) key: _cache[key.id],
+  };
 
   /// Clears all values from the store (cache and DB)
   Future<void> clear() async {

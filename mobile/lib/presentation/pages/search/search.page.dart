@@ -13,9 +13,13 @@ import 'package:immich_mobile/domain/models/timeline.model.dart';
 import 'package:immich_mobile/domain/services/timeline.service.dart';
 import 'package:immich_mobile/extensions/build_context_extensions.dart';
 import 'package:immich_mobile/generated/translations.g.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/library/library_hooks.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/library/library_ids.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/library/library_json.dart';
 import 'package:immich_mobile/models/search/search_filter.model.dart';
 import 'package:immich_mobile/presentation/pages/search/paginated_search.provider.dart';
 import 'package:immich_mobile/presentation/widgets/bottom_sheet/general_bottom_sheet.widget.dart';
+import 'package:immich_mobile/presentation/widgets/library/library_plugins.widget.dart';
 import 'package:immich_mobile/presentation/widgets/search/quick_date_picker.dart';
 import 'package:immich_mobile/presentation/widgets/timeline/timeline.widget.dart';
 import 'package:immich_mobile/providers/infrastructure/timeline.provider.dart';
@@ -80,7 +84,7 @@ class SearchPage extends HookConsumerWidget {
 
     final userPreferences = ref.watch(Store.userMetadata.preferences()).valueOrNull;
 
-    void search(SearchFilter f) {
+    void applyFilter(SearchFilter f) {
       if (f == filter.value) {
         return;
       }
@@ -93,6 +97,42 @@ class SearchPage extends HookConsumerWidget {
         unawaited(ref.read(paginatedSearchProvider.notifier).search(f));
       }
     }
+
+    // Every new filter runs through hook `search.apply`: `before` may change `filter` or cancel
+    void search(SearchFilter f) {
+      if (f == filter.value) {
+        return;
+      }
+
+      if (!LibraryPluginHooks.has(LibraryHooks.searchApply)) {
+        applyFilter(f);
+        return;
+      }
+
+      final previous = filter.value;
+      unawaited(
+        runLibraryFlow<void>(
+          context,
+          LibraryHooks.searchApply,
+          () async => applyFilter(f),
+          args: () => {'filter': LibraryJson.searchFilter(f), 'previous': LibraryJson.searchFilter(previous)},
+          withArgs: (args) async => applyFilter(LibraryJson.searchFilterFromJson(args['filter'], base: f)),
+        ),
+      );
+    }
+
+    void setTextSearchType(TextSearchType type) => libraryTap(context, LibraryPages.search, type.name, () {
+      selectedTextSearchType.value = type;
+      LibraryPluginHooks.emit(LibraryEvents.searchTypeChanged, () => {'type': type.name});
+    }, args: () => {'type': type.name});
+
+    void filterTap(String id, FutureOr<void> Function() show) => libraryTap(
+      context,
+      LibraryPages.search,
+      id,
+      show,
+      args: () => {'filter': LibraryJson.searchFilter(filter.value)},
+    );
 
     void loadMoreSearchResults() {
       unawaited(ref.read(paginatedSearchProvider.notifier).search(filter.value));
@@ -537,82 +577,86 @@ class SearchPage extends HookConsumerWidget {
                   tooltip: context.t.show_text_search_menu,
                 );
               },
-              menuChildren: [
-                FeatureCheck(
-                  feature: (features) => features.smartSearch,
-                  child: MenuItemButton(
+              menuChildren: LibraryPluginHooks.arrange(LibrarySlots.appBarMenu(LibraryPages.search), [
+                (
+                  id: 'context',
+                  item: FeatureCheck(
+                    feature: (features) => features.smartSearch,
+                    child: MenuItemButton(
+                      child: ListTile(
+                        leading: const Icon(Icons.image_search_rounded),
+                        title: Text(
+                          context.t.search_by_context,
+                          style: context.textTheme.bodyLarge?.copyWith(
+                            fontWeight: FontWeight.w500,
+                            color: textSearchType == TextSearchType.context ? context.colorScheme.primary : null,
+                          ),
+                        ),
+                        selectedColor: context.colorScheme.primary,
+                        selected: textSearchType == TextSearchType.context,
+                      ),
+                      onPressed: () => setTextSearchType(TextSearchType.context),
+                    ),
+                  ),
+                ),
+                (
+                  id: 'filename',
+                  item: MenuItemButton(
                     child: ListTile(
-                      leading: const Icon(Icons.image_search_rounded),
+                      leading: const Icon(Icons.abc_rounded),
                       title: Text(
-                        context.t.search_by_context,
+                        context.t.search_filter_filename,
                         style: context.textTheme.bodyLarge?.copyWith(
                           fontWeight: FontWeight.w500,
-                          color: textSearchType == TextSearchType.context ? context.colorScheme.primary : null,
+                          color: textSearchType == TextSearchType.filename ? context.colorScheme.primary : null,
                         ),
                       ),
                       selectedColor: context.colorScheme.primary,
-                      selected: textSearchType == TextSearchType.context,
+                      selected: textSearchType == TextSearchType.filename,
                     ),
-                    onPressed: () {
-                      selectedTextSearchType.value = TextSearchType.context;
-                    },
+                    onPressed: () => setTextSearchType(TextSearchType.filename),
                   ),
                 ),
-                MenuItemButton(
-                  child: ListTile(
-                    leading: const Icon(Icons.abc_rounded),
-                    title: Text(
-                      context.t.search_filter_filename,
-                      style: context.textTheme.bodyLarge?.copyWith(
-                        fontWeight: FontWeight.w500,
-                        color: textSearchType == TextSearchType.filename ? context.colorScheme.primary : null,
-                      ),
-                    ),
-                    selectedColor: context.colorScheme.primary,
-                    selected: textSearchType == TextSearchType.filename,
-                  ),
-                  onPressed: () {
-                    selectedTextSearchType.value = TextSearchType.filename;
-                  },
-                ),
-                MenuItemButton(
-                  child: ListTile(
-                    leading: const Icon(Icons.text_snippet_outlined),
-                    title: Text(
-                      context.t.search_by_description,
-                      style: context.textTheme.bodyLarge?.copyWith(
-                        fontWeight: FontWeight.w500,
-                        color: textSearchType == TextSearchType.description ? context.colorScheme.primary : null,
-                      ),
-                    ),
-                    selectedColor: context.colorScheme.primary,
-                    selected: textSearchType == TextSearchType.description,
-                  ),
-                  onPressed: () {
-                    selectedTextSearchType.value = TextSearchType.description;
-                  },
-                ),
-                FeatureCheck(
-                  feature: (features) => features.ocr,
-                  child: MenuItemButton(
+                (
+                  id: 'description',
+                  item: MenuItemButton(
                     child: ListTile(
-                      leading: const Icon(Icons.document_scanner_outlined),
+                      leading: const Icon(Icons.text_snippet_outlined),
                       title: Text(
-                        context.t.search_by_ocr,
+                        context.t.search_by_description,
                         style: context.textTheme.bodyLarge?.copyWith(
                           fontWeight: FontWeight.w500,
-                          color: textSearchType == TextSearchType.ocr ? context.colorScheme.primary : null,
+                          color: textSearchType == TextSearchType.description ? context.colorScheme.primary : null,
                         ),
                       ),
                       selectedColor: context.colorScheme.primary,
-                      selected: textSearchType == TextSearchType.ocr,
+                      selected: textSearchType == TextSearchType.description,
                     ),
-                    onPressed: () {
-                      selectedTextSearchType.value = TextSearchType.ocr;
-                    },
+                    onPressed: () => setTextSearchType(TextSearchType.description),
                   ),
                 ),
-              ],
+                (
+                  id: 'ocr',
+                  item: FeatureCheck(
+                    feature: (features) => features.ocr,
+                    child: MenuItemButton(
+                      child: ListTile(
+                        leading: const Icon(Icons.document_scanner_outlined),
+                        title: Text(
+                          context.t.search_by_ocr,
+                          style: context.textTheme.bodyLarge?.copyWith(
+                            fontWeight: FontWeight.w500,
+                            color: textSearchType == TextSearchType.ocr ? context.colorScheme.primary : null,
+                          ),
+                        ),
+                        selectedColor: context.colorScheme.primary,
+                        selected: textSearchType == TextSearchType.ocr,
+                      ),
+                      onPressed: () => setTextSearchType(TextSearchType.ocr),
+                    ),
+                  ),
+                ),
+              ]),
             ),
           ),
         ],
@@ -655,59 +699,83 @@ class SearchPage extends HookConsumerWidget {
                   shrinkWrap: true,
                   scrollDirection: Axis.horizontal,
                   padding: const EdgeInsets.symmetric(horizontal: 16),
-                  children: [
-                    SearchFilterChip(
-                      icon: Icons.people_alt_outlined,
-                      onTap: showPeoplePicker,
-                      label: context.t.people,
-                      currentFilter: peopleCurrentFilterWidget.value,
+                  children: LibraryPluginHooks.arrange(LibrarySlots.searchFilters, [
+                    (
+                      id: 'people',
+                      item: SearchFilterChip(
+                        icon: Icons.people_alt_outlined,
+                        onTap: () => filterTap('people', showPeoplePicker),
+                        label: context.t.people,
+                        currentFilter: peopleCurrentFilterWidget.value,
+                      ),
                     ),
-                    SearchFilterChip(
-                      icon: Icons.location_on_outlined,
-                      onTap: showLocationPicker,
-                      label: context.t.search_filter_location,
-                      currentFilter: locationCurrentFilterWidget.value,
+                    (
+                      id: 'location',
+                      item: SearchFilterChip(
+                        icon: Icons.location_on_outlined,
+                        onTap: () => filterTap('location', showLocationPicker),
+                        label: context.t.search_filter_location,
+                        currentFilter: locationCurrentFilterWidget.value,
+                      ),
                     ),
                     if (userPreferences?.tagsEnabled ?? false)
-                      SearchFilterChip(
-                        icon: Icons.sell_outlined,
-                        onTap: showTagPicker,
-                        label: context.t.tags,
-                        currentFilter: tagCurrentFilterWidget.value,
+                      (
+                        id: 'tags',
+                        item: SearchFilterChip(
+                          icon: Icons.sell_outlined,
+                          onTap: () => filterTap('tags', showTagPicker),
+                          label: context.t.tags,
+                          currentFilter: tagCurrentFilterWidget.value,
+                        ),
                       ),
-                    SearchFilterChip(
-                      icon: Icons.camera_alt_outlined,
-                      onTap: showCameraPicker,
-                      label: context.t.camera,
-                      currentFilter: cameraCurrentFilterWidget.value,
+                    (
+                      id: 'camera',
+                      item: SearchFilterChip(
+                        icon: Icons.camera_alt_outlined,
+                        onTap: () => filterTap('camera', showCameraPicker),
+                        label: context.t.camera,
+                        currentFilter: cameraCurrentFilterWidget.value,
+                      ),
                     ),
-                    SearchFilterChip(
-                      icon: Icons.date_range_outlined,
-                      onTap: showQuickDatePicker,
-                      label: context.t.search_filter_date,
-                      currentFilter: dateRangeCurrentFilterWidget.value,
+                    (
+                      id: 'date',
+                      item: SearchFilterChip(
+                        icon: Icons.date_range_outlined,
+                        onTap: () => filterTap('date', showQuickDatePicker),
+                        label: context.t.search_filter_date,
+                        currentFilter: dateRangeCurrentFilterWidget.value,
+                      ),
                     ),
-                    SearchFilterChip(
-                      key: const Key('media_type_chip'),
-                      icon: Icons.video_collection_outlined,
-                      onTap: showMediaTypePicker,
-                      label: context.t.search_filter_media_type,
-                      currentFilter: mediaTypeCurrentFilterWidget.value,
+                    (
+                      id: 'mediaType',
+                      item: SearchFilterChip(
+                        key: const Key('media_type_chip'),
+                        icon: Icons.video_collection_outlined,
+                        onTap: () => filterTap('mediaType', showMediaTypePicker),
+                        label: context.t.search_filter_media_type,
+                        currentFilter: mediaTypeCurrentFilterWidget.value,
+                      ),
                     ),
                     if (userPreferences?.ratingsEnabled ?? false)
-                      SearchFilterChip(
-                        icon: Icons.star_outline_rounded,
-                        onTap: showStarRatingPicker,
-                        label: context.t.search_filter_star_rating,
-                        currentFilter: ratingCurrentFilterWidget.value,
+                      (
+                        id: 'rating',
+                        item: SearchFilterChip(
+                          icon: Icons.star_outline_rounded,
+                          onTap: () => filterTap('rating', showStarRatingPicker),
+                          label: context.t.search_filter_star_rating,
+                          currentFilter: ratingCurrentFilterWidget.value,
+                        ),
                       ),
-                    SearchFilterChip(
-                      icon: Icons.display_settings_outlined,
-                      onTap: showDisplayOptionPicker,
-                      label: context.t.search_filter_display_options,
-                      currentFilter: displayOptionCurrentFilterWidget.value,
+                    (
+                      id: 'display',
+                      item: SearchFilterChip(
+                        icon: Icons.display_settings_outlined,
+                        onTap: () => filterTap('display', showDisplayOptionPicker),
+                        label: context.t.search_filter_display_options,
+                        currentFilter: displayOptionCurrentFilterWidget.value,
+                      ),
                     ),
-                  ],
+                  ]),
                 ),
               ),
             ),
@@ -849,19 +917,30 @@ class _SearchSuggestions extends StatelessWidget {
     return SliverToBoxAdapter(
       child: ListView(
         shrinkWrap: true,
-        children: [
-          const SizedBox(height: 40),
-          Center(
-            child: Image.asset(
-              context.isDarkTheme ? 'assets/polaroid-dark.png' : 'assets/polaroid-light.png',
-              height: 125,
+        children: LibraryPluginHooks.arrange(LibrarySlots.searchSuggestions, [
+          (
+            id: 'illustration',
+            item: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const SizedBox(height: 40),
+                Center(
+                  child: Image.asset(
+                    context.isDarkTheme ? 'assets/polaroid-dark.png' : 'assets/polaroid-light.png',
+                    height: 125,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Center(child: Text(context.t.search_page_search_photos_videos, style: context.textTheme.labelLarge)),
+                const SizedBox(height: 32),
+              ],
             ),
           ),
-          const SizedBox(height: 16),
-          Center(child: Text(context.t.search_page_search_photos_videos, style: context.textTheme.labelLarge)),
-          const SizedBox(height: 32),
-          const Padding(padding: EdgeInsets.symmetric(horizontal: 16), child: _QuickLinkList()),
-        ],
+          (
+            id: 'quickLinks',
+            item: const Padding(padding: EdgeInsets.symmetric(horizontal: 16), child: _QuickLinkList()),
+          ),
+        ]),
       ),
     );
   }
@@ -889,34 +968,74 @@ class _QuickLinkList extends StatelessWidget {
       child: ListView(
         shrinkWrap: true,
         physics: const NeverScrollableScrollPhysics(),
-        children: [
-          _QuickLink(
-            title: context.t.recently_taken,
-            icon: Icons.schedule_outlined,
-            isTop: true,
-            onTap: () => context.pushRoute(const RecentlyTakenRoute()),
-          ),
-          _QuickLink(
-            title: context.t.recently_added,
-            icon: Icons.upload_outlined,
-            onTap: () => context.pushRoute(const RecentlyAddedRoute()),
-          ),
-          _QuickLink(
-            title: context.t.videos,
-            icon: Icons.play_circle_outline_rounded,
-            onTap: () => context.pushRoute(const VideoRoute()),
-          ),
-          _QuickLink(
-            title: context.t.favorites,
-            icon: Icons.favorite_border_rounded,
-            isBottom: true,
-            onTap: () => context.pushRoute(const FavoriteRoute()),
-          ),
-        ],
+        children: _withEnds(
+          LibraryPluginHooks.arrange(LibrarySlots.searchQuickLinks, [
+            (
+              id: 'recentlyTaken',
+              item: _QuickLink(
+                title: context.t.recently_taken,
+                icon: Icons.schedule_outlined,
+                onTap: () => libraryTap(
+                  context,
+                  LibraryPages.search,
+                  'recentlyTaken',
+                  () => context.pushRoute(const RecentlyTakenRoute()),
+                ),
+              ),
+            ),
+            (
+              id: 'recentlyAdded',
+              item: _QuickLink(
+                title: context.t.recently_added,
+                icon: Icons.upload_outlined,
+                onTap: () => libraryTap(
+                  context,
+                  LibraryPages.search,
+                  'recentlyAdded',
+                  () => context.pushRoute(const RecentlyAddedRoute()),
+                ),
+              ),
+            ),
+            (
+              id: 'videos',
+              item: _QuickLink(
+                title: context.t.videos,
+                icon: Icons.play_circle_outline_rounded,
+                onTap: () =>
+                    libraryTap(context, LibraryPages.search, 'videos', () => context.pushRoute(const VideoRoute())),
+              ),
+            ),
+            (
+              id: 'favorites',
+              item: _QuickLink(
+                title: context.t.favorites,
+                icon: Icons.favorite_border_rounded,
+                onTap: () => libraryTap(
+                  context,
+                  LibraryPages.search,
+                  'favorites',
+                  () => context.pushRoute(const FavoriteRoute()),
+                ),
+              ),
+            ),
+          ]),
+        ),
       ),
     );
   }
 }
+
+/// Rounds the outer corners of the first and last quick link, whichever they are after plugins reordered them.
+List<_QuickLink> _withEnds(List<_QuickLink> links) => [
+  for (var i = 0; i < links.length; i++)
+    _QuickLink(
+      title: links[i].title,
+      icon: links[i].icon,
+      onTap: links[i].onTap,
+      isTop: i == 0,
+      isBottom: i == links.length - 1,
+    ),
+];
 
 class _QuickLink extends StatelessWidget {
   final String title;

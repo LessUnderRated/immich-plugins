@@ -9,10 +9,14 @@ import 'package:immich_mobile/domain/models/album/album.model.dart';
 import 'package:immich_mobile/extensions/build_context_extensions.dart';
 import 'package:immich_mobile/extensions/theme_extensions.dart';
 import 'package:immich_mobile/generated/translations.g.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/library/library_hooks.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/library/library_ids.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/library/library_json.dart';
 import 'package:immich_mobile/models/albums/album_search.model.dart';
 import 'package:immich_mobile/presentation/widgets/album/album_tile.dart';
 import 'package:immich_mobile/presentation/widgets/album/new_album_name_modal.widget.dart';
 import 'package:immich_mobile/presentation/widgets/images/thumbnail.widget.dart';
+import 'package:immich_mobile/presentation/widgets/library/library_plugins.widget.dart';
 import 'package:immich_mobile/providers/album/album_sort_by_options.provider.dart';
 import 'package:immich_mobile/providers/asset_viewer/asset_viewer.provider.dart';
 import 'package:immich_mobile/providers/infrastructure/album.provider.dart';
@@ -29,11 +33,18 @@ import 'package:sliver_tools/sliver_tools.dart';
 
 typedef AlbumSelectorCallback = void Function(RemoteAlbum album);
 
+/// Plugin page key of the album selector's built-in actions (`action.albumSelector.<item>`).
+const _selectorPage = 'albumSelector';
+
 class AlbumSelector extends ConsumerStatefulWidget {
   final AlbumSelectorCallback onAlbumSelected;
   final Function? onKeyboardExpanded;
 
-  const AlbumSelector({super.key, required this.onAlbumSelected, this.onKeyboardExpanded});
+  /// Where the selector is shown, for plugins (`scope` in slot contexts and hook arguments): `albums` on the album
+  /// list page, `picker` in "add to album" sheets.
+  final String scope;
+
+  const AlbumSelector({super.key, required this.onAlbumSelected, this.onKeyboardExpanded, this.scope = 'picker'});
 
   @override
   ConsumerState<AlbumSelector> createState() => _AlbumSelectorState();
@@ -83,12 +94,15 @@ class _AlbumSelectorState extends ConsumerState<AlbumSelector> {
     unawaited(filterAlbums());
   }
 
-  void toggleViewMode() {
+  Map<String, dynamic> _hookArgs() => {'scope': widget.scope};
+
+  void toggleViewMode() => libraryTap(context, _selectorPage, 'viewMode', () {
     setState(() {
       isGrid = !isGrid;
     });
     unawaited(ref.read(settingsProvider).write(.albumIsGrid, isGrid));
-  }
+    LibraryPluginHooks.emit(LibraryEvents.albumsViewModeChanged, () => {..._hookArgs(), 'isGrid': isGrid});
+  }, args: () => {..._hookArgs(), 'isGrid': !isGrid});
 
   void changeFilter(QuickFilterMode mode) {
     setState(() {
@@ -96,19 +110,61 @@ class _AlbumSelectorState extends ConsumerState<AlbumSelector> {
     });
 
     unawaited(filterAlbums());
+    LibraryPluginHooks.emit(
+      LibraryEvents.albumsFilterChanged,
+      () => {..._hookArgs(), 'mode': mode.name, 'query': filter.query},
+    );
   }
 
   Future<void> changeSort(AlbumSort sort) async {
-    setState(() {
-      this.sort = sort;
-    });
+    await runLibraryAction<void>(context, _selectorPage, sort.mode.name, () async {
+      setState(() {
+        this.sort = sort;
+      });
 
-    final metadata = ref.read(settingsProvider);
-    await metadata.write(.albumSortMode, sort.mode);
-    await metadata.write(.albumIsReverse, sort.isReverse);
+      final metadata = ref.read(settingsProvider);
+      await metadata.write(.albumSortMode, sort.mode);
+      await metadata.write(.albumIsReverse, sort.isReverse);
 
-    await sortAlbums();
+      await sortAlbums();
+      LibraryPluginHooks.emit(
+        LibraryEvents.albumsSortChanged,
+        () => {..._hookArgs(), 'mode': sort.mode.name, 'reverse': sort.isReverse},
+      );
+    }, args: () => {..._hookArgs(), 'mode': sort.mode.name, 'reverse': sort.isReverse});
   }
+
+  /// Opens [album] through hook `action.albumSelector.open`.
+  void openAlbum(RemoteAlbum album) => libraryTap(
+    context,
+    _selectorPage,
+    'open',
+    () => widget.onAlbumSelected(album),
+    args: () => {..._hookArgs(), 'album': LibraryJson.remoteAlbum(album)},
+  );
+
+  /// Deletes [album] through hook `action.albumSelector.delete`; true when it was deleted.
+  Future<bool> deleteAlbum(RemoteAlbum album) async {
+    var deleted = false;
+    await runLibraryAction<void>(context, _selectorPage, 'delete', () async {
+      await ref.read(remoteAlbumProvider.notifier).deleteAlbum(album.id);
+      deleted = true;
+    }, args: () => {..._hookArgs(), 'album': LibraryJson.remoteAlbum(album)});
+    return deleted;
+  }
+
+  /// The albums to show after query hook `albums.query`.
+  Future<List<RemoteAlbum>> _query(List<RemoteAlbum> albums) async => LibraryPluginHooks.query<RemoteAlbum>(
+    LibraryHooks.albumsQuery,
+    albums,
+    id: (album) => album.id,
+    toJson: LibraryJson.remoteAlbum,
+    args: () => {
+      ..._hookArgs(),
+      'filter': {'query': filter.query, 'mode': filter.mode.name},
+      'sort': {'mode': sort.mode.name, 'reverse': sort.isReverse},
+    },
+  );
 
   void clearSearch() {
     setState(() {
@@ -138,13 +194,15 @@ class _AlbumSelectorState extends ConsumerState<AlbumSelector> {
   }
 
   Future<void> filterAlbums() async {
+    final hooked = LibraryPluginHooks.has(LibraryHooks.albumsQuery);
     if (filter.query == null) {
+      final albums = hooked ? await _query(sortedAlbums) : sortedAlbums;
       if (!mounted) {
         return;
       }
 
       setState(() {
-        shownAlbums = sortedAlbums;
+        shownAlbums = albums;
       });
 
       return;
@@ -153,13 +211,14 @@ class _AlbumSelectorState extends ConsumerState<AlbumSelector> {
     final filteredAlbums = ref
         .read(remoteAlbumProvider.notifier)
         .searchAlbums(sortedAlbums, filter.query!, filter.userId, filter.mode);
+    final albums = hooked ? await _query(filteredAlbums) : filteredAlbums;
 
     if (!mounted) {
       return;
     }
 
     setState(() {
-      shownAlbums = filteredAlbums;
+      shownAlbums = albums;
     });
   }
 
@@ -184,32 +243,50 @@ class _AlbumSelectorState extends ConsumerState<AlbumSelector> {
         menuController.close();
       },
       child: MultiSliver(
-        children: [
-          _SearchBar(
-            searchController: searchController,
-            searchFocusNode: searchFocusNode,
-            onSearch: onSearch,
-            filterMode: filter.mode,
-            onClearSearch: clearSearch,
+        children: LibraryPluginHooks.arrange(LibrarySlots.albumSelectorSections, [
+          (
+            id: 'search',
+            item: _SearchBar(
+              searchController: searchController,
+              searchFocusNode: searchFocusNode,
+              onSearch: onSearch,
+              filterMode: filter.mode,
+              onClearSearch: clearSearch,
+            ),
           ),
-          _QuickFilterButtonRow(
-            filterMode: filter.mode,
-            onChangeFilter: changeFilter,
-            onSearch: onSearch,
-            searchController: searchController,
+          (
+            id: 'filters',
+            item: _QuickFilterButtonRow(
+              filterMode: filter.mode,
+              onChangeFilter: (mode) => libraryTap(
+                context,
+                _selectorPage,
+                mode.name,
+                () => changeFilter(mode),
+                args: () => {..._hookArgs(), 'mode': mode.name},
+              ),
+              onSearch: onSearch,
+              searchController: searchController,
+            ),
           ),
-          _QuickSortAndViewMode(
-            isGrid: isGrid,
-            onToggleViewMode: toggleViewMode,
-            onSortChanged: changeSort,
-            controller: menuController,
-            currentSortMode: sort.mode,
-            currentIsReverse: sort.isReverse,
+          (
+            id: 'toolbar',
+            item: _QuickSortAndViewMode(
+              isGrid: isGrid,
+              onToggleViewMode: toggleViewMode,
+              onSortChanged: changeSort,
+              controller: menuController,
+              currentSortMode: sort.mode,
+              currentIsReverse: sort.isReverse,
+            ),
           ),
-          isGrid
-              ? _AlbumGrid(albums: shownAlbums, userId: userId, onAlbumSelected: widget.onAlbumSelected)
-              : _AlbumList(albums: shownAlbums, userId: userId, onAlbumSelected: widget.onAlbumSelected),
-        ],
+          (
+            id: 'list',
+            item: isGrid
+                ? _AlbumGrid(albums: shownAlbums, userId: userId, onAlbumSelected: openAlbum)
+                : _AlbumList(albums: shownAlbums, userId: userId, onAlbumSelected: openAlbum, onDelete: deleteAlbum),
+          ),
+        ]),
       ),
     );
   }
@@ -292,9 +369,11 @@ class _SortButtonState extends ConsumerState<_SortButton> {
         padding: const WidgetStatePropertyAll(EdgeInsets.all(4)),
       ),
       consumeOutsideTap: true,
-      menuChildren: AlbumSortMode.values
-          .map(
-            (sortMode) => MenuItemButton(
+      menuChildren: LibraryPluginHooks.arrange(LibrarySlots.albumSelectorSort, [
+        for (final sortMode in AlbumSortMode.values)
+          (
+            id: sortMode.name,
+            item: MenuItemButton(
               leadingIcon: albumSortOption == sortMode
                   ? effectiveOrder == SortOrder.desc
                         ? Icon(
@@ -329,8 +408,8 @@ class _SortButtonState extends ConsumerState<_SortButton> {
                 ),
               ),
             ),
-          )
-          .toList(),
+          ),
+      ]),
       builder: (context, controller, child) {
         return GestureDetector(
           onTap: () {
@@ -445,32 +524,41 @@ class _QuickFilterButtonRow extends StatelessWidget {
         child: Wrap(
           spacing: 4,
           runSpacing: 4,
-          children: [
-            _QuickFilterButton(
-              label: context.t.all,
-              isSelected: filterMode == QuickFilterMode.all,
-              onTap: () {
-                onChangeFilter(QuickFilterMode.all);
-                onSearch(searchController.text, QuickFilterMode.all);
-              },
+          children: LibraryPluginHooks.arrange(LibrarySlots.albumSelectorFilters, [
+            (
+              id: QuickFilterMode.all.name,
+              item: _QuickFilterButton(
+                label: context.t.all,
+                isSelected: filterMode == QuickFilterMode.all,
+                onTap: () {
+                  onChangeFilter(QuickFilterMode.all);
+                  onSearch(searchController.text, QuickFilterMode.all);
+                },
+              ),
             ),
-            _QuickFilterButton(
-              label: context.t.shared_with_me,
-              isSelected: filterMode == QuickFilterMode.sharedWithMe,
-              onTap: () {
-                onChangeFilter(QuickFilterMode.sharedWithMe);
-                onSearch(searchController.text, QuickFilterMode.sharedWithMe);
-              },
+            (
+              id: QuickFilterMode.sharedWithMe.name,
+              item: _QuickFilterButton(
+                label: context.t.shared_with_me,
+                isSelected: filterMode == QuickFilterMode.sharedWithMe,
+                onTap: () {
+                  onChangeFilter(QuickFilterMode.sharedWithMe);
+                  onSearch(searchController.text, QuickFilterMode.sharedWithMe);
+                },
+              ),
             ),
-            _QuickFilterButton(
-              label: context.t.my_albums,
-              isSelected: filterMode == QuickFilterMode.myAlbums,
-              onTap: () {
-                onChangeFilter(QuickFilterMode.myAlbums);
-                onSearch(searchController.text, QuickFilterMode.myAlbums);
-              },
+            (
+              id: QuickFilterMode.myAlbums.name,
+              item: _QuickFilterButton(
+                label: context.t.my_albums,
+                isSelected: filterMode == QuickFilterMode.myAlbums,
+                onTap: () {
+                  onChangeFilter(QuickFilterMode.myAlbums);
+                  onSearch(searchController.text, QuickFilterMode.myAlbums);
+                },
+              ),
             ),
-          ],
+          ]),
         ),
       ),
     );
@@ -532,22 +620,28 @@ class _QuickSortAndViewMode extends StatelessWidget {
       sliver: SliverToBoxAdapter(
         child: Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            _SortButton(
-              onSortChanged,
-              controller: controller,
-              initialSortMode: currentSortMode,
-              initialIsReverse: currentIsReverse,
-            ),
-            IconButton(
-              icon: Icon(
-                isGrid ? Icons.view_list_outlined : Icons.grid_view_outlined,
-                size: 24,
-                color: context.colorScheme.onSurface,
+          children: LibraryPluginHooks.arrange(LibrarySlots.albumSelectorToolbar, [
+            (
+              id: 'sort',
+              item: _SortButton(
+                onSortChanged,
+                controller: controller,
+                initialSortMode: currentSortMode,
+                initialIsReverse: currentIsReverse,
               ),
-              onPressed: onToggleViewMode,
             ),
-          ],
+            (
+              id: 'viewMode',
+              item: IconButton(
+                icon: Icon(
+                  isGrid ? Icons.view_list_outlined : Icons.grid_view_outlined,
+                  size: 24,
+                  color: context.colorScheme.onSurface,
+                ),
+                onPressed: onToggleViewMode,
+              ),
+            ),
+          ]),
         ),
       ),
     );
@@ -555,11 +649,12 @@ class _QuickSortAndViewMode extends StatelessWidget {
 }
 
 class _AlbumList extends ConsumerWidget {
-  const _AlbumList({required this.albums, required this.userId, required this.onAlbumSelected});
+  const _AlbumList({required this.albums, required this.userId, required this.onAlbumSelected, required this.onDelete});
 
   final List<RemoteAlbum> albums;
   final String? userId;
   final AlbumSelectorCallback onAlbumSelected;
+  final Future<bool> Function(RemoteAlbum album) onDelete;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -590,8 +685,8 @@ class _AlbumList extends ConsumerWidget {
                   child: Icon(Icons.delete, color: context.colorScheme.onError),
                 ),
                 direction: DismissDirection.endToStart,
-                confirmDismiss: (direction) {
-                  return showDialog<bool>(
+                confirmDismiss: (direction) async {
+                  final confirmed = await showDialog<bool>(
                     context: context,
                     builder: (context) => ConfirmDialog(
                       onOk: () => true,
@@ -600,9 +695,16 @@ class _AlbumList extends ConsumerWidget {
                       ok: context.t.delete,
                     ),
                   );
+                  // With a plugin on `action.albumSelector.delete`, delete before dismissing so a cancel keeps the tile
+                  if (confirmed != true || !LibraryPluginHooks.hasAction(_selectorPage, 'delete')) {
+                    return confirmed;
+                  }
+                  return onDelete(album);
                 },
                 onDismissed: (direction) async {
-                  await ref.read(remoteAlbumProvider.notifier).deleteAlbum(album.id);
+                  if (!LibraryPluginHooks.hasAction(_selectorPage, 'delete')) {
+                    await ref.read(remoteAlbumProvider.notifier).deleteAlbum(album.id);
+                  }
                 },
                 child: AlbumTile(album: album, isOwner: isOwner, onAlbumSelected: onAlbumSelected),
               ),
@@ -746,9 +848,31 @@ class AddToAlbumHeader extends ConsumerWidget {
       }
 
       final selectedAssets = ref.read(multiSelectProvider).selectedAssets;
-      final newAlbum = await ref
-          .read(remoteAlbumProvider.notifier)
-          .createAlbumWithAssets(title: albumName, assets: selectedAssets);
+      var ran = false;
+      final newAlbum = await runLibraryAction<RemoteAlbum?>(
+        context,
+        _selectorPage,
+        'createAlbum',
+        () {
+          ran = true;
+          return ref.read(remoteAlbumProvider.notifier).createAlbumWithAssets(title: albumName, assets: selectedAssets);
+        },
+        args: () => {
+          'scope': 'selection',
+          'title': albumName,
+          'assets': [for (final asset in selectedAssets) LibraryJson.asset(asset)],
+        },
+        withArgs: (args) {
+          ran = true;
+          return ref
+              .read(remoteAlbumProvider.notifier)
+              .createAlbumWithAssets(title: '${args['title'] ?? albumName}', assets: selectedAssets);
+        },
+      );
+      // A plugin cancelled or handled it
+      if (!ran && newAlbum == null) {
+        return;
+      }
 
       if (!context.mounted) {
         return;
@@ -808,11 +932,30 @@ class CreateAlbumButton extends ConsumerWidget {
         return;
       }
 
-      final album = await ref
-          .read(remoteAlbumProvider.notifier)
-          .createAlbum(title: albumName, assetIds: [asset.remoteId!]);
+      var ran = false;
+      final album = await runLibraryAction<RemoteAlbum?>(
+        context,
+        _selectorPage,
+        'createAlbum',
+        () {
+          ran = true;
+          return ref.read(remoteAlbumProvider.notifier).createAlbum(title: albumName, assetIds: [asset.remoteId!]);
+        },
+        args: () => {
+          'scope': 'viewer',
+          'title': albumName,
+          'assets': [LibraryJson.asset(asset)],
+        },
+        withArgs: (args) {
+          ran = true;
+          return ref
+              .read(remoteAlbumProvider.notifier)
+              .createAlbum(title: '${args['title'] ?? albumName}', assetIds: [asset.remoteId!]);
+        },
+      );
 
-      if (!context.mounted) {
+      // A plugin cancelled or handled it
+      if (!context.mounted || (!ran && album == null)) {
         return;
       }
 

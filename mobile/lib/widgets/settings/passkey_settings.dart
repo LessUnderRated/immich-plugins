@@ -5,8 +5,10 @@ import 'package:immich_mobile/domain/models/passkey.model.dart';
 import 'package:immich_mobile/extensions/build_context_extensions.dart';
 import 'package:immich_mobile/extensions/datetime_extensions.dart';
 import 'package:immich_mobile/generated/translations.g.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/shell/shell_ids.dart';
 import 'package:immich_mobile/presentation/actions/action.widget.dart';
 import 'package:immich_mobile/presentation/actions/passkey.action.dart';
+import 'package:immich_mobile/presentation/widgets/shell/shell_list.widget.dart';
 import 'package:immich_ui/immich_ui.dart';
 
 class PasskeySettings extends ConsumerWidget {
@@ -16,22 +18,34 @@ class PasskeySettings extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final passkeys = ref.watch(Store.passkeys.all()).valueOrNull;
 
-    return ListView(
-      children: [
-        const Padding(
-          padding: .symmetric(horizontal: 20, vertical: 16),
-          child: ActionButton(action: PasskeyCreateAction(), variant: .filled),
+    return ShellList(
+      slot: ShellSlots.settingsItems(SettingsEntryIds.passkeys),
+      builder: (context, children) => ListView(children: children),
+      items: [
+        const ShellItem(
+          'create',
+          Padding(
+            padding: .symmetric(horizontal: 20, vertical: 16),
+            child: ActionButton(action: PasskeyCreateAction(), variant: .filled),
+          ),
         ),
         if (passkeys == null)
-          const Center(child: CircularProgressIndicator())
-        else if (passkeys.isNotEmpty) ...[
-          SettingsSubTitle(title: context.t.passkeys_on_server),
-          Padding(
-            padding: const .fromLTRB(20, 4, 20, 0),
-            child: Text(context.t.passkeys_on_server_description, style: context.textTheme.bodySmall),
+          const ShellItem('passkeys', Center(child: CircularProgressIndicator()))
+        else if (passkeys.isNotEmpty)
+          ShellItem(
+            'passkeys',
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                SettingsSubTitle(title: context.t.passkeys_on_server),
+                Padding(
+                  padding: const .fromLTRB(20, 4, 20, 0),
+                  child: Text(context.t.passkeys_on_server_description, style: context.textTheme.bodySmall),
+                ),
+                for (final passkey in passkeys) _PasskeyTile(key: ValueKey(passkey.id), passkey: passkey),
+              ],
+            ),
           ),
-          for (final passkey in passkeys) _PasskeyTile(key: ValueKey(passkey.id), passkey: passkey),
-        ],
       ],
     );
   }

@@ -6,6 +6,9 @@ import 'package:flutter_hooks/flutter_hooks.dart';
 import 'package:immich_mobile/constants/locales.dart';
 import 'package:immich_mobile/extensions/build_context_extensions.dart';
 import 'package:immich_mobile/generated/translations.g.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/shell/shell_hooks.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/shell/shell_ids.dart';
+import 'package:immich_mobile/providers/locale_provider.dart';
 import 'package:immich_mobile/services/localization.service.dart';
 import 'package:immich_mobile/widgets/common/search_field.dart';
 
@@ -24,8 +27,25 @@ class LanguageSettings extends HookWidget {
         return;
       }
 
-      await context.setLocale(selectedLocale.value);
-      await loadTranslations();
+      // Plugins may cancel the change or pick another supported locale (`args.locale`).
+      await ShellHookRunner.guard<void>(
+        ShellHooks.localeSet,
+        {'locale': selectedLocale.value.toString(), 'previous': context.locale.toString()},
+        (args) async {
+          final locale = supportedLocaleOf(args['locale']) ?? selectedLocale.value;
+          if (!context.mounted) {
+            return;
+          }
+          await context.setLocale(locale);
+          await loadTranslations();
+          // loadTranslations reloads the bundled texts only; put plugin text overrides back on top.
+          pluginStrings.setCurrentLocale(locale);
+          if (!pluginStrings.overrides.isEmpty) {
+            await pluginStrings.reapply();
+          }
+        },
+        event: ShellEvents.localeChanged,
+      );
     } finally {
       isLoading.value = false;
     }
@@ -258,4 +278,19 @@ class _LanguageItem extends StatelessWidget {
       ),
     );
   }
+}
+
+/// The supported locale named by [value] (`de`, `pt_BR`, `pt-BR`, `zh_Hant`), or null.
+Locale? supportedLocaleOf(Object? value) {
+  if (value is! String || value.isEmpty) {
+    return null;
+  }
+  final wanted = value.replaceAll('-', '_').toLowerCase();
+  for (final locale in locales.values) {
+    if (locale.toString().toLowerCase() == wanted ||
+        locale.toLanguageTag().replaceAll('-', '_').toLowerCase() == wanted) {
+      return locale;
+    }
+  }
+  return null;
 }

@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:immich_mobile/domain/utils/plugin_data_ids.dart';
+import 'package:immich_mobile/domain/utils/plugin_hooks.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
@@ -40,14 +42,34 @@ class PrivateAlbumRepository {
     _changes.add(null);
   }
 
-  Future<int> add(Iterable<String> assetIds) async {
+  /// Marks assets private (hidden from every other view); runs as `asset.private` with `private: true`.
+  Future<int> add(Iterable<String> assetIds) => _setPrivate(assetIds.toList(), true);
+
+  /// Unmarks private assets; runs as `asset.private` with `private: false`.
+  Future<int> remove(Iterable<String> assetIds) => _setPrivate(assetIds.toList(), false);
+
+  Future<int> _setPrivate(List<String> assetIds, bool private) => PluginHooks.run<int>(
+    DataHooks.assetPrivate,
+    () => {'ids': assetIds, 'private': private},
+    () => private ? _add(assetIds) : _remove(assetIds),
+    withArgs: (args) {
+      final ids = PluginArgs.strings(args['ids']);
+      return (PluginArgs.boolean(args['private']) ?? private) ? _add(ids) : _remove(ids);
+    },
+    encode: (changed) => changed,
+    decode: (json) => PluginArgs.integer(json) ?? 0,
+    event: DataEvents.assetPrivateChanged,
+    eventData: (args, changed) => {...args, 'changed': changed},
+  );
+
+  Future<int> _add(Iterable<String> assetIds) async {
     final current = await ids();
     final next = {...current, ...assetIds};
     await _save(next);
     return next.length - current.length;
   }
 
-  Future<int> remove(Iterable<String> assetIds) async {
+  Future<int> _remove(Iterable<String> assetIds) async {
     final current = await ids();
     final next = current.difference(assetIds.toSet());
     await _save(next);
