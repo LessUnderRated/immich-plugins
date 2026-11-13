@@ -11,6 +11,9 @@ import 'package:immich_mobile/domain/models/asset/asset_metadata.model.dart';
 import 'package:immich_mobile/domain/models/asset/base_asset.model.dart';
 import 'package:immich_mobile/domain/models/store.model.dart';
 import 'package:immich_mobile/domain/services/asset.service.dart';
+import 'package:immich_mobile/domain/utils/plugin_data_ids.dart';
+import 'package:immich_mobile/domain/utils/plugin_hooks.dart';
+import 'package:immich_mobile/domain/utils/plugin_json.dart';
 import 'package:immich_mobile/entities/store.entity.dart';
 import 'package:immich_mobile/extensions/platform_extensions.dart';
 import 'package:immich_mobile/infrastructure/repositories/backup.repository.dart';
@@ -120,6 +123,16 @@ class BackgroundUploadService {
     if (!_taskProgressController.isClosed) {
       _taskProgressController.add(update);
     }
+    PluginHooks.emit(
+      DataEvents.uploadProgress,
+      () => {
+        'kind': 'background',
+        'localId': update.task.taskId,
+        'fileName': update.task.displayName,
+        'progress': update.progress,
+        'expectedFileSize': update.expectedFileSize,
+      },
+    );
   }
 
   void _onUploadCallback(TaskStatusUpdate update) {
@@ -148,7 +161,18 @@ class BackgroundUploadService {
   ///
   /// Finds backup candidates, builds upload tasks, and enqueues them
   /// for background processing.
-  Future<void> uploadBackupCandidates(String userId) async {
+  ///
+  /// Runs as `backup.start` (`mode: "background"`) and emits `backup.started`.
+  Future<void> uploadBackupCandidates(String userId) => PluginHooks.run<void>(
+    DataHooks.backupStart,
+    () => {'mode': 'background', 'userId': userId},
+    () {
+      PluginHooks.emit(DataEvents.backupStarted, () => {'mode': 'background', 'userId': userId});
+      return _uploadBackupCandidates(userId);
+    },
+  );
+
+  Future<void> _uploadBackupCandidates(String userId) async {
     await _storageRepository.clearCache();
     shouldAbortQueuingTasks = false;
 
@@ -180,7 +204,19 @@ class BackgroundUploadService {
   /// Cancel all ongoing background uploads and reset the upload queue
   ///
   /// Returns the number of tasks left in the queue
-  Future<int> cancel() async {
+  ///
+  /// Runs as `backup.stop` (`mode: "background"`) and emits `backup.stopped`.
+  Future<int> cancel() => PluginHooks.run<int>(
+    DataHooks.backupStop,
+    () => {'mode': 'background'},
+    _cancel,
+    encode: (left) => left,
+    decode: (json) => PluginArgs.integer(json) ?? 0,
+    event: DataEvents.backupStopped,
+    eventData: (args, left) => {...args, 'remaining': left},
+  );
+
+  Future<int> _cancel() async {
     shouldAbortQueuingTasks = true;
 
     await _storageRepository.clearCache();
@@ -199,6 +235,7 @@ class BackgroundUploadService {
   }
 
   Future<void> _handleTaskStatusUpdate(TaskStatusUpdate update) async {
+    _emitStatus(update);
     switch (update.status) {
       case TaskStatus.complete:
         unawaited(_handleLivePhoto(update));
@@ -273,8 +310,74 @@ class BackgroundUploadService {
     }
   }
 
+  void _emitStatus(TaskStatusUpdate update) {
+    final info = {'kind': 'background', 'localId': update.task.taskId, 'fileName': update.task.displayName};
+    switch (update.status) {
+      case TaskStatus.complete:
+        String? remoteId;
+        try {
+          remoteId = (jsonDecode(update.responseBody ?? '') as Map)['id'] as String?;
+        } catch (_) {
+          remoteId = null;
+        }
+        PluginHooks.emit(DataEvents.uploadCompleted, () => {...info, 'remoteId': remoteId});
+        PluginHooks.emit(
+          DataEvents.assetUploaded,
+          () => {'localId': update.task.taskId, 'remoteId': remoteId, 'kind': 'background'},
+        );
+      case TaskStatus.failed || TaskStatus.notFound:
+        PluginHooks.emit(
+          DataEvents.uploadFailed,
+          () => {...info, 'error': update.exception?.description, 'status': update.responseStatusCode},
+        );
+      case TaskStatus.running:
+        PluginHooks.emit(DataEvents.uploadStarted, () => info);
+      default:
+        break;
+    }
+  }
+
+  /// Builds the background upload task of [asset] through the `upload.asset` hook (`kind: "background"`):
+  /// `before` may skip the asset (cancel) or set `path`, `fileName` and extra multipart `fields`.
   @visibleForTesting
   Future<UploadTask?> getUploadTask(LocalAsset asset, {String group = kBackupGroup, int? priority}) async {
+    try {
+      return await PluginHooks.run<UploadTask?>(
+        DataHooks.uploadAsset,
+        () => {'kind': 'background', 'localId': asset.id, 'asset': PluginJson.asset(asset), 'group': group},
+        () => _getUploadTask(asset, group: group, priority: priority),
+        withArgs: (args) => _getUploadTask(
+          asset,
+          group: group,
+          priority: priority,
+          path: PluginArgs.string(args['path']),
+          fileName: PluginArgs.string(args['fileName']),
+          fields: args['fields'] is Map
+              ? {for (final entry in (args['fields'] as Map).entries) '${entry.key}': '${entry.value}'}
+              : null,
+        ),
+        encode: (task) => task == null ? null : {'taskId': task.taskId, 'fileName': task.displayName, 'fields': task.fields},
+      );
+    } catch (error) {
+      if (!PluginHooks.isCancelled(error)) {
+        rethrow;
+      }
+      PluginHooks.emit(
+        DataEvents.uploadSkipped,
+        () => {'kind': 'background', 'localId': asset.id, 'message': PluginHooks.cancelMessage(error)},
+      );
+      return null;
+    }
+  }
+
+  Future<UploadTask?> _getUploadTask(
+    LocalAsset asset, {
+    String group = kBackupGroup,
+    int? priority,
+    String? path,
+    String? fileName,
+    Map<String, String>? fields,
+  }) async {
     final entity = await _storageRepository.getAssetEntityForAsset(asset);
     if (entity == null) {
       _logger.warning("Asset entity not found for ${asset.id} - ${asset.name}");
@@ -290,7 +393,9 @@ class BackgroundUploadService {
     /// We implement two separate upload groups for this, the normal one for the video file
     /// and the higher priority group for the photo file because the video file is already uploaded.
 
-    if (entity.isLivePhoto) {
+    if (path != null) {
+      file = File(path);
+    } else if (entity.isLivePhoto) {
       file = await _storageRepository.getMotionFileForAsset(asset);
     } else {
       file = await _storageRepository.getFileForAsset(asset.id);
@@ -301,10 +406,10 @@ class BackgroundUploadService {
       return null;
     }
 
-    final fileName = await _assetMediaRepository.getOriginalFilename(asset.id) ?? asset.name;
+    final baseName = fileName ?? await _assetMediaRepository.getOriginalFilename(asset.id) ?? asset.name;
     // Some apps (e.g. DJI/Fusion) return names without an extension; fall back to the asset name for those.
     final extension = p.extension(file.path).isNotEmpty ? p.extension(file.path) : p.extension(asset.name);
-    final originalFileName = p.setExtension(fileName, extension);
+    final originalFileName = fileName ?? p.setExtension(baseName, extension);
 
     final String metadata = UploadTaskMetadata(
       localAssetId: asset.id,
@@ -327,7 +432,10 @@ class BackgroundUploadService {
       isFavorite: asset.isFavorite,
       requiresWiFi: requiresWiFi,
       // Visibility hidden on upload to prevent the server from running regular jobs on the live photo asset
-      fields: entity.isLivePhoto ? {'visibility': api.AssetVisibility.hidden.toString()} : null,
+      fields: {
+        if (entity.isLivePhoto) 'visibility': api.AssetVisibility.hidden.toString(),
+        ...?fields,
+      },
       cloudId: entity.isLivePhoto ? null : asset.cloudId,
       adjustmentTime: entity.isLivePhoto ? null : asset.adjustmentTime?.toIso8601String(),
       latitude: entity.isLivePhoto ? null : asset.latitude?.toString(),

@@ -3,6 +3,7 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:immich_mobile/constants/enums.dart';
 import 'package:immich_mobile/generated/translations.g.dart';
 import 'package:immich_mobile/presentation/actions/action.dart';
+import 'package:immich_mobile/presentation/actions/action_ids.dart';
 import 'package:immich_mobile/providers/infrastructure/asset.provider.dart';
 import 'package:immich_mobile/providers/infrastructure/toast.provider.dart';
 import 'package:immich_mobile/providers/routes.provider.dart';
@@ -26,6 +27,9 @@ final _stateProvider = Provider.family.autoDispose<_State?, ActionSource>((ref, 
 
 class ArchiveAction extends AssetActionBuilder {
   const ArchiveAction({required super.source});
+
+  @override
+  String get id => ActionIds.archive;
 
   @override
   ActionItem? create(BuildContext context, WidgetRef ref) {

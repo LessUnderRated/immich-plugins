@@ -4,6 +4,8 @@ import 'package:auto_route/auto_route.dart';
 import 'package:flutter/widgets.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:immich_mobile/generated/translations.g.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/library/library_hooks.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/library/library_ids.dart';
 import 'package:immich_mobile/presentation/widgets/bottom_sheet/locked_folder_bottom_sheet.widget.dart';
 import 'package:immich_mobile/presentation/widgets/timeline/timeline.widget.dart';
 import 'package:immich_mobile/providers/auth.provider.dart';
@@ -41,13 +43,29 @@ class _LockedFolderPageState extends ConsumerState<LockedFolderPage> with Widget
       return;
     }
     if (state == AppLifecycleState.paused) {
-      unawaited(ref.read(authProvider.notifier).lockPinCode());
-      unawaited(context.navigateTo(const TabShellRoute()));
+      // `before` on `lockedFolder.autoLock` may keep the folder open (cancel)
+      unawaited(_autoLock());
       return;
     }
     setState(() {
       _showOverlay = state != AppLifecycleState.resumed;
     });
+  }
+
+  Future<void> _autoLock() async {
+    final router = context.router;
+    final auth = ref.read(authProvider.notifier);
+    try {
+      await LibraryPluginHooks.flow<void>(LibraryHooks.lockedFolderAutoLock, () async {
+        unawaited(auth.lockPinCode());
+        unawaited(router.navigate(const TabShellRoute()));
+        LibraryPluginHooks.emit(LibraryEvents.lockedFolderLocked, () => const {'reason': 'paused'});
+      }, args: () => const {'reason': 'paused'});
+    } catch (error) {
+      if (!LibraryPluginHooks.isCancelled(error)) {
+        rethrow;
+      }
+    }
   }
 
   @override
@@ -68,8 +86,14 @@ class _LockedFolderPageState extends ConsumerState<LockedFolderPage> with Widget
       child: _showOverlay
           ? const SizedBox()
           : PopScope(
-              onPopInvokedWithResult: (didPop, _) => didPop ? ref.read(authProvider.notifier).lockPinCode() : null,
+              onPopInvokedWithResult: (didPop, _) {
+                if (didPop) {
+                  unawaited(ref.read(authProvider.notifier).lockPinCode());
+                  LibraryPluginHooks.emit(LibraryEvents.lockedFolderLocked, () => const {'reason': 'closed'});
+                }
+              },
               child: Timeline(
+                page: LibraryPages.lockedFolder,
                 appBar: MesmerizingSliverAppBar(title: context.t.locked_folder),
                 bottomSheet: const LockedFolderBottomSheet(),
               ),

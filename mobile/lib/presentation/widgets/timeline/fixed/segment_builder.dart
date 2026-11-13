@@ -1,4 +1,5 @@
 import 'package:immich_mobile/domain/models/timeline.model.dart';
+import 'package:immich_mobile/domain/models/timeline_plugin.model.dart';
 import 'package:immich_mobile/presentation/widgets/timeline/fixed/segment.model.dart';
 import 'package:immich_mobile/presentation/widgets/timeline/segment.model.dart';
 import 'package:immich_mobile/presentation/widgets/timeline/segment_builder.dart';
@@ -33,12 +34,16 @@ class FixedSegmentBuilder extends SegmentBuilder {
       firstIndex += segmentCount;
       final segmentLastIndex = firstIndex - 1;
 
-      final timelineHeader = switch (groupBy) {
-        GroupAssetsBy.month => HeaderType.month,
-        GroupAssetsBy.day || GroupAssetsBy.auto =>
-          bucket is TimeBucket && bucket.date.month != previousDate?.month ? HeaderType.monthAndDay : HeaderType.day,
-        GroupAssetsBy.none => HeaderType.none,
-      };
+      final timelineHeader = bucket is PluginGroupBucket
+          ? _pluginGroupHeader(bucket)
+          : switch (groupBy) {
+              GroupAssetsBy.month => HeaderType.month,
+              GroupAssetsBy.day || GroupAssetsBy.auto =>
+                bucket is TimeBucket && bucket.date.month != previousDate?.month
+                    ? HeaderType.monthAndDay
+                    : HeaderType.day,
+              GroupAssetsBy.none => HeaderType.none,
+            };
       final headerExtent = SegmentBuilder.headerExtent(timelineHeader);
 
       final segmentStartOffset = startOffset;
@@ -67,5 +72,16 @@ class FixedSegmentBuilder extends SegmentBuilder {
       }
     }
     return segments;
+  }
+
+  /// Header height of a group a `timeline.query` plugin made: none without a title, two lines with a subtitle.
+  static HeaderType _pluginGroupHeader(PluginGroupBucket group) {
+    if (!group.hasHeader) {
+      return HeaderType.none;
+    }
+    if (group.title != null && group.subtitle != null) {
+      return HeaderType.monthAndDay;
+    }
+    return group.large ? HeaderType.month : HeaderType.day;
   }
 }

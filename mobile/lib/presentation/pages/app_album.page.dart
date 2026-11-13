@@ -2,9 +2,13 @@ import 'package:auto_route/auto_route.dart';
 import 'package:flutter/material.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:immich_mobile/domain/models/timeline.model.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/library/library_hooks.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/library/library_ids.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/library/library_json.dart';
 import 'package:immich_mobile/presentation/plugins/plugin_ui.dart';
 import 'package:immich_mobile/presentation/widgets/bottom_sheet/device_library_bottom_sheet.widget.dart';
 import 'package:immich_mobile/presentation/widgets/gallery_view/gallery_view_button.widget.dart';
+import 'package:immich_mobile/presentation/widgets/library/library_plugins.widget.dart';
 import 'package:immich_mobile/presentation/widgets/timeline/timeline.widget.dart';
 import 'package:immich_mobile/providers/app_album.provider.dart';
 import 'package:immich_mobile/providers/gallery_view.provider.dart';
@@ -17,6 +21,8 @@ class AppAlbumPage extends ConsumerWidget {
   final String albumId;
 
   const AppAlbumPage({super.key, required this.albumId});
+
+  static const _page = LibraryPages.appAlbum;
 
   Future<void> _rename(BuildContext context, WidgetRef ref, String current) async {
     final controller = TextEditingController(text: current);
@@ -65,6 +71,9 @@ class AppAlbumPage extends ConsumerWidget {
     if (album == null) {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
+    Map<String, dynamic> albumArgs() => {'album': LibraryJson.appAlbum(album)};
+    void menuAction(String id, Future<void> Function() original) =>
+        libraryTap(context, _page, id, original, args: albumArgs);
 
     return ProviderScope(
       key: ValueKey((Object.hashAll(album.assetIds), view, Object.hashAllUnordered(hiddenIds))),
@@ -78,20 +87,28 @@ class AppAlbumPage extends ConsumerWidget {
         }),
       ],
       child: Timeline(
+        page: _page,
         appBar: MesmerizingSliverAppBar(
           title: album.name,
           actions: [
+            // Legacy `contributes.buttons` slot, kept for existing plugins
             const PluginSlotButtons(slot: 'album.appBar', color: Colors.white),
-            GalleryViewButton(scope: album.id, color: Colors.white),
-            PopupMenuButton<String>(
-              iconColor: Colors.white,
-              onSelected: (value) =>
-                  value == 'rename' ? _rename(context, ref, album.name) : _delete(context, ref, album.name),
-              itemBuilder: (_) => const [
-                PopupMenuItem(value: 'rename', child: Text('Rename')),
-                PopupMenuItem(value: 'delete', child: Text('Delete album')),
-              ],
-            ),
+            ...LibraryPluginHooks.arrange(LibrarySlots.appBarActions(_page), [
+              (id: 'galleryView', item: GalleryViewButton(scope: album.id, color: Colors.white)),
+              (
+                id: 'menu',
+                item: PopupMenuButton<String>(
+                  iconColor: Colors.white,
+                  onSelected: (value) => value == 'rename'
+                      ? menuAction('rename', () => _rename(context, ref, album.name))
+                      : menuAction('delete', () => _delete(context, ref, album.name)),
+                  itemBuilder: (_) => LibraryPluginHooks.arrange(LibrarySlots.appBarMenu(_page), const [
+                    (id: 'rename', item: PopupMenuItem(value: 'rename', child: Text('Rename'))),
+                    (id: 'delete', item: PopupMenuItem(value: 'delete', child: Text('Delete album'))),
+                  ]),
+                ),
+              ),
+            ]),
           ],
         ),
         groupBy: GroupAssetsBy.none,

@@ -1,6 +1,5 @@
 import 'dart:convert';
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:flutter/painting.dart';
 import 'package:flutter/services.dart';
@@ -25,8 +24,9 @@ class DeviceEditRepository {
   static const _channel = MethodChannel('immich/device_media');
 
   final CensorEffectBuilder? censorEffects;
+  final PrivateFilesRepository? privateFiles;
 
-  const DeviceEditRepository({this.censorEffects});
+  const DeviceEditRepository({this.censorEffects, this.privateFiles});
 
   Future<Directory> _editsDir() async {
     final directory = Directory(p.join((await getApplicationDocumentsDirectory()).path, 'edits'));
@@ -58,8 +58,13 @@ class DeviceEditRepository {
   Future<File> _backupFile(String localId, String name) async =>
       File(p.join((await _editsDir()).path, 'originals', '$localId${p.extension(name).toLowerCase()}'));
 
-  Future<File?> _backupIfExists(String localId) async {
-    final directory = Directory(p.join((await _editsDir()).path, 'originals'));
+  Future<File?> _backupIfExists(String localId) => _fileIn('originals', _backupKey(localId));
+
+  /// The base image of an asset whose file was replaced by a baked editor result (see [replaceBase]).
+  Future<File?> _baseIfExists(String localId) => _fileIn('bases', _backupKey(localId));
+
+  Future<File?> _fileIn(String folder, String localId) async {
+    final directory = Directory(p.join((await _editsDir()).path, folder));
     if (!directory.existsSync()) {
       return null;
     }
@@ -70,6 +75,18 @@ class DeviceEditRepository {
     }
     return null;
   }
+
+  /// The image non-destructive edits apply to: the baked base if the asset was replaced from the editor, else the
+  /// original backup, else the current file.
+  Future<Uint8List?> readEditBase(String localId) async {
+    final base = await _baseIfExists(localId);
+    if (base != null) {
+      return base.readAsBytes();
+    }
+    return readOriginal(localId);
+  }
+
+  Future<bool> hasBase(String localId) async => await _baseIfExists(localId) != null;
 
   Future<Uint8List?> readOriginal(String localId) async {
     final backup = await _backupIfExists(_backupKey(localId));
@@ -100,7 +117,7 @@ class DeviceEditRepository {
     }
 
     if (!supportsInPlace(asset)) {
-      final original = await readOriginal(asset.id);
+      final original = await readEditBase(asset.id);
       if (original == null) {
         throw StateError('Original file not found');
       }
@@ -109,8 +126,9 @@ class DeviceEditRepository {
     }
 
     final backup = await _ensureBackup(asset);
+    final base = await _baseIfExists(asset.id) ?? backup;
     final rendered = await renderAssetEdits(
-      await backup.readAsBytes(),
+      await base.readAsBytes(),
       edits,
       format: _inPlaceFormats[p.extension(asset.name).toLowerCase()]!,
       censorEffects: censorEffects,
@@ -151,19 +169,32 @@ class DeviceEditRepository {
     return entity?.originFile;
   }
 
-  String _backupKey(String localId) =>
-      isPrivateAssetId(localId) ? 'private_${p.basename(privateFilePathOf(localId)).hashCode.toUnsigned(32)}' : localId;
+  String _backupKey(String localId) => isPrivateAssetId(localId)
+      ? 'private_${p.basename(privateFilePathOf(localId)).replaceAll(RegExp(r'[^A-Za-z0-9._-]'), '_')}'
+      : localId;
 
   Future<bool> hasOriginal(String localId) async => await _backupIfExists(_backupKey(localId)) != null;
 
   Future<DeviceEditCopy> saveEditsAsCopy(LocalAsset asset, List<AssetEdit> edits) async {
-    final original = await readOriginal(asset.id);
+    final original = await readEditBase(asset.id);
     if (original == null) {
       throw StateError('Original file not found');
     }
     final extension = p.extension(asset.name).toLowerCase();
     final format = _inPlaceFormats[extension] ?? RenderFormat.jpeg;
     final rendered = await renderAssetEdits(original, edits, format: format, censorEffects: censorEffects);
+    return saveBytesAsCopy(asset, rendered.bytes, format: format, width: rendered.width, height: rendered.height);
+  }
+
+  Future<DeviceEditCopy> saveBytesAsCopy(
+    LocalAsset asset,
+    Uint8List bytes, {
+    required RenderFormat format,
+    required int width,
+    required int height,
+  }) async {
+    final extension = p.extension(asset.name).toLowerCase();
+    final rendered = (bytes: bytes, width: width, height: height);
     final outExtension = format == RenderFormat.png ? '.png' : (extension == '.jpeg' ? '.jpeg' : '.jpg');
     final mime = format == RenderFormat.png ? 'image/png' : 'image/jpeg';
     final baseName = '${p.basenameWithoutExtension(asset.name)}_edited';
@@ -183,6 +214,14 @@ class DeviceEditRepository {
         await _copyExif(exifSource, target, rendered.width, rendered.height);
       }
       target.setLastModifiedSync(source.lastModifiedSync());
+      await privateFiles?.addCopy(
+        asset.id,
+        file: target.path,
+        name: name,
+        mime: mime,
+        width: rendered.width,
+        height: rendered.height,
+      );
       return (id: target.path, name: name, mime: mime, width: rendered.width, height: rendered.height);
     }
 
@@ -225,8 +264,42 @@ class DeviceEditRepository {
     state.remove(asset.id);
     await _writeState(state);
     await backup.delete();
+    await (await _baseIfExists(asset.id))?.delete();
     return (outcome: DeviceEditOutcome.restored, createdId: null);
   }
+
+  /// Format a baked image must be in to replace [asset] in place, or null when the asset cannot be replaced.
+  RenderFormat? replaceFormat(LocalAsset asset) =>
+      supportsInPlace(asset) ? _inPlaceFormats[p.extension(asset.name).toLowerCase()] : null;
+
+  /// Replaces the asset's file with a baked editor result ([file], encoded as [replaceFormat]) and makes it the base
+  /// for later non-destructive edits. The original stays backed up; [removeEdits] restores it.
+  Future<DeviceEditResult> replaceBase(LocalAsset asset, File file, {int? width, int? height}) async {
+    if (!supportsInPlace(asset)) {
+      throw StateError('${asset.name} cannot be replaced in place');
+    }
+    final backup = await _ensureBackup(asset);
+    final base = File(
+      p.join((await _editsDir()).path, 'bases', '${_backupKey(asset.id)}${p.extension(asset.name).toLowerCase()}'),
+    );
+    await base.parent.create(recursive: true);
+    final previous = await _baseIfExists(asset.id);
+    if (previous != null && previous.path != base.path) {
+      await previous.delete();
+    }
+    await file.copy(base.path);
+    await _overwrite(asset.id, await base.readAsBytes(), exifSource: backup, width: width, height: height);
+
+    final state = await _readState();
+    if (state.remove(asset.id) != null) {
+      await _writeState(state);
+    }
+    return (outcome: DeviceEditOutcome.editedInPlace, createdId: null);
+  }
+
+  /// Saves [bytes] (PNG or JPEG, [extension] with the dot) as a new photo next to the device's other edited copies.
+  Future<String?> saveCopy(BaseAsset source, Uint8List bytes, {String extension = '.jpg'}) =>
+      _saveCopy(source, bytes, extension: extension);
 
   Future<File> _ensureBackup(LocalAsset asset) async {
     final existing = await _backupIfExists(_backupKey(asset.id));
@@ -280,15 +353,16 @@ class DeviceEditRepository {
       ..clearLiveImages();
   }
 
-  Future<String?> _saveCopy(LocalAsset asset, Uint8List jpeg) async {
+  Future<String?> _saveCopy(BaseAsset asset, Uint8List bytes, {String extension = '.jpg'}) async {
+    final local = asset is LocalAsset ? asset : null;
     final baseName = p.basenameWithoutExtension(asset.name);
     final saved = await PhotoManager.editor.saveImage(
-      jpeg,
-      filename: '${baseName}_edited.jpg',
+      bytes,
+      filename: '${baseName}_edited$extension',
       title: '${baseName}_edited',
       relativePath: Platform.isAndroid ? 'Pictures/Gallery Edits' : null,
-      latitude: asset.latitude,
-      longitude: asset.longitude,
+      latitude: local?.latitude,
+      longitude: local?.longitude,
       creationDate: asset.createdAt,
     );
     return saved.id;

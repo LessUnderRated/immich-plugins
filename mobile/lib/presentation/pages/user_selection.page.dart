@@ -9,6 +9,10 @@ import 'package:immich_mobile/domain/models/user.model.dart';
 import 'package:immich_mobile/extensions/asyncvalue_extensions.dart';
 import 'package:immich_mobile/extensions/build_context_extensions.dart';
 import 'package:immich_mobile/generated/translations.g.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/library/library_hooks.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/library/library_ids.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/library/library_json.dart';
+import 'package:immich_mobile/presentation/widgets/library/library_plugins.widget.dart';
 import 'package:immich_mobile/providers/infrastructure/db.provider.dart';
 import 'package:immich_mobile/providers/infrastructure/remote_album.provider.dart';
 import 'package:immich_mobile/providers/user.provider.dart';
@@ -55,8 +59,20 @@ class UserSelectionPage extends HookConsumerWidget {
     final sharedUsers = ref.watch(remoteAlbumSharedUsersProvider(album.id));
     final sharedUsersList = useState<Set<UserDto>>({});
 
+    // `before` may change `userIds` or cancel
     void addNewUsersHandler() {
-      unawaited(context.maybePop(sharedUsersList.value.map((e) => e.id).toList()));
+      final userIds = sharedUsersList.value.map((e) => e.id).toList();
+      unawaited(
+        runLibraryAction<void>(
+          context,
+          LibraryPages.userSelection,
+          'add',
+          () => context.maybePop(userIds),
+          args: () => {'album': LibraryJson.remoteAlbum(album), 'userIds': userIds},
+          withArgs: (args) =>
+              context.maybePop([for (final id in args['userIds'] is List ? args['userIds'] as List : userIds) '$id']),
+        ),
+      );
     }
 
     Widget buildTileIcon(UserDto user) {
@@ -67,7 +83,7 @@ class UserSelectionPage extends HookConsumerWidget {
       }
     }
 
-    ListView buildUserList(List<UserDto> users) {
+    ListView buildUsers(List<UserDto> users) {
       final List<Widget> usersChip = [];
 
       for (var user in sharedUsersList.value) {
@@ -117,6 +133,15 @@ class UserSelectionPage extends HookConsumerWidget {
       );
     }
 
+    Widget buildUserList(List<UserDto> allUsers) => LibraryQueryBuilder<UserDto>(
+      hook: LibraryHooks.userSelectionQuery,
+      items: allUsers,
+      id: (user) => user.id,
+      toJson: LibraryJson.user,
+      args: () => {'album': LibraryJson.remoteAlbum(album)},
+      builder: (context, users) => buildUsers(users),
+    );
+
     return Scaffold(
       appBar: AppBar(
         title: Text(context.t.invite_to_album),
@@ -128,12 +153,15 @@ class UserSelectionPage extends HookConsumerWidget {
             unawaited(context.maybePop(null));
           },
         ),
-        actions: [
-          TextButton(
-            onPressed: sharedUsersList.value.isEmpty ? null : () => addNewUsersHandler(),
-            child: Text(context.t.add, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
+        actions: LibraryPluginHooks.arrange(LibrarySlots.appBarActions(LibraryPages.userSelection), [
+          (
+            id: 'add',
+            item: TextButton(
+              onPressed: sharedUsersList.value.isEmpty ? null : () => addNewUsersHandler(),
+              child: Text(context.t.add, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
+            ),
           ),
-        ],
+        ]),
       ),
       body: suggestedShareUsers.widgetWhen(
         onData: (users) {

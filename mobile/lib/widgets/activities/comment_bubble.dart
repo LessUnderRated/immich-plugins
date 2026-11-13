@@ -5,9 +5,12 @@ import 'package:immich_mobile/data/store.dart';
 import 'package:immich_mobile/domain/services/timeline.service.dart';
 import 'package:immich_mobile/extensions/build_context_extensions.dart';
 import 'package:immich_mobile/extensions/datetime_extensions.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/library/library_ids.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/library/library_json.dart';
 import 'package:immich_mobile/models/activities/activity.model.dart';
 import 'package:immich_mobile/presentation/widgets/asset_viewer/asset_viewer.page.dart';
 import 'package:immich_mobile/presentation/widgets/images/remote_image_provider.dart';
+import 'package:immich_mobile/presentation/widgets/library/library_plugins.widget.dart';
 import 'package:immich_mobile/providers/infrastructure/asset.provider.dart';
 import 'package:immich_mobile/providers/infrastructure/current_album.provider.dart';
 import 'package:immich_mobile/providers/infrastructure/timeline.provider.dart';
@@ -32,7 +35,9 @@ class CommentBubble extends ConsumerWidget {
     final isLike = activity.type == ActivityType.like;
     final bgColor = isOwn ? context.colorScheme.primaryContainer : context.colorScheme.surfaceContainer;
 
-    Future<void> openAssetViewer() async {
+    Map<String, dynamic> activityArgs() => {'activity': LibraryJson.activity(activity)};
+
+    Future<void> openAsset() async {
       final asset = await ref.read(assetServiceProvider).getRemoteAsset(activity.assetId!);
       if (asset == null || !context.mounted) {
         return;
@@ -48,13 +53,16 @@ class CommentBubble extends ConsumerWidget {
       );
     }
 
-    Future<void> delete() async {
+    Future<void> openAssetViewer() =>
+        runLibraryAction<void>(context, LibraryPages.activities, 'openAsset', openAsset, args: activityArgs);
+
+    Future<void> delete() => runLibraryAction<void>(context, LibraryPages.activities, 'delete', () async {
       try {
         await ref.read(Store.activity).remove(activity);
       } catch (e) {
         // TODO(rewrite): Actually handle this
       }
-    }
+    }, args: activityArgs);
 
     // avatar (hidden for own messages)
     Widget avatar = const SizedBox.shrink();

@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:immich_mobile/domain/models/asset/base_asset.model.dart';
 import 'package:immich_mobile/extensions/build_context_extensions.dart';
 import 'package:immich_mobile/extensions/theme_extensions.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/viewer/image_pipeline.dart';
 import 'package:immich_mobile/presentation/widgets/images/image_provider.dart';
 import 'package:immich_mobile/presentation/widgets/images/remote_image_provider.dart';
 import 'package:immich_mobile/presentation/widgets/images/thumb_hash_provider.dart';
@@ -73,7 +74,15 @@ class _ThumbnailState extends State<Thumbnail> with SingleTickerProviderStateMix
     _fadeController = AnimationController(duration: const Duration(milliseconds: 100), vsync: this);
     _fadeAnimation = CurvedAnimation(parent: _fadeController, curve: Curves.easeOut);
     _fadeController.addStatusListener(_onAnimationStatusChanged);
+    ImagePipeline.generation.addListener(_onPipelineChanged);
     _loadImage();
+  }
+
+  /// Plugins changed the image pipeline: load the image again (the caches were cleared).
+  void _onPipelineChanged() {
+    if (mounted) {
+      _loadFromImageProvider();
+    }
   }
 
   void _onAnimationStatusChanged(AnimationStatus status) {
@@ -243,6 +252,7 @@ class _ThumbnailState extends State<Thumbnail> with SingleTickerProviderStateMix
 
   @override
   void dispose() {
+    ImagePipeline.generation.removeListener(_onPipelineChanged);
     _fadeController.removeStatusListener(_onAnimationStatusChanged);
     _fadeController.dispose();
     _stopListeningToStream();

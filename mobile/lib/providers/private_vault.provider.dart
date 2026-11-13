@@ -1,4 +1,6 @@
 import 'package:hooks_riverpod/hooks_riverpod.dart';
+import 'package:immich_mobile/domain/utils/plugin_data_ids.dart';
+import 'package:immich_mobile/domain/utils/plugin_hooks.dart';
 import 'package:immich_mobile/infrastructure/repositories/private_album.repository.dart';
 import 'package:immich_mobile/infrastructure/repositories/private_files.repository.dart';
 import 'package:immich_mobile/infrastructure/repositories/private_vault.repository.dart';
@@ -33,9 +35,16 @@ final privateFilesRepositoryProvider = Provider<PrivateFilesRepository>((ref) {
 final _privateFilesChangesProvider = StreamProvider<void>((ref) => ref.watch(privateFilesRepositoryProvider).changes);
 
 /// Photos hidden from every app (renamed into the .nomedia private folder).
-final privateFilesProvider = FutureProvider<List<PrivateFile>>((ref) {
+/// Plugins can filter or sort the list through `private.query` (`mode: "files"`); items are identified by `file`.
+final privateFilesProvider = FutureProvider<List<PrivateFile>>((ref) async {
   ref.watch(_privateFilesChangesProvider);
-  return ref.watch(privateFilesRepositoryProvider).list();
+  final files = await ref.watch(privateFilesRepositoryProvider).list();
+  return PluginHooks.filterList<PrivateFile>(
+    DataHooks.privateQuery,
+    () => {'mode': 'files'},
+    files,
+    () => PluginListCodec<PrivateFile>(id: (file) => file.file, toJson: (file) => {'id': file.file, ...file.toJson()}),
+  );
 });
 
 /// Whether the app has all-files access, which full hiding needs.

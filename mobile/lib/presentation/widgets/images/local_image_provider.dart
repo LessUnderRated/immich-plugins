@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 import 'package:immich_mobile/domain/models/asset/base_asset.model.dart';
 import 'package:immich_mobile/infrastructure/loaders/image_request.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/viewer/image_pipeline.dart';
 import 'package:immich_mobile/infrastructure/repositories/settings.repository.dart';
 import 'package:immich_mobile/presentation/widgets/images/animated_image_stream_completer.dart';
 import 'package:immich_mobile/presentation/widgets/images/image_provider.dart';
@@ -48,8 +49,11 @@ class LocalThumbProvider extends ImageProvider<LocalThumbProvider> {
 
   Stream<ImageInfo> _codec(ImageLoader loader, LocalThumbProvider key, ImageDecoderCallback decode) {
     final request = loader.request = LocalImageRequest(localId: key.id, size: key.size, assetType: key.assetType);
-    return loader.loadRequest(request, decode, isFinal: true);
+    return loader.loadRequest(request, decode, isFinal: true, pipeline: key.pipeline(ImageStage.thumbnail));
   }
+
+  ImagePipelineTarget pipeline(ImageStage stage) =>
+      ImagePipelineTarget(stage, ImageSubject(localId: id, checksum: checksum, type: assetType));
 
   @override
   bool operator ==(Object other) {
@@ -109,6 +113,12 @@ class LocalFullImageProvider extends ImageProvider<LocalFullImageProvider> {
     return SynchronousFuture(this);
   }
 
+  ImagePipelineTarget _pipeline(ImageStage stage) =>
+      ImagePipelineTarget(stage, ImageSubject(localId: id, checksum: checksum, type: assetType));
+
+  static ImageStage get _finalStage =>
+      SettingsRepository.instance.appConfig.image.loadOriginal ? ImageStage.full : ImageStage.preview;
+
   @override
   ImageStreamCompleter loadImage(LocalFullImageProvider key, ImageDecoderCallback decode) {
     final loader = ImageLoader(key);
@@ -116,8 +126,9 @@ class LocalFullImageProvider extends ImageProvider<LocalFullImageProvider> {
       return AnimatedImageStreamCompleter(
         stream: _animatedCodec(loader, key, decode),
         scale: 1.0,
-        initialImage: loader.getInitialImage(
-          LocalThumbProvider(id: key.id, assetType: key.assetType, checksum: key.checksum),
+        initialImage: ImagePipeline.placeholder(
+          loader.getInitialImage(LocalThumbProvider(id: key.id, assetType: key.assetType, checksum: key.checksum)),
+          ImageStage.full,
         ),
         informationCollector: () => <DiagnosticsNode>[
           DiagnosticsProperty<ImageProvider>('Image provider', this),
@@ -131,8 +142,9 @@ class LocalFullImageProvider extends ImageProvider<LocalFullImageProvider> {
 
     return OneFramePlaceholderImageStreamCompleter(
       _codec(loader, key, decode),
-      initialImage: loader.getInitialImage(
-        LocalThumbProvider(id: key.id, assetType: key.assetType, checksum: key.checksum),
+      initialImage: ImagePipeline.placeholder(
+        loader.getInitialImage(LocalThumbProvider(id: key.id, assetType: key.assetType, checksum: key.checksum)),
+        _finalStage,
       ),
       informationCollector: () => <DiagnosticsNode>[
         DiagnosticsProperty<ImageProvider>('Image provider', this),
@@ -152,8 +164,15 @@ class LocalFullImageProvider extends ImageProvider<LocalFullImageProvider> {
     }
 
     final loadOriginal = SettingsRepository.instance.appConfig.image.loadOriginal;
+    final finalStage = loadOriginal ? ImageStage.full : ImageStage.preview;
     final previewRequest = loader.request = _previewRequest(key, isFinal: !loadOriginal);
-    yield* loader.loadRequest(previewRequest, decode, isFinal: !loadOriginal);
+    yield* loader.loadRequest(
+      previewRequest,
+      decode,
+      isFinal: !loadOriginal,
+      pipeline: key._pipeline(ImageStage.preview),
+      finalStage: finalStage,
+    );
 
     if (!loadOriginal) {
       return;
@@ -164,7 +183,7 @@ class LocalFullImageProvider extends ImageProvider<LocalFullImageProvider> {
     }
 
     final originalRequest = loader.request = _originalRequest(key);
-    yield* loader.loadRequest(originalRequest, decode, isFinal: true);
+    yield* loader.loadRequest(originalRequest, decode, isFinal: true, pipeline: key._pipeline(ImageStage.full));
   }
 
   Stream<Object> _animatedCodec(ImageLoader loader, LocalFullImageProvider key, ImageDecoderCallback decode) async* {
@@ -175,7 +194,13 @@ class LocalFullImageProvider extends ImageProvider<LocalFullImageProvider> {
     }
 
     final previewRequest = loader.request = _previewRequest(key, isFinal: false);
-    yield* loader.loadRequest(previewRequest, decode, isFinal: false);
+    yield* loader.loadRequest(
+      previewRequest,
+      decode,
+      isFinal: false,
+      pipeline: key._pipeline(ImageStage.preview),
+      finalStage: ImageStage.full,
+    );
 
     if (loader.isCancelled) {
       return;
@@ -183,7 +208,12 @@ class LocalFullImageProvider extends ImageProvider<LocalFullImageProvider> {
 
     // always try original for animated, since previews don't support animation
     final originalRequest = loader.request = _originalRequest(key);
-    final codec = await loader.loadCodecRequest(originalRequest, isFinal: true);
+    final codec = await loader.loadCodecRequest(
+      originalRequest,
+      isFinal: true,
+      pipeline: key._pipeline(ImageStage.full),
+      reload: () => _originalRequest(key),
+    );
     if (codec == null) {
       if (loader.isCancelled) {
         return;

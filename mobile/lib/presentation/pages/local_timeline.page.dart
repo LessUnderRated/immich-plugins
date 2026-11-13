@@ -3,9 +3,11 @@ import 'package:flutter/material.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:immich_mobile/domain/models/album/local_album.model.dart';
 import 'package:immich_mobile/domain/models/timeline.model.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/timeline/timeline_plugin_ids.dart';
 import 'package:immich_mobile/presentation/plugins/plugin_ui.dart';
 import 'package:immich_mobile/presentation/widgets/bottom_sheet/device_library_bottom_sheet.widget.dart';
 import 'package:immich_mobile/presentation/widgets/gallery_view/gallery_view_button.widget.dart';
+import 'package:immich_mobile/presentation/widgets/timeline/plugins/timeline_plugin_bridge.dart';
 import 'package:immich_mobile/presentation/widgets/timeline/timeline.widget.dart';
 import 'package:immich_mobile/providers/gallery_view.provider.dart';
 import 'package:immich_mobile/providers/infrastructure/timeline.provider.dart';
@@ -34,11 +36,16 @@ class LocalTimelinePage extends ConsumerWidget {
         }),
       ],
       child: Timeline(
+        page: TimelinePages.localTimeline,
         appBar: MesmerizingSliverAppBar(
           title: album.name,
           actions: [
+            // Legacy `contributes.buttons` with slot `album.appBar`
             const PluginSlotButtons(slot: 'album.appBar', color: Colors.white),
-            GalleryViewButton(scope: album.id, color: Colors.white),
+            BuiltinSlotItem(
+              id: TimelineItemIds.galleryView,
+              child: GalleryViewButton(scope: album.id, color: Colors.white),
+            ),
           ],
         ),
         groupBy: GroupAssetsBy.none,

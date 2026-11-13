@@ -7,6 +7,7 @@ import 'package:immich_mobile/infrastructure/repositories/app_album.repository.d
 import 'package:immich_mobile/infrastructure/repositories/device_album.repository.dart';
 import 'package:immich_mobile/infrastructure/repositories/private_files.repository.dart';
 import 'package:immich_mobile/presentation/actions/action.dart';
+import 'package:immich_mobile/presentation/actions/action_ids.dart';
 import 'package:immich_mobile/providers/app_album.provider.dart';
 import 'package:immich_mobile/providers/asset_viewer/asset_viewer.provider.dart';
 import 'package:immich_mobile/providers/background_sync.provider.dart';
@@ -129,6 +130,12 @@ class AddToAppAlbumAction extends AssetActionBuilder {
   const AddToAppAlbumAction({required super.source, this.currentAlbumId});
 
   @override
+  String get id => ActionIds.addToAppAlbum;
+
+  @override
+  Map<String, dynamic> get hookArgs => {'currentAlbumId': currentAlbumId};
+
+  @override
   ActionItem? create(BuildContext context, WidgetRef ref) {
     final assets = ref.watch(_localAssetsProvider(source));
     if (assets == null) {
@@ -157,6 +164,12 @@ class RemoveFromAppAlbumAction extends AssetActionBuilder {
   final String albumId;
 
   const RemoveFromAppAlbumAction({required super.source, required this.albumId});
+
+  @override
+  String get id => ActionIds.removeFromAppAlbum;
+
+  @override
+  Map<String, dynamic> get hookArgs => {'albumId': albumId};
 
   @override
   ActionItem? create(BuildContext context, WidgetRef ref) {
@@ -205,6 +218,9 @@ class DeviceFavoriteAction extends AssetActionBuilder {
       },
     );
   }
+
+  @override
+  String get id => ActionIds.deviceFavorite;
 
   @override
   ActionItem? create(BuildContext context, WidgetRef ref) {

@@ -74,7 +74,12 @@ class _ScopedMapTimeline extends StatelessWidget {
         children: [
           _MapAssetCount(),
           Expanded(
-            child: Timeline(appBar: null, bottomSheet: GeneralBottomSheet(minChildSize: 0.23), withScrubber: false),
+            child: Timeline(
+              page: 'map.sheet',
+              appBar: null,
+              bottomSheet: GeneralBottomSheet(minChildSize: 0.23),
+              withScrubber: false,
+            ),
           ),
         ],
       ),

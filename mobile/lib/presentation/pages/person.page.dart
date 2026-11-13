@@ -5,6 +5,10 @@ import 'package:flutter/material.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:immich_mobile/domain/models/person.model.dart';
 import 'package:immich_mobile/extensions/build_context_extensions.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/library/library_hooks.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/library/library_ids.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/library/library_json.dart';
+import 'package:immich_mobile/presentation/widgets/library/library_plugins.widget.dart';
 import 'package:immich_mobile/presentation/widgets/people/person_option_sheet.widget.dart';
 import 'package:immich_mobile/presentation/widgets/timeline/timeline.widget.dart';
 import 'package:immich_mobile/providers/infrastructure/timeline.provider.dart';
@@ -23,15 +27,28 @@ class PersonPage extends ConsumerStatefulWidget {
 }
 
 class _PersonPageState extends ConsumerState<PersonPage> {
+  static const _page = LibraryPages.person;
+
   late Person _person;
 
   @override
   void initState() {
     super.initState();
     _person = widget.person;
+    LibraryPluginHooks.emit(LibraryEvents.personOpened, () => {'person': LibraryJson.person(_person)});
   }
 
+  Map<String, dynamic> _personArgs() => {'person': LibraryJson.person(_person)};
+
   Future<void> handleEditName(BuildContext context) async {
+    await runLibraryAction<void>(context, _page, 'editName', () => _editName(context), args: _personArgs);
+  }
+
+  Future<void> handleEditBirthday(BuildContext context) async {
+    await runLibraryAction<void>(context, _page, 'editBirthday', () => _editBirthday(context), args: _personArgs);
+  }
+
+  Future<void> _editName(BuildContext context) async {
     final newName = await showNameEditModal(context, _person);
 
     if (newName != null && newName.isNotEmpty) {
@@ -41,7 +58,7 @@ class _PersonPageState extends ConsumerState<PersonPage> {
     }
   }
 
-  Future<void> handleEditBirthday(BuildContext context) async {
+  Future<void> _editBirthday(BuildContext context) async {
     final birthday = await showBirthdayEditModal(context, _person);
 
     if (birthday != null) {
@@ -88,11 +105,12 @@ class _PersonPageState extends ConsumerState<PersonPage> {
         }),
       ],
       child: Timeline(
+        page: _page,
         appBar: PersonSliverAppBar(
           person: _person,
           onNameTap: () => handleEditName(context),
           onBirthdayTap: () => handleEditBirthday(context),
-          onShowOptions: () => showOptionSheet(context),
+          onShowOptions: () => libraryTap(context, _page, 'options', () => showOptionSheet(context), args: _personArgs),
         ),
       ),
     );

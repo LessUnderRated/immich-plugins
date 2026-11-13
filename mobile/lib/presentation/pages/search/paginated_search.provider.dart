@@ -3,6 +3,9 @@ import 'dart:async';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:immich_mobile/domain/models/asset/base_asset.model.dart';
 import 'package:immich_mobile/domain/services/search.service.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/library/library_hooks.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/library/library_ids.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/library/library_json.dart';
 import 'package:immich_mobile/infrastructure/repositories/remote_asset.repository.dart';
 import 'package:immich_mobile/models/search/search_filter.model.dart';
 import 'package:immich_mobile/providers/infrastructure/db.provider.dart';
@@ -40,15 +43,20 @@ final paginatedSearchProvider = StateNotifierProvider<PaginatedSearchNotifier, S
 class PaginatedSearchNotifier extends StateNotifier<SearchState> {
   final SearchService _searchService;
   final RemoteAssetRepository _remoteAssetRepository;
+
   final _assetCountController = StreamController<int>.broadcast();
 
   StreamSubscription<Set<String>>? _deletedIdsSubscription;
   List<BaseAsset> _results = const [];
   int? _nextPage = 1;
+  SearchFilter? _filter;
 
   PaginatedSearchNotifier(this._searchService, this._remoteAssetRepository) : super(const SearchState());
 
   Stream<int> get assetCount => _assetCountController.stream.distinct();
+
+  /// The filter of the results shown, or null before the first search.
+  SearchFilter? get filter => _filter;
 
   Future<void> search(SearchFilter filter) async {
     if (state.nextPage == null || state.isLoading) {
@@ -57,28 +65,46 @@ class PaginatedSearchNotifier extends StateNotifier<SearchState> {
 
     state = SearchState(assets: state.assets, nextPage: state.nextPage, isLoading: true);
 
-    final result = await _searchService.search(filter, state.nextPage!);
+    final page = state.nextPage!;
+    // The data layer runs every page through the `search.query` plugin hook
+    final result = await _searchService.search(filter, page);
 
     if (!mounted) {
       return;
     }
 
+    _filter = filter;
     if (result == null) {
       state = SearchState(assets: state.assets, nextPage: state.nextPage);
+      _emitPerformed(filter, page, 0);
       return;
     }
 
     _results = [..._results, ...result.assets];
     _nextPage = result.nextPage;
     _watchDeletedIds(filter.display.isArchive ? AssetVisibility.archive : AssetVisibility.timeline);
+    _emitPerformed(filter, page, result.assets.length);
   }
+
+  void _emitPerformed(SearchFilter filter, int page, int count) => LibraryPluginHooks.emit(
+    LibraryEvents.searchPerformed,
+    () => {
+      'filter': LibraryJson.searchFilter(filter),
+      'page': page,
+      'count': count,
+      'total': _results.length,
+      'nextPage': _nextPage,
+    },
+  );
 
   void clear() {
     unawaited(_deletedIdsSubscription?.cancel());
     _deletedIdsSubscription = null;
     _results = const [];
     _nextPage = 1;
+    _filter = null;
     _emit(const {});
+    LibraryPluginHooks.emit(LibraryEvents.searchCleared, () => const {});
   }
 
   void _watchDeletedIds(AssetVisibility visibility) {

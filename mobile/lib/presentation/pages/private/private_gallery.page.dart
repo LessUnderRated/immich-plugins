@@ -3,11 +3,16 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:auto_route/auto_route.dart';
+import 'package:drift/drift.dart' hide Column;
 import 'package:flutter/material.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
+import 'package:immich_mobile/data/db/main/table/local/asset.dart';
 import 'package:immich_mobile/domain/models/timeline.model.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/library/library_hooks.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/library/library_ids.dart';
 import 'package:immich_mobile/infrastructure/repositories/private_vault.repository.dart';
 import 'package:immich_mobile/presentation/actions/action.widget.dart';
+import 'package:immich_mobile/presentation/actions/action_ids.dart';
 import 'package:immich_mobile/presentation/actions/delete.action.dart';
 import 'package:immich_mobile/presentation/actions/device_album.actions.dart';
 import 'package:immich_mobile/presentation/actions/move_to_private.action.dart';
@@ -15,15 +20,40 @@ import 'package:immich_mobile/presentation/actions/share.action.dart';
 import 'package:immich_mobile/presentation/widgets/bottom_sheet/base_bottom_sheet.widget.dart';
 import 'package:immich_mobile/presentation/widgets/timeline/timeline.widget.dart';
 import 'package:immich_mobile/providers/infrastructure/timeline.provider.dart';
-import 'package:drift/drift.dart' hide Column;
-import 'package:immich_mobile/data/db/main/table/local/asset.dart';
 import 'package:immich_mobile/domain/models/asset/base_asset.model.dart';
 import 'package:immich_mobile/domain/services/timeline.service.dart';
+import 'package:immich_mobile/presentation/widgets/library/library_plugins.widget.dart';
+import 'package:immich_mobile/presentation/widgets/sliver_app_bar/app_menu.widget.dart';
 import 'package:immich_mobile/providers/background_sync.provider.dart';
 import 'package:immich_mobile/providers/infrastructure/db.provider.dart';
 import 'package:immich_mobile/providers/private_vault.provider.dart';
 import 'package:immich_mobile/routing/router.dart';
 import 'package:local_auth/local_auth.dart';
+
+const _page = LibraryPages.privateGallery;
+
+/// The app menu of the Private tab's app bars: settings gear and ⋮ menu (built-in id `appMenu`; its own entries are
+/// in slots `app.appBar.actions` and `app.menu`).
+LibrarySlotItem<Widget> privateAppMenuItem() => (id: 'appMenu', item: const AppBarMenuActions());
+
+/// The lock button of the Private tab's app bars (built-in id `lock`).
+LibrarySlotItem<Widget> privateLockItem(BuildContext context, VoidCallback onLock) => (
+  id: 'lock',
+  item: IconButton(
+    tooltip: 'Lock',
+    icon: const Icon(Icons.lock_outline),
+    onPressed: () => libraryTap(context, _page, 'lock', onLock),
+  ),
+);
+
+/// The "Older items" button of the Private tab's app bars (built-in id `olderItems`).
+LibrarySlotItem<Widget> privateOlderItemsItem(BuildContext context, int legacyCount) => (
+  id: 'olderItems',
+  item: TextButton(
+    onPressed: () => libraryTap(context, _page, 'olderItems', () => context.pushRoute(const PrivateLegacyRoute())),
+    child: Text('Older items ($legacyCount)'),
+  ),
+);
 
 @RoutePage()
 class PrivateGalleryPage extends ConsumerStatefulWidget {
@@ -41,7 +71,7 @@ class _PrivateGalleryPageState extends ConsumerState<PrivateGalleryPage> {
   @override
   void initState() {
     super.initState();
-    _lifecycle = AppLifecycleListener(onHide: _lock, onResume: () => ref.invalidate(privateAccessProvider));
+    _lifecycle = AppLifecycleListener(onHide: _autoLock, onResume: () => ref.invalidate(privateAccessProvider));
     WidgetsBinding.instance.addPostFrameCallback((_) => _unlock());
   }
 
@@ -51,12 +81,33 @@ class _PrivateGalleryPageState extends ConsumerState<PrivateGalleryPage> {
     super.dispose();
   }
 
-  void _lock() {
+  void _lock() => _lockWith('button');
+
+  void _autoLock() => _lockWith('hidden');
+
+  void _lockWith(String reason) {
     if (mounted) {
+      final wasUnlocked = ref.read(privateUnlockedProvider);
       ref.read(privateUnlockedProvider.notifier).state = false;
+      if (wasUnlocked) {
+        LibraryPluginHooks.emit(LibraryEvents.privateLocked, () => {'reason': reason});
+      }
     }
   }
 
+  Future<bool> _authenticate() async {
+    final auth = LocalAuthentication();
+    if (!await auth.isDeviceSupported()) {
+      setState(() => _message = 'Set a screen lock on this phone to protect the private gallery.');
+      return false;
+    }
+    return auth.authenticate(
+      localizedReason: 'Unlock your private gallery',
+      options: const AuthenticationOptions(stickyAuth: true),
+    );
+  }
+
+  // Hook `private.unlock`: `before` may refuse (cancel), `instead` may authenticate on its own (`true` unlocks)
   Future<void> _unlock() async {
     if (_authenticating || ref.read(privateUnlockedProvider)) {
       return;
@@ -66,22 +117,24 @@ class _PrivateGalleryPageState extends ConsumerState<PrivateGalleryPage> {
       _message = null;
     });
     try {
-      final auth = LocalAuthentication();
-      if (!await auth.isDeviceSupported()) {
-        setState(() => _message = 'Set a screen lock on this phone to protect the private gallery.');
-        return;
-      }
-      final ok = await auth.authenticate(
-        localizedReason: 'Unlock your private gallery',
-        options: const AuthenticationOptions(stickyAuth: true),
+      final ok = await LibraryPluginHooks.flow<bool>(
+        LibraryHooks.privateUnlock,
+        _authenticate,
+        encode: (value) => value,
+        decode: (json) => json == true,
       );
       if (ok && mounted) {
         ref.read(privateUnlockedProvider.notifier).state = true;
         ref.invalidate(privateItemsProvider);
+        LibraryPluginHooks.emit(LibraryEvents.privateUnlocked, () => const {});
       }
     } catch (error) {
       if (mounted) {
-        setState(() => _message = 'Unable to unlock: $error');
+        setState(
+          () => _message = LibraryPluginHooks.isCancelled(error)
+              ? LibraryPluginHooks.cancelMessage(error)
+              : 'Unable to unlock: $error',
+        );
       }
     } finally {
       if (mounted) {
@@ -102,8 +155,16 @@ class _PrivateGalleryPageState extends ConsumerState<PrivateGalleryPage> {
       return _PrivateTimeline(onLock: _lock);
     }
     return Scaffold(
-      appBar: AppBar(centerTitle: true, title: const Text('Private')),
-      body: _LockedView(busy: _authenticating, message: _message, onUnlock: _unlock),
+      appBar: AppBar(
+        centerTitle: true,
+        title: const Text('Private'),
+        actions: LibraryPluginHooks.arrange(LibrarySlots.appBarActions(_page), [privateAppMenuItem()]),
+      ),
+      body: _LockedView(
+        busy: _authenticating,
+        message: _message,
+        onUnlock: () => libraryTap(context, _page, 'unlock', _unlock),
+      ),
     );
   }
 }
@@ -186,24 +247,30 @@ class _PrivateFilesTimeline extends ConsumerWidget {
         }),
       ],
       child: Timeline(
+        page: _page,
         appBar: SliverAppBar(
           floating: true,
           snap: true,
           centerTitle: true,
           title: Text(favoritesOnly ? 'Private favorites' : 'Private'),
-          actions: [
-            IconButton(
-              tooltip: favoritesOnly ? 'Show all' : 'Show favorites',
-              icon: Icon(favoritesOnly ? Icons.favorite_rounded : Icons.favorite_border_rounded),
-              onPressed: () => ref.read(_privateFavoritesOnlyProvider.notifier).state = !favoritesOnly,
-            ),
-            if (legacyCount > 0)
-              TextButton(
-                onPressed: () => context.pushRoute(const PrivateLegacyRoute()),
-                child: Text('Older items ($legacyCount)'),
+          actions: LibraryPluginHooks.arrange(LibrarySlots.appBarActions(_page), [
+            (
+              id: 'favoritesFilter',
+              item: IconButton(
+                tooltip: favoritesOnly ? 'Show all' : 'Show favorites',
+                icon: Icon(favoritesOnly ? Icons.favorite_rounded : Icons.favorite_border_rounded),
+                onPressed: () => libraryTap(
+                  context,
+                  _page,
+                  'favoritesFilter',
+                  () => ref.read(_privateFavoritesOnlyProvider.notifier).state = !favoritesOnly,
+                ),
               ),
-            IconButton(tooltip: 'Lock', icon: const Icon(Icons.lock_outline), onPressed: onLock),
-          ],
+            ),
+            if (legacyCount > 0) privateOlderItemsItem(context, legacyCount),
+            privateLockItem(context, onLock),
+            privateAppMenuItem(),
+          ]),
         ),
         groupBy: GroupAssetsBy.none,
         bottomSheet: const _PrivateBottomSheet(),
@@ -231,6 +298,7 @@ class _PrivateTimeline extends ConsumerWidget {
         }),
       ],
       child: Timeline(
+        page: _page,
         topSliverWidget: const SliverToBoxAdapter(child: _FullHidingBanner()),
         topSliverWidgetHeight: 96,
         appBar: SliverAppBar(
@@ -238,14 +306,11 @@ class _PrivateTimeline extends ConsumerWidget {
           snap: true,
           centerTitle: true,
           title: const Text('Private'),
-          actions: [
-            if (legacyCount > 0)
-              TextButton(
-                onPressed: () => context.pushRoute(const PrivateLegacyRoute()),
-                child: Text('Older items ($legacyCount)'),
-              ),
-            IconButton(tooltip: 'Lock', icon: const Icon(Icons.lock_outline), onPressed: onLock),
-          ],
+          actions: LibraryPluginHooks.arrange(LibrarySlots.appBarActions(_page), [
+            if (legacyCount > 0) privateOlderItemsItem(context, legacyCount),
+            privateLockItem(context, onLock),
+            privateAppMenuItem(),
+          ]),
         ),
         groupBy: GroupAssetsBy.none,
         bottomSheet: const _PrivateBottomSheet(),
@@ -259,18 +324,19 @@ class _PrivateBottomSheet extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const BaseBottomSheet(
+    return BaseBottomSheet(
+      sheet: SelectionSheets.private,
       initialChildSize: 0.18,
       minChildSize: 0.18,
       maxChildSize: 0.18,
       shouldCloseOnMinExtent: false,
       resizeOnScroll: false,
-      actions: <ActionColumnButton>[
-        .new(action: ShareAction(source: .timeline)),
-        .new(action: DeviceFavoriteAction(source: .timeline)),
-        .new(action: MoveToPrivateAction(source: .timeline)),
-        .new(action: DeleteAction(source: .timeline)),
-      ],
+      actions: LibraryPluginHooks.arrange<ActionColumnButton>(LibrarySlots.privateGalleryTimelineActions, const [
+        (id: 'share', item: ActionColumnButton(action: ShareAction(source: .timeline))),
+        (id: 'deviceFavorite', item: ActionColumnButton(action: DeviceFavoriteAction(source: .timeline))),
+        (id: 'moveToPrivate', item: ActionColumnButton(action: MoveToPrivateAction(source: .timeline))),
+        (id: 'delete', item: ActionColumnButton(action: DeleteAction(source: .timeline))),
+      ]),
     );
   }
 }
@@ -352,9 +418,20 @@ class _PrivateGrid extends ConsumerWidget {
             crossAxisSpacing: 2,
           ),
           itemCount: items.length,
-          itemBuilder: (context, index) => _PrivateTile(
-            item: items[index],
-            onTap: () => context.pushRoute(PrivateViewerRoute(items: items, initialIndex: index)),
+          itemBuilder: (context, index) => LibraryTileDecoration(
+            key: ValueKey(items[index].id),
+            slot: LibrarySlots.privateGalleryTile,
+            slotContext: () => {'id': items[index].id, 'name': items[index].name, 'isVideo': items[index].isVideo},
+            child: _PrivateTile(
+              item: items[index],
+              onTap: () => libraryTap(
+                context,
+                LibraryPages.privateLegacy,
+                'open',
+                () => context.pushRoute(PrivateViewerRoute(items: items, initialIndex: index)),
+                args: () => {'id': items[index].id, 'name': items[index].name, 'isVideo': items[index].isVideo},
+              ),
+            ),
           ),
         );
       },
@@ -420,7 +497,12 @@ class _FullHidingBanner extends ConsumerWidget {
             'Private photos are only hidden in this app. Allow "All files access" to hide them everywhere.',
           ),
           trailing: FilledButton.tonal(
-            onPressed: () => ref.read(privateFilesRepositoryProvider).requestAccess(),
+            onPressed: () => libraryTap(
+              context,
+              _page,
+              'fullHiding',
+              () => ref.read(privateFilesRepositoryProvider).requestAccess(),
+            ),
             child: const Text('Allow'),
           ),
         ),

@@ -1,0 +1,165 @@
+import 'dart:async';
+
+import 'package:flutter/widgets.dart';
+import 'package:immich_mobile/domain/utils/plugin_hooks.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/library/library_ids.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/timeline/builtin_rules.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_kernel.dart';
+import 'package:immich_mobile/presentation/plugins/plugin_slot.dart';
+
+/// A built-in item of a library slot with its catalog id (`libraryBuiltins`).
+typedef LibrarySlotItem<T> = ({String id, T item});
+
+/// Hook, query and event plumbing of the library area.
+///
+/// Every library page runs its built-in actions, list queries and events through this class, so they reach the
+/// plugin kernel through the [PluginHooks] binding. Everything is free while no plugin uses a hook or event: actions
+/// call the original directly, queries return the input list itself (synchronously) and events build nothing.
+abstract final class LibraryPluginHooks {
+  static Map<String, dynamic> _noArgs() => const {};
+
+  /// Whether a plugin uses hook [hookId].
+  static bool has(String hookId) => PluginHooks.has(hookId);
+
+  /// Whether a plugin uses the hook of built-in action [item] on [page].
+  static bool hasAction(String page, String item) => PluginHooks.has(LibraryHooks.action(page, item));
+
+  /// Runs built-in UI action [item] of [page] through hook `action.<page>.<item>`.
+  ///
+  /// [args] describes what the action works on (album, person, ...); it is built only when a plugin uses the hook.
+  /// `before` may cancel (the returned future throws an error for which [isCancelled] is true) or change the
+  /// arguments: with [withArgs] the action then runs from the changed arguments, without it they are informational.
+  /// `instead` replaces the action, `after` sees `{args, result}`.
+  static Future<T> action<T>(
+    String page,
+    String item,
+    Future<T> Function() original, {
+    Map<String, dynamic> Function() args = _noArgs,
+    Future<T> Function(Map<String, dynamic> args)? withArgs,
+    Object? Function(T value)? encode,
+    T Function(Object? json)? decode,
+  }) => PluginHooks.run<T>(
+    LibraryHooks.action(page, item),
+    () => {'page': page, 'item': item, ...args()},
+    original,
+    withArgs: withArgs,
+    encode: encode,
+    decode: decode,
+  );
+
+  /// Runs a named UI flow (`search.apply`, `private.unlock`, ...) through hook [hookId].
+  static Future<T> flow<T>(
+    String hookId,
+    Future<T> Function() original, {
+    Map<String, dynamic> Function() args = _noArgs,
+    Future<T> Function(Map<String, dynamic> args)? withArgs,
+    Object? Function(T value)? encode,
+    T Function(Object? json)? decode,
+    String? event,
+  }) => PluginHooks.run<T>(hookId, args, original, withArgs: withArgs, encode: encode, decode: decode, event: event);
+
+  /// Lets query hook [hookId] filter, sort or extend [items] (what a page is about to show).
+  ///
+  /// Plugins get `{args..., "items": [json]}` in `after` and answer with a list of items or ids: known ids map back
+  /// to the original objects (a subset filters, another order sorts), unknown items are built with [fromJson] when
+  /// given (extending the list) and dropped otherwise. Returns [items] itself, synchronously, while no plugin uses
+  /// the hook. A plugin failure (or a `before` cancel, which queries do not support) shows [items] unchanged.
+  static FutureOr<List<T>> query<T>(
+    String hookId,
+    List<T> items, {
+    required String Function(T item) id,
+    required Map<String, dynamic> Function(T item) toJson,
+    T? Function(Map<String, dynamic> json)? fromJson,
+    Map<String, dynamic> Function() args = _noArgs,
+  }) {
+    if (!PluginHooks.has(hookId)) {
+      return items;
+    }
+    final codec = PluginListCodec<T>(id: id, toJson: toJson, fromJson: fromJson);
+    try {
+      final result = PluginHooks.filter<List<T>>(
+        hookId,
+        () => {...args(), 'count': items.length},
+        items,
+        encode: codec.encode,
+        decode: codec.decode,
+      );
+      if (result is Future<List<T>>) {
+        return result.catchError((Object _) => items);
+      }
+      return result;
+    } catch (_) {
+      return items;
+    }
+  }
+
+  /// Emits [event] to subscribed plugins; [data] is built only when a plugin listens.
+  static void emit(String event, Map<String, dynamic> Function() data) => PluginHooks.emit(event, data);
+
+  /// Whether a plugin listens to [event].
+  static bool listens(String event) => PluginHooks.listens(event);
+
+  /// Whether [error] means a plugin cancelled the action.
+  static bool isCancelled(Object error) => PluginHooks.isCancelled(error);
+
+  /// The message a plugin gave when it cancelled.
+  static String? cancelMessage(Object error) => PluginHooks.cancelMessage(error);
+
+  /// The built-in items of a slot in the order to show them.
+  ///
+  /// Phase B applies the slot's built-in rules (hide, order, rename) and places plugin items among them; until a
+  /// kernel is bound the built-in order is kept.
+  /// [items] in the order plugin rules give for [slot] (`builtins` hide / order in the manifest), built-in order
+  /// when no plugin has rules for it.
+  static List<T> arrange<T>(String slot, List<LibrarySlotItem<T>> items) {
+    final builtins = [for (final entry in items) entry.item];
+    final kernel = PluginKernel.current;
+    if (kernel == null) {
+      return builtins;
+    }
+    final rules = kernel.builtins(slot);
+    final extra = _pluginItems<T>(kernel, slot);
+    if (rules.hide.isEmpty && rules.order.isEmpty && extra.isEmpty) {
+      return builtins;
+    }
+    final ids = {for (final entry in items) identityHashCode(entry.item): entry.id};
+    return arrangeSlotItems<T>(
+      builtins,
+      (item) => ids[identityHashCode(item)],
+      rules: BuiltinItemRules(hide: rules.hide, order: rules.order),
+      extra: extra,
+    );
+  }
+
+  /// Plugin contributions of [slot] as widgets of the list's own type: buttons in `.actions` slots, menu entries in
+  /// `.menu` slots (MenuAnchor menus), tiles and sections elsewhere. Lists of non-widget items (or popup menu
+  /// entries) get none.
+  static List<SlotExtraItem<T>> _pluginItems<T>(PluginKernel kernel, String slot) {
+    if (<T>[] is! List<Widget> || !kernel.hasSlot(slot)) {
+      return const [];
+    }
+    final presentation = slot.endsWith('menu')
+        ? PluginSlotPresentation.menu
+        : slot.endsWith('actions')
+        ? PluginSlotPresentation.buttons
+        : PluginSlotPresentation.tiles;
+    final out = <SlotExtraItem<T>>[];
+    for (final item in kernel.slot(slot)) {
+      final Widget widget = switch (item.kind) {
+        PluginSlotKind.section || PluginSlotKind.panel || PluginSlotKind.view => PluginSlotContent(item: item),
+        PluginSlotKind.badge || PluginSlotKind.wrap || PluginSlotKind.replace => const SizedBox.shrink(),
+        _ => PluginSlotItemView(item: item, presentation: presentation),
+      };
+      if (widget is T && widget is! SizedBox) {
+        out.add(
+          SlotExtraItem<T>(
+            id: '$builtinRulesPluginPrefix${item.plugin}/${item.id}',
+            item: widget as T,
+            order: item.order == SlotContribution.defaultOrder ? builtinRulesLast : item.order.toDouble(),
+          ),
+        );
+      }
+    }
+    return out;
+  }
+}

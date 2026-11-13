@@ -84,6 +84,7 @@ import 'package:immich_mobile/providers/api.provider.dart';
 import 'package:immich_mobile/routing/auth_guard.dart';
 import 'package:immich_mobile/routing/duplicate_guard.dart';
 import 'package:immich_mobile/routing/locked_guard.dart';
+import 'package:immich_mobile/routing/plugin_nav_guard.dart';
 import 'package:immich_mobile/services/api.service.dart';
 import 'package:immich_mobile/services/auth.service.dart';
 import 'package:immich_mobile/services/local_auth.service.dart';
@@ -123,7 +124,7 @@ class AppRouter extends RootStackRouter {
   RouteType get defaultRouteType => const RouteType.material();
 
   @override
-  List<AutoRouteGuard> get guards => const [PluginRouteGuard()];
+  List<AutoRouteGuard> get guards => const [PluginNavGuard(), PluginRouteGuard()];
 
   @override
   late final List<AutoRoute> routes = [
@@ -179,6 +180,8 @@ class AppRouter extends RootStackRouter {
     AutoRoute(page: LockedFolderRoute.page, guards: [_authGuard, _lockedGuard, _duplicateGuard]),
     AutoRoute(page: VideoRoute.page, guards: [_authGuard, _duplicateGuard]),
     AutoRoute(page: LibraryRoute.page, guards: [_authGuard, _duplicateGuard]),
+    AutoRoute(page: SearchRoute.page, guards: [_authGuard, _duplicateGuard]),
+    AutoRoute(page: AlbumsRoute.page, guards: [_authGuard, _duplicateGuard]),
     AutoRoute(page: AssetSelectionTimelineRoute.page, guards: [_authGuard, _duplicateGuard]),
     AutoRoute(page: PartnerDetailRoute.page, guards: [_authGuard, _duplicateGuard]),
     AutoRoute(page: RecentlyTakenRoute.page, guards: [_authGuard, _duplicateGuard]),

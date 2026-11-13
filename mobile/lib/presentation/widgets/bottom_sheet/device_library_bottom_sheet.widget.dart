@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:immich_mobile/domain/models/album/local_album.model.dart';
 import 'package:immich_mobile/presentation/actions/action.widget.dart';
+import 'package:immich_mobile/presentation/actions/action_ids.dart';
 import 'package:immich_mobile/presentation/actions/delete.action.dart';
 import 'package:immich_mobile/presentation/actions/device_album.actions.dart';
 import 'package:immich_mobile/presentation/actions/move_to_private.action.dart';
@@ -18,6 +19,7 @@ class DeviceLibraryBottomSheet extends StatelessWidget {
   Widget build(BuildContext context) {
     final appAlbumId = this.appAlbumId;
     return BaseBottomSheet(
+      sheet: SelectionSheets.deviceLibrary,
       initialChildSize: 0.18,
       minChildSize: 0.18,
       maxChildSize: 0.18,

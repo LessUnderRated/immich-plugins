@@ -4,6 +4,7 @@ import 'dart:ui' as ui;
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:immich_mobile/domain/models/store.model.dart';
 import 'package:immich_mobile/entities/store.entity.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_kernel.dart';
 import 'package:immich_mobile/infrastructure/plugins/viewer_filter.dart';
 import 'package:immich_mobile/providers/device_plugins.provider.dart';
 
@@ -24,11 +25,25 @@ class ViewerCensorEnabled extends Notifier<bool> {
   @override
   bool build() => Store.tryGet(StoreKey.viewerCensor) ?? true;
 
+  /// Flips the shield. With the plugin kernel running this goes through the generic toggle `app/viewer.shield`, so
+  /// plugins see `toggle.changed` and can read or set it with `toggles.get/set`.
   Future<void> toggle() async {
-    state = !state;
-    await Store.put(StoreKey.viewerCensor, state);
+    final kernel = PluginKernel.current;
+    if (kernel != null && kernel.toggles.definition(viewerShieldToggle) != null) {
+      await kernel.toggles.set(viewerShieldToggle, !state);
+      return;
+    }
+    await set(!state);
+  }
+
+  Future<void> set(bool value) async {
+    state = value;
+    await Store.put(StoreKey.viewerCensor, value);
   }
 }
+
+/// The generic toggle key of the viewer censor shield.
+const viewerShieldToggle = 'app/viewer.shield';
 
 final viewerCensorEnabledProvider = NotifierProvider<ViewerCensorEnabled, bool>(ViewerCensorEnabled.new);
 

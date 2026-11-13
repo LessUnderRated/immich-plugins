@@ -6,6 +6,9 @@ import 'package:collection/collection.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:immich_mobile/constants/constants.dart';
 import 'package:immich_mobile/domain/models/asset/base_asset.model.dart';
+import 'package:immich_mobile/domain/utils/plugin_data_ids.dart';
+import 'package:immich_mobile/domain/utils/plugin_hooks.dart';
+import 'package:immich_mobile/domain/utils/plugin_json.dart';
 import 'package:immich_mobile/models/download/livephotos_medatada.model.dart';
 import 'package:immich_mobile/services/api.service.dart';
 import 'package:immich_mobile/utils/image_url_builder.dart';
@@ -67,7 +70,24 @@ class DownloadRepository {
     return _downloader.database.deleteRecordsWithIds(ids);
   }
 
-  Future<List<bool>> downloadAllAssets(List<RemoteAsset> assets) async {
+  /// Downloads server assets into the device gallery; runs as `download.assets` (a plugin may drop assets from
+  /// `ids` or cancel). Each saved file emits `asset.downloaded`.
+  Future<List<bool>> downloadAllAssets(List<RemoteAsset> assets) => PluginHooks.run<List<bool>>(
+    DataHooks.downloadAssets,
+    () => {
+      'ids': [for (final asset in assets) asset.id],
+      'assets': [for (final asset in assets) PluginJson.asset(asset)],
+    },
+    () => _downloadAllAssets(assets),
+    withArgs: (args) {
+      final ids = PluginArgs.strings(args['ids']).toSet();
+      return _downloadAllAssets(assets.where((asset) => ids.contains(asset.id)).toList());
+    },
+    encode: (queued) => queued,
+    decode: (json) => [for (final value in json is List ? json : const []) value == true],
+  );
+
+  Future<List<bool>> _downloadAllAssets(List<RemoteAsset> assets) async {
     if (assets.isEmpty) {
       return Future.value(const []);
     }

@@ -4,6 +4,8 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:immich_mobile/extensions/build_context_extensions.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/shell/shell_ids.dart';
+import 'package:immich_mobile/presentation/widgets/shell/shell_list.widget.dart';
 import 'package:immich_mobile/presentation/widgets/sliver_app_bar/item_count_text.widget.dart';
 import 'package:immich_mobile/presentation/widgets/sliver_app_bar/random_asset_background_image.widget.dart';
 import 'package:immich_mobile/providers/infrastructure/timeline.provider.dart';
@@ -64,7 +66,15 @@ class _MesmerizingSliverAppBarState extends ConsumerState<MesmerizingSliverAppBa
           },
         ),
       ),
-      actions: [for (final action in widget.actions) hideWhenSelecting(action)],
+      actions: [
+        ShellList(
+          slot: routeSlotOf(context, PageSlotSuffix.appBarActions),
+          kind: ShellListKind.buttons,
+          // The page's own buttons keep the ids the page gave them (BuiltinSlotItem, action widgets).
+          items: [for (final action in widget.actions) ShellItem.passThrough(action)],
+          builder: (context, actions) => hideWhenSelecting(Row(mainAxisSize: MainAxisSize.min, children: actions)),
+        ),
+      ],
       flexibleSpace: Builder(
         builder: (context) {
           final settings = context.dependOnInheritedWidgetOfExactType<FlexibleSpaceBarSettings>();

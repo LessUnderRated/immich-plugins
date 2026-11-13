@@ -4,6 +4,9 @@ import 'package:immich_mobile/data/server/person.dart';
 import 'package:immich_mobile/data/store/user_metadata.dart';
 import 'package:immich_mobile/data/store/util/cache.dart';
 import 'package:immich_mobile/domain/models/person.model.dart';
+import 'package:immich_mobile/domain/utils/plugin_data_ids.dart';
+import 'package:immich_mobile/domain/utils/plugin_hooks.dart';
+import 'package:immich_mobile/domain/utils/plugin_json.dart';
 import 'package:immich_mobile/providers/infrastructure/db.provider.dart';
 
 /// People representing collections of faces and assets
@@ -42,23 +45,48 @@ final _forAssetProvider = StreamProvider.autoDispose.family<List<Person>, String
 final _allProvider = StreamProvider.autoDispose<List<Person>>((ref) async* {
   final prefs = await ref.watch(UserMetadataStore.instance.preferences().future);
 
-  yield* ref
-      .watch(_peopleDb)
-      .watchAll(minFaces: prefs?.minimumFaces ?? 3)
-      .distinct(const ListEquality<Person>().equals);
+  yield* PluginHooks.filterListStream<Person>(
+    ref.watch(_peopleDb).watchAll(minFaces: prefs?.minimumFaces ?? 3).distinct(const ListEquality<Person>().equals),
+    DataHooks.personQuery,
+    () => {'minFaces': prefs?.minimumFaces ?? 3},
+    PluginJson.people,
+  );
 });
 
 class PersonMutations extends StoreMutations {
   const PersonMutations._(super.ref);
 
-  /// Update a person's name
-  Future<int> updateName(String personId, String name) async {
+  /// Update a person's name; runs as `person.update`
+  Future<int> updateName(String personId, String name) => PluginHooks.run<int>(
+    DataHooks.personUpdate,
+    () => {'id': personId, 'name': name},
+    () => _updateName(personId, name),
+    withArgs: (args) => _updateName(PluginArgs.string(args['id']) ?? personId, PluginArgs.string(args['name']) ?? name),
+    encode: (count) => count,
+    decode: (json) => PluginArgs.integer(json) ?? 0,
+    event: DataEvents.personUpdated,
+  );
+
+  Future<int> _updateName(String personId, String name) async {
     await read(personApiRepositoryProvider).update(personId, name: name);
     return read(_peopleDb).updateName(personId, name);
   }
 
-  /// Update a person's birthday
-  Future<int> updateBirthday(String personId, DateTime birthday) async {
+  /// Update a person's birthday; runs as `person.update`
+  Future<int> updateBirthday(String personId, DateTime birthday) => PluginHooks.run<int>(
+    DataHooks.personUpdate,
+    () => {'id': personId, 'birthDate': PluginArgs.iso(birthday)},
+    () => _updateBirthday(personId, birthday),
+    withArgs: (args) => _updateBirthday(
+      PluginArgs.string(args['id']) ?? personId,
+      PluginArgs.date(args['birthDate']) ?? birthday,
+    ),
+    encode: (count) => count,
+    decode: (json) => PluginArgs.integer(json) ?? 0,
+    event: DataEvents.personUpdated,
+  );
+
+  Future<int> _updateBirthday(String personId, DateTime birthday) async {
     await read(personApiRepositoryProvider).update(personId, birthday: birthday);
     return read(_peopleDb).updateBirthday(personId, birthday);
   }

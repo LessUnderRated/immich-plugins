@@ -3,10 +3,11 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:immich_mobile/domain/models/gallery_view.model.dart';
 import 'package:immich_mobile/domain/services/timeline.service.dart';
 import 'package:immich_mobile/presentation/widgets/timeline/timeline.state.dart';
+import 'package:immich_mobile/providers/gallery_view.provider.dart';
 import 'package:immich_mobile/providers/infrastructure/db.provider.dart';
 import 'package:immich_mobile/providers/infrastructure/settings.provider.dart';
-import 'package:immich_mobile/providers/gallery_view.provider.dart';
 import 'package:immich_mobile/providers/private_vault.provider.dart';
+import 'package:immich_mobile/providers/timeline/timeline_plugins.provider.dart';
 import 'package:immich_mobile/providers/user.provider.dart';
 
 final timelineArgsProvider = Provider.autoDispose<TimelineArgs>(
@@ -26,12 +27,14 @@ final timelineServiceProvider = Provider<TimelineService>(
   dependencies: const [],
 );
 
-final timelineFactoryProvider = Provider<TimelineFactory>(
-  (ref) => TimelineFactory(
+final timelineFactoryProvider = Provider<TimelineFactory>((ref) {
+  // Timelines are built again when plugins start or stop shaping them through `timeline.query`
+  ref.watch(timelinePluginBridgeProvider.select((bridge) => bridge.queryRevision));
+  return TimelineFactory(
     timelineRepository: ref.watch(driftProvider).timelineRepository,
     settingsRepository: ref.watch(settingsProvider),
-  ),
-);
+  );
+});
 
 final timelineUsersProvider = StreamProvider<List<String>>((ref) {
   final currentUserId = ref.watch(currentUserProvider.select((u) => u?.id));

@@ -9,8 +9,12 @@ import 'package:immich_mobile/domain/models/asset/base_asset.model.dart';
 import 'package:immich_mobile/domain/models/server_capability.model.dart';
 import 'package:immich_mobile/extensions/build_context_extensions.dart';
 import 'package:immich_mobile/generated/translations.g.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/library/library_hooks.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/library/library_ids.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/library/library_json.dart';
 import 'package:immich_mobile/presentation/widgets/album/pending_uploads_banner.widget.dart';
 import 'package:immich_mobile/presentation/widgets/bottom_sheet/remote_album_bottom_sheet.widget.dart';
+import 'package:immich_mobile/presentation/widgets/library/library_plugins.widget.dart';
 import 'package:immich_mobile/presentation/widgets/remote_album/album_option.widget.dart';
 import 'package:immich_mobile/presentation/widgets/timeline/timeline.widget.dart';
 import 'package:immich_mobile/providers/infrastructure/album.provider.dart';
@@ -34,12 +38,21 @@ class RemoteAlbumPage extends ConsumerStatefulWidget {
 }
 
 class _RemoteAlbumPageState extends ConsumerState<RemoteAlbumPage> {
+  static const _page = LibraryPages.remoteAlbum;
+
   late RemoteAlbum _album;
   @override
   void initState() {
     super.initState();
     _album = widget.album;
+    LibraryPluginHooks.emit(LibraryEvents.albumOpened, () => {'album': LibraryJson.remoteAlbum(_album)});
   }
+
+  Map<String, dynamic> _albumArgs() => {'album': LibraryJson.remoteAlbum(_album)};
+
+  /// Runs kebab menu / app bar item [id] through hook `action.remoteAlbum.<id>`.
+  VoidCallback _action(String id, FutureOr<void> Function() original) =>
+      () => libraryTap(context, _page, id, original, args: _albumArgs);
 
   Future<void> addAssets(BuildContext context) async {
     final notifier = ref.read(remoteAlbumProvider.notifier);
@@ -203,6 +216,7 @@ class _RemoteAlbumPageState extends ConsumerState<RemoteAlbumPage> {
         currentRemoteAlbumScopedProvider.overrideWithValue(_album),
       ],
       child: Timeline(
+        page: _page,
         topSliverWidget: PendingUploadsBanner(albumId: _album.id),
         appBar: FutureBuilder<bool>(
           future: ref
@@ -216,16 +230,19 @@ class _RemoteAlbumPageState extends ConsumerState<RemoteAlbumPage> {
             return RemoteAlbumSliverAppBar(
               kebabMenu: _AlbumKebabMenu(
                 album: _album,
-                onDeleteAlbum: () => deleteAlbum(context),
-                onAddUsers: () => addUsers(context),
-                onAddPhotos: isOwner || isEditor ? () => addAssets(context) : null,
-                onToggleAlbumOrder: () => toggleAlbumOrder(),
-                onEditAlbum: canEdit ? () => showEditTitleAndDescription(context) : null,
-                onCreateSharedLink: () => unawaited(context.pushRoute(SharedLinkEditRoute(albumId: _album.id))),
-                onShowOptions: () => context.pushRoute(AlbumOptionsRoute(album: _album)),
+                onDeleteAlbum: _action('deleteAlbum', () => deleteAlbum(context)),
+                onAddUsers: _action('addUsers', () => addUsers(context)),
+                onAddPhotos: isOwner || isEditor ? _action('addPhotos', () => addAssets(context)) : null,
+                onToggleAlbumOrder: _action('toggleOrder', () => toggleAlbumOrder()),
+                onEditAlbum: canEdit ? _action('editAlbum', () => showEditTitleAndDescription(context)) : null,
+                onCreateSharedLink: _action(
+                  'createSharedLink',
+                  () => unawaited(context.pushRoute(SharedLinkEditRoute(albumId: _album.id))),
+                ),
+                onShowOptions: _action('options', () => context.pushRoute(AlbumOptionsRoute(album: _album))),
               ),
-              onEditTitle: canEdit ? () => showEditTitleAndDescription(context) : null,
-              onActivity: () => showActivity(context),
+              onEditTitle: canEdit ? _action('editAlbum', () => showEditTitleAndDescription(context)) : null,
+              onActivity: _action('activity', () => showActivity(context)),
             );
           },
         ),

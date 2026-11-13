@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
@@ -5,12 +6,14 @@ import 'dart:ui' as ui;
 
 import 'package:collection/collection.dart';
 import 'package:flutter/painting.dart';
+import 'package:immich_mobile/domain/models/asset/base_asset.model.dart' show AssetType;
 import 'package:immich_mobile/infrastructure/plugins/censor_styles.dart';
 import 'package:immich_mobile/infrastructure/plugins/device_workflow_engine.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/viewer/image_pipeline.dart';
 import 'package:immich_mobile/infrastructure/repositories/device_edit.repository.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
-import 'package:photo_manager/photo_manager.dart';
+import 'package:photo_manager/photo_manager.dart' show AssetEntity;
 
 const viewerFilterType = 'ViewerFilterV1';
 const _maxPhotoSide = 2048;
@@ -71,7 +74,12 @@ class ViewerFilter {
       return null;
     }
 
-    final image = await _decode(bytes);
+    return censorImage(await _decode(bytes), assetId, config);
+  }
+
+  /// Runs the `ViewerFilterV1` plugin on decoded pixels and composites its regions. Takes ownership of [image].
+  /// Returns null when nothing needs censoring.
+  Future<ui.Image?> censorImage(ui.Image image, String assetId, Map<String, dynamic> config) async {
     final pixels = await image.toByteData(format: ui.ImageByteFormat.rawRgba);
     if (pixels == null) {
       image.dispose();
@@ -184,4 +192,29 @@ class ViewerFilter {
       image.dispose();
     }
   }
+}
+
+/// The viewer censor shield as an image pipeline transformer (`image.preview` / `image.full`), so `ViewerFilterV1`
+/// plugins keep working on top of the generic pipeline: every screen-sized image of a local asset is censored while
+/// [isEnabled] is true. Registered with `ImagePipeline.addTransformer` by the viewer plugin API (phase B).
+class ViewerFilterTransformer implements ImageTransformer {
+  final ViewerFilter filter;
+  final bool Function() isEnabled;
+  final Map<String, dynamic> Function() config;
+
+  const ViewerFilterTransformer({required this.filter, required this.isEnabled, required this.config});
+
+  @override
+  String get id => 'viewer.censor';
+
+  @override
+  String get signature => '${isEnabled()}:${jsonEncode(config())}';
+
+  @override
+  bool appliesTo(ImageStage stage, ImageSubject subject) =>
+      stage != ImageStage.thumbnail && subject.type == AssetType.image && isEnabled() && subject.localId != null;
+
+  @override
+  Future<ui.Image?> transform(ImageStage stage, ImageSubject subject, ui.Image image) =>
+      filter.censorImage(image.clone(), subject.localId!, config());
 }

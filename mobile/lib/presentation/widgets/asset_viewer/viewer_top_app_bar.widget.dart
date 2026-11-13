@@ -7,15 +7,22 @@ import 'package:immich_mobile/data/store.dart';
 import 'package:immich_mobile/domain/models/asset/base_asset.model.dart';
 import 'package:immich_mobile/extensions/build_context_extensions.dart';
 import 'package:immich_mobile/extensions/datetime_extensions.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/viewer/viewer_ids.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_kernel.dart';
 import 'package:immich_mobile/presentation/actions/edit_asset.action.dart';
 import 'package:immich_mobile/presentation/actions/action.widget.dart';
+import 'package:immich_mobile/presentation/actions/action_ids.dart';
+import 'package:immich_mobile/presentation/actions/action_slots.dart';
 import 'package:immich_mobile/presentation/actions/device_album.actions.dart';
 import 'package:immich_mobile/presentation/actions/favorite.action.dart';
 import 'package:immich_mobile/presentation/actions/plugin.action.dart';
 import 'package:immich_mobile/presentation/plugins/plugin_ui.dart';
 import 'package:immich_mobile/presentation/widgets/action_buttons/motion_photo_action_button.widget.dart';
+import 'package:immich_mobile/presentation/widgets/asset_viewer/viewer_action_surface.dart';
 import 'package:immich_mobile/presentation/widgets/asset_viewer/viewer_censor.widget.dart';
 import 'package:immich_mobile/presentation/widgets/asset_viewer/viewer_kebab_menu.widget.dart';
+import 'package:immich_mobile/presentation/widgets/asset_viewer/viewer_slots.dart';
+import 'package:immich_mobile/presentation/widgets/timeline/plugins/timeline_plugin_bridge.dart';
 import 'package:immich_mobile/providers/asset_viewer/asset_viewer.provider.dart';
 import 'package:immich_mobile/providers/device_plugins.provider.dart';
 import 'package:immich_mobile/providers/infrastructure/asset_viewer/asset.provider.dart';
@@ -61,31 +68,62 @@ class ViewerTopAppBar extends ConsumerWidget implements PreferredSizeWidget {
 
     final originalTheme = context.themeData;
 
-    final actions = <Widget>[
-      if (asset.isMotionPhoto) const MotionPhotoActionButton(iconOnly: true),
-      if (album != null && album.isActivityEnabled && album.isShared)
-        IconButton(
-          icon: const Icon(Icons.chat_outlined),
-          onPressed: () {
-            unawaited(
-              context.router.push(
-                ActivitiesRoute(album: album, assetId: asset is RemoteAsset ? asset.id : null, assetName: asset.name),
-              ),
-            );
-          },
+    // Built-in ids: ViewerBuiltinIds.topBar (action ids for the action buttons). Plugin rules hide, reorder and
+    // rename them; plugin actions of `viewer.topBar` join them as icon buttons.
+    final actions = arrangeActionWidgets(
+      ref,
+      const [ViewerSlotIds.topBar],
+      [
+        if (asset.isMotionPhoto)
+          const BuiltinSlotItem(id: ActionIds.motionPhoto, child: MotionPhotoActionButton(iconOnly: true)),
+        if (album != null && album.isActivityEnabled && album.isShared)
+          BuiltinSlotItem(
+            id: 'activity',
+            child: IconButton(
+              icon: const Icon(Icons.chat_outlined),
+              onPressed: () {
+                unawaited(
+                  context.router.push(
+                    ActivitiesRoute(
+                      album: album,
+                      assetId: asset is RemoteAsset ? asset.id : null,
+                      assetName: asset.name,
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+
+        const ActionIconButton(action: FavoriteAction(source: .viewer)),
+        const ActionIconButton(action: DeviceFavoriteAction(source: .viewer)),
+        const ActionIconButton(action: RevertEditsAction(source: .viewer)),
+        const ActionIconButton(action: PluginAction(source: .viewer)),
+        const BuiltinSlotItem(id: 'censor', child: ViewerCensorButton()),
+        PluginSlotButtons(slot: ViewerSlotIds.topBar, assets: [if (asset is LocalAsset) asset]),
+
+        BuiltinSlotItem(
+          id: 'menu',
+          child: ImmichColorOverride(color: null, child: ViewerKebabMenu(originalTheme: originalTheme)),
         ),
+      ],
+      present: (action) => ActionIconButton(action: action),
+      source: .viewer,
+    );
 
-      const ActionIconButton(action: FavoriteAction(source: .viewer)),
-      const ActionIconButton(action: DeviceFavoriteAction(source: .viewer)),
-      const ActionIconButton(action: RevertEditsAction(source: .viewer)),
-      const ActionIconButton(action: PluginAction(source: .viewer)),
-      const ViewerCensorButton(),
-      PluginSlotButtons(slot: 'viewer.topBar', assets: [if (asset is LocalAsset) asset]),
-
-      ImmichColorOverride(color: null, child: ViewerKebabMenu(originalTheme: originalTheme)),
-    ];
-
-    final lockedViewActions = <Widget>[ViewerKebabMenu(originalTheme: originalTheme)];
+    final lockedViewActions = arrangeActionWidgets(
+      ref,
+      const [ViewerSlotIds.topBar],
+      [
+        BuiltinSlotItem(
+          id: 'menu',
+          child: ViewerKebabMenu(originalTheme: originalTheme),
+        ),
+      ],
+      present: (action) => ActionIconButton(action: action),
+      source: .viewer,
+    );
+    ViewerActionSurfaceScope.maybeOf(context)?.setBarOrder('topBar', isInLockedView ? lockedViewActions : actions);
 
     return IgnorePointer(
       ignoring: opacity < 1.0,
@@ -124,7 +162,13 @@ class ViewerTopAppBar extends ConsumerWidget implements PreferredSizeWidget {
                   child: NavigationToolbar(
                     centerMiddle: true,
                     leading: const _AppBarBackButton(),
-                    middle: showingDetails ? null : _AssetInfoTitle(asset: asset),
+                    middle: showingDetails
+                        ? null
+                        : ViewerSlotDecoration(
+                            slot: ViewerSlotIds.title,
+                            slotContext: () => PluginKernel.assetContext([asset]),
+                            child: _AssetInfoTitle(asset: asset),
+                          ),
                     trailing: !showingDetails && !isReadonlyModeEnabled
                         ? ImmichColorOverride(
                             color: Colors.white,

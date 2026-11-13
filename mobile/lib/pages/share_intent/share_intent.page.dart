@@ -5,6 +5,8 @@ import 'package:flutter/material.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:immich_mobile/extensions/build_context_extensions.dart';
 import 'package:immich_mobile/generated/translations.g.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/shell/shell_hooks.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/shell/shell_ids.dart';
 import 'package:immich_mobile/models/upload/share_intent_attachment.model.dart';
 import 'package:immich_mobile/pages/common/large_leading_tile.dart';
 import 'package:immich_mobile/providers/asset_viewer/share_intent_upload.provider.dart';
@@ -38,8 +40,32 @@ class ShareIntentPage extends ConsumerWidget {
     }
 
     Future<void> upload() async {
-      final files = candidates.map((candidate) => candidate.file).toList();
-      await ref.read(shareIntentUploadProvider.notifier).uploadAll(files);
+      // Plugins may cancel, narrow the file list, or upload the files some other way (`instead`).
+      await ShellHookRunner.guard<void>(
+        ShellHooks.shareIntentUpload,
+        {
+          'files': [
+            for (final candidate in candidates)
+              {'path': candidate.path, 'type': candidate.type.name, 'size': candidate.fileLength},
+          ],
+        },
+        (args) async {
+          final requested = args['files'];
+          final paths = requested is List
+              ? {
+                  for (final file in requested)
+                    if (file is Map && file['path'] is String) file['path'] as String else if (file is String) file,
+                }
+              : null;
+          final files = [
+            for (final candidate in candidates)
+              if (paths == null || paths.contains(candidate.path)) candidate.file,
+          ];
+          await ref.read(shareIntentUploadProvider.notifier).uploadAll(files);
+        },
+        decode: (_) {},
+        event: ShellEvents.shareIntentUploaded,
+      );
     }
 
     bool isSelected(ShareIntentAttachment attachment) {

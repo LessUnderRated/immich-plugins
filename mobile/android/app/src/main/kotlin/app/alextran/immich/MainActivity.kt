@@ -19,8 +19,12 @@ import app.alextran.immich.images.LocalImagesImpl
 import app.alextran.immich.images.RemoteImageApi
 import app.alextran.immich.images.RemoteImagesImpl
 import app.alextran.immich.passkey.PasskeyPlugin
+import android.os.Bundle
 import app.alextran.immich.plugins.DeviceMediaWriter
 import app.alextran.immich.plugins.DexPluginHost
+import app.alextran.immich.plugins.PluginIntents
+import app.alextran.immich.plugins.PluginLifecycle
+import app.alextran.immich.plugins.PluginRuntime
 import app.alextran.immich.permission.PermissionApi
 import app.alextran.immich.permission.PermissionApiImpl
 import app.alextran.immich.sync.NativeSyncApi
@@ -31,6 +35,12 @@ import io.flutter.embedding.android.FlutterFragmentActivity
 import io.flutter.embedding.engine.FlutterEngine
 
 class MainActivity : FlutterFragmentActivity() {
+  override fun onCreate(savedInstanceState: Bundle?) {
+    // Plugins that asked to load at startup load now, and may intercept the launch intent before Flutter sees it.
+    PluginRuntime.onMainActivityCreate(this, savedInstanceState)
+    super.onCreate(savedInstanceState)
+  }
+
   override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
     super.configureFlutterEngine(flutterEngine)
     registerPlugins(this, flutterEngine)
@@ -39,11 +49,25 @@ class MainActivity : FlutterFragmentActivity() {
     dexPlugins.activity = this
     flutterEngine.platformViewsController.registry.registerViewFactory(DexPluginHost.VIEW_TYPE, dexPlugins)
     DeviceMediaWriter(this, flutterEngine.dartExecutor.binaryMessenger)
+    // immich/plugin_native and immich/plugin_video channels, platform view lookup for video sessions.
+    PluginRuntime.attachEngine(flutterEngine, this)
+  }
+
+  override fun cleanUpFlutterEngine(flutterEngine: FlutterEngine) {
+    PluginRuntime.detachEngine(flutterEngine)
+    super.cleanUpFlutterEngine(flutterEngine)
   }
 
   override fun onNewIntent(intent: Intent) {
-    super.onNewIntent(intent)
-    setIntent(intent)
+    // Plugin interceptors may modify, replace or consume it (then the app never sees it).
+    val processed = PluginIntents.processNew(this, intent) ?: return
+    super.onNewIntent(processed)
+    setIntent(processed)
+  }
+
+  override fun onWindowFocusChanged(hasFocus: Boolean) {
+    super.onWindowFocusChanged(hasFocus)
+    PluginLifecycle.onWindowFocusChanged(this, hasFocus)
   }
 
   companion object {

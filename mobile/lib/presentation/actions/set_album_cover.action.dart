@@ -4,6 +4,7 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:immich_mobile/constants/enums.dart';
 import 'package:immich_mobile/generated/translations.g.dart';
 import 'package:immich_mobile/presentation/actions/action.dart';
+import 'package:immich_mobile/presentation/actions/action_ids.dart';
 import 'package:immich_mobile/providers/infrastructure/album.provider.dart';
 import 'package:immich_mobile/providers/infrastructure/toast.provider.dart';
 import 'package:immich_mobile/utils/error_handler.dart';
@@ -17,6 +18,12 @@ class SetAlbumCoverAction extends AssetActionBuilder {
   final String albumId;
 
   const SetAlbumCoverAction({required super.source, required this.albumId});
+
+  @override
+  String get id => ActionIds.setAlbumCover;
+
+  @override
+  Map<String, dynamic> get hookArgs => {'albumId': albumId};
 
   @override
   ActionItem? create(BuildContext context, WidgetRef ref) {

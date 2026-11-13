@@ -5,10 +5,15 @@ import 'package:flutter/material.dart';
 import 'package:flutter_hooks/flutter_hooks.dart';
 import 'package:immich_mobile/domain/models/log.model.dart';
 import 'package:immich_mobile/domain/services/log.service.dart';
+import 'package:immich_mobile/domain/utils/plugin_hooks.dart';
 import 'package:immich_mobile/extensions/build_context_extensions.dart';
 import 'package:immich_mobile/extensions/datetime_extensions.dart';
 import 'package:immich_mobile/extensions/theme_extensions.dart';
 import 'package:immich_mobile/generated/translations.g.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/shell/log_json.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/shell/shell_hooks.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/shell/shell_ids.dart';
+import 'package:immich_mobile/presentation/widgets/shell/shell_list.widget.dart';
 import 'package:immich_mobile/routing/router.dart';
 import 'package:immich_mobile/services/immich_logger.service.dart';
 import 'package:intl/intl.dart';
@@ -21,7 +26,7 @@ class AppLogPage extends HookWidget {
   Widget build(BuildContext context) {
     final immichLogger = LogService.I;
     final shouldReload = useState(false);
-    final logMessages = useFuture(useMemoized(() => immichLogger.getMessages(), [shouldReload.value]));
+    final logMessages = useFuture(useMemoized(() => _loadMessages(immichLogger), [shouldReload.value]));
 
     Widget colorStatusIndicator(Color color) {
       return Column(
@@ -50,12 +55,12 @@ class AppLogPage extends HookWidget {
       _ => context.primaryColor.withValues(alpha: 0.1),
     };
 
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(context.t.logs, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16.0)),
-        scrolledUnderElevation: 1,
-        elevation: 2,
-        actions: [
+    return ShellList(
+      slot: pageSlot(AppLogRoute.name, PageSlotSuffix.appBarActions),
+      kind: ShellListKind.buttons,
+      items: [
+        ShellItem(
+          AppLogIds.clear,
           IconButton(
             icon: Icon(
               Icons.delete_outline_rounded,
@@ -63,56 +68,87 @@ class AppLogPage extends HookWidget {
               semanticLabel: "Clear logs",
               size: 20.0,
             ),
-            onPressed: () {
-              unawaited(immichLogger.clearLogs());
-              shouldReload.value = !shouldReload.value;
-            },
+            onPressed: () => unawaited(
+              ShellHookRunner.guard<void>(ShellHooks.logsClear, const {}, (_) async {
+                await immichLogger.clearLogs();
+                shouldReload.value = !shouldReload.value;
+              }, event: ShellEvents.logsCleared),
+            ),
           ),
+        ),
+        ShellItem(
+          AppLogIds.share,
           Builder(
             builder: (BuildContext iconContext) {
               return IconButton(
                 icon: Icon(Icons.share_rounded, color: context.primaryColor, semanticLabel: "Share logs", size: 20.0),
-                onPressed: () {
-                  unawaited(ImmichLogger.shareLogs(iconContext));
-                },
+                onPressed: () => unawaited(
+                  ShellHookRunner.guard<void>(
+                    ShellHooks.logsShare,
+                    const {},
+                    (_) => ImmichLogger.shareLogs(iconContext),
+                    decode: (_) {},
+                  ),
+                ),
               );
             },
           ),
-        ],
-        leading: IconButton(
-          onPressed: () {
-            unawaited(context.maybePop());
-          },
-          icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 20.0),
         ),
-        centerTitle: true,
+      ],
+      builder: (context, actions) => Scaffold(
+        appBar: AppBar(
+          title: Text(context.t.logs, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16.0)),
+          scrolledUnderElevation: 1,
+          elevation: 2,
+          actions: actions,
+          leading: IconButton(
+            onPressed: () {
+              unawaited(context.maybePop());
+            },
+            icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 20.0),
+          ),
+          centerTitle: true,
+        ),
+        body: ListView.separated(
+          separatorBuilder: (context, index) {
+            return const Divider(height: 0);
+          },
+          itemCount: logMessages.data?.length ?? 0,
+          itemBuilder: (context, index) {
+            final logMessage = logMessages.data![index];
+            return ListTile(
+              onTap: () => context.pushRoute(AppLogDetailRoute(logMessage: logMessage)),
+              trailing: const Icon(Icons.arrow_forward_ios_rounded),
+              visualDensity: VisualDensity.compact,
+              dense: true,
+              tileColor: getTileColor(logMessage.level),
+              minLeadingWidth: 10,
+              title: Text(
+                truncateLogMessage(logMessage.message, 4),
+                style: TextStyle(fontSize: 14.0, color: context.colorScheme.onSurface, fontFamily: "GoogleSansCode"),
+              ),
+              subtitle: Text(
+                "at ${DateFormat("HH:mm:ss.SSS", resolvedDateTimeLocale()).format(logMessage.createdAt)} in ${logMessage.logger}",
+                style: TextStyle(fontSize: 12.0, color: context.colorScheme.onSurfaceSecondary),
+              ),
+              leading: buildLeadingIcon(logMessage.level),
+            );
+          },
+        ),
       ),
-      body: ListView.separated(
-        separatorBuilder: (context, index) {
-          return const Divider(height: 0);
-        },
-        itemCount: logMessages.data?.length ?? 0,
-        itemBuilder: (context, index) {
-          final logMessage = logMessages.data![index];
-          return ListTile(
-            onTap: () => context.pushRoute(AppLogDetailRoute(logMessage: logMessage)),
-            trailing: const Icon(Icons.arrow_forward_ios_rounded),
-            visualDensity: VisualDensity.compact,
-            dense: true,
-            tileColor: getTileColor(logMessage.level),
-            minLeadingWidth: 10,
-            title: Text(
-              truncateLogMessage(logMessage.message, 4),
-              style: TextStyle(fontSize: 14.0, color: context.colorScheme.onSurface, fontFamily: "GoogleSansCode"),
-            ),
-            subtitle: Text(
-              "at ${DateFormat("HH:mm:ss.SSS", resolvedDateTimeLocale()).format(logMessage.createdAt)} in ${logMessage.logger}",
-              style: TextStyle(fontSize: 12.0, color: context.colorScheme.onSurfaceSecondary),
-            ),
-            leading: buildLeadingIcon(logMessage.level),
-          );
-        },
-      ),
+    );
+  }
+
+  /// The log entries, through `after` handlers of the `logs.query` hook.
+  static Future<List<LogMessage>> _loadMessages(LogService logger) async {
+    final messages = await logger.getMessages();
+    final codec = logListCodec();
+    return PluginHooks.filter<List<LogMessage>>(
+      ShellHooks.logsQuery,
+      () => {'count': messages.length},
+      messages,
+      encode: codec.encode,
+      decode: codec.decode,
     );
   }
 

@@ -6,6 +6,7 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:immich_mobile/constants/enums.dart';
 import 'package:immich_mobile/generated/translations.g.dart';
 import 'package:immich_mobile/presentation/actions/action.dart';
+import 'package:immich_mobile/presentation/actions/action_ids.dart';
 import 'package:immich_mobile/routing/router.dart';
 
 final _stateProvider = Provider.family.autoDispose<List<String>?, ActionSource>((ref, source) {
@@ -16,6 +17,9 @@ final _stateProvider = Provider.family.autoDispose<List<String>?, ActionSource>(
 
 class ShareLinkAction extends AssetActionBuilder {
   const ShareLinkAction({required super.source});
+
+  @override
+  String get id => ActionIds.shareLink;
 
   @override
   ActionItem? create(BuildContext context, WidgetRef ref) {

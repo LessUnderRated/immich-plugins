@@ -4,6 +4,7 @@ import 'package:immich_mobile/constants/enums.dart';
 import 'package:immich_mobile/domain/models/album/album.model.dart';
 import 'package:immich_mobile/generated/translations.g.dart';
 import 'package:immich_mobile/presentation/actions/action.widget.dart';
+import 'package:immich_mobile/presentation/actions/action_ids.dart';
 import 'package:immich_mobile/presentation/actions/archive.action.dart';
 import 'package:immich_mobile/presentation/actions/asset_debug.action.dart';
 import 'package:immich_mobile/presentation/actions/delete.action.dart';
@@ -69,6 +70,7 @@ class _ArchiveBottomSheetState extends ConsumerState<ArchiveBottomSheet> {
     }
 
     return BaseBottomSheet(
+      sheet: SelectionSheets.archive,
       controller: sheetController,
       initialChildSize: 0.25,
       maxChildSize: 0.85,

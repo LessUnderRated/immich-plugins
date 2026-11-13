@@ -3,8 +3,12 @@ import 'package:flutter/material.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:immich_mobile/domain/models/user.model.dart';
 import 'package:immich_mobile/generated/translations.g.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/library/library_hooks.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/library/library_ids.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/library/library_json.dart';
 import 'package:immich_mobile/presentation/actions/action.widget.dart';
 import 'package:immich_mobile/presentation/actions/partner.action.dart';
+import 'package:immich_mobile/presentation/widgets/library/library_plugins.widget.dart';
 import 'package:immich_mobile/presentation/widgets/people/partner_user_avatar.widget.dart';
 import 'package:immich_mobile/providers/infrastructure/user.provider.dart';
 import 'package:immich_mobile/providers/user.provider.dart';
@@ -33,7 +37,9 @@ class PartnerPage extends ConsumerWidget {
         title: Text(context.t.partners),
         elevation: 0,
         centerTitle: false,
-        actions: const [ActionIconButton(action: PartnerAddAction())],
+        actions: LibraryPluginHooks.arrange(LibrarySlots.appBarActions(LibraryPages.partner), const [
+          (id: 'add', item: ActionIconButton(action: PartnerAddAction())),
+        ]),
       ),
       body: sharedByAsync.when(
         data: (partners) => PartnerSharedByList(partners: partners.toList(growable: false)),
@@ -53,16 +59,22 @@ class _EmptyPartners extends StatelessWidget {
       padding: const .symmetric(horizontal: 16.0),
       child: Column(
         crossAxisAlignment: .start,
-        children: [
-          Padding(
-            padding: const .symmetric(vertical: 8),
-            child: Text(context.t.partner_page_empty_message, style: const TextStyle(fontSize: 14)),
+        children: LibraryPluginHooks.arrange(LibrarySlots.empty(LibraryPages.partner), [
+          (
+            id: 'message',
+            item: Padding(
+              padding: const .symmetric(vertical: 8),
+              child: Text(context.t.partner_page_empty_message, style: const TextStyle(fontSize: 14)),
+            ),
           ),
-          const Align(
-            alignment: .center,
-            child: ActionButton(action: PartnerAddAction()),
+          (
+            id: 'add',
+            item: const Align(
+              alignment: .center,
+              child: ActionButton(action: PartnerAddAction()),
+            ),
           ),
-        ],
+        ]),
       ),
     );
   }
@@ -80,19 +92,37 @@ class PartnerSharedByList extends StatelessWidget {
       return const _EmptyPartners();
     }
 
-    return ListView.builder(
-      itemCount: partners.length,
-      itemBuilder: (_, index) {
-        final partner = partners[index];
-        return ListTile(
-          leading: PartnerUserAvatar(userId: partner.id, name: partner.name),
-          title: Text(partner.name),
-          subtitle: Text(partner.email),
-          trailing: ActionIconButton(
-            action: PartnerRemoveAction(sharedWithId: partner.id, partnerName: partner.name),
-          ),
-        );
-      },
+    return LibraryQueryBuilder<Partner>(
+      hook: LibraryHooks.partnersQuery,
+      items: partners,
+      id: (partner) => partner.id,
+      toJson: LibraryJson.partner,
+      args: () => {'direction': 'sharedBy'},
+      builder: (context, partners) => ListView.builder(
+        itemCount: partners.length,
+        itemBuilder: (_, index) {
+          final partner = partners[index];
+          final actions = LibraryPluginHooks.arrange(LibrarySlots.partnerTileActions, [
+            (
+              id: 'remove',
+              item: ActionIconButton(
+                action: PartnerRemoveAction(sharedWithId: partner.id, partnerName: partner.name),
+              ),
+            ),
+          ]);
+          return LibraryTileDecoration(
+            key: ValueKey(partner.id),
+            slot: LibrarySlots.partnerTile,
+            slotContext: () => {'partner': LibraryJson.partner(partner)},
+            child: ListTile(
+              leading: PartnerUserAvatar(userId: partner.id, name: partner.name),
+              title: Text(partner.name),
+              subtitle: Text(partner.email),
+              trailing: actions.length == 1 ? actions.first : Row(mainAxisSize: MainAxisSize.min, children: actions),
+            ),
+          );
+        },
+      ),
     );
   }
 }

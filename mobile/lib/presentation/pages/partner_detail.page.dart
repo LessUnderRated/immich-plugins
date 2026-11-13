@@ -3,7 +3,11 @@ import 'package:flutter/material.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:immich_mobile/domain/models/user.model.dart';
 import 'package:immich_mobile/extensions/build_context_extensions.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/library/library_hooks.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/library/library_ids.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/library/library_json.dart';
 import 'package:immich_mobile/presentation/widgets/bottom_sheet/partner_detail_bottom_sheet.widget.dart';
+import 'package:immich_mobile/presentation/widgets/library/library_plugins.widget.dart';
 import 'package:immich_mobile/presentation/widgets/timeline/timeline.widget.dart';
 import 'package:immich_mobile/providers/infrastructure/timeline.provider.dart';
 import 'package:immich_mobile/providers/infrastructure/user.provider.dart';
@@ -13,13 +17,25 @@ import 'package:immich_mobile/widgets/common/immich_toast.dart';
 import 'package:immich_mobile/widgets/common/mesmerizing_sliver_app_bar.dart';
 
 @RoutePage()
-class PartnerDetailPage extends StatelessWidget {
+class PartnerDetailPage extends StatefulWidget {
   final Partner partner;
 
   const PartnerDetailPage({super.key, required this.partner});
 
   @override
+  State<PartnerDetailPage> createState() => _PartnerDetailPageState();
+}
+
+class _PartnerDetailPageState extends State<PartnerDetailPage> {
+  @override
+  void initState() {
+    super.initState();
+    LibraryPluginHooks.emit(LibraryEvents.partnerOpened, () => {'partner': LibraryJson.partner(widget.partner)});
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final partner = widget.partner;
     return ProviderScope(
       overrides: [
         timelineServiceProvider.overrideWith((ref) {
@@ -29,6 +45,7 @@ class PartnerDetailPage extends StatelessWidget {
         }),
       ],
       child: Timeline(
+        page: LibraryPages.partnerDetail,
         appBar: MesmerizingSliverAppBar(title: partner.name),
         topSliverWidget: _InfoBox(partner: partner),
         topSliverWidgetHeight: 110,
@@ -56,7 +73,15 @@ class _InfoBoxState extends ConsumerState<_InfoBox> {
     _inTimeline = widget.partner.inTimeline;
   }
 
-  Future<void> _toggleInTimeline() async {
+  Future<void> _toggleInTimeline() => runLibraryAction<void>(
+    context,
+    LibraryPages.partnerDetail,
+    'inTimeline',
+    _setInTimeline,
+    args: () => {'partner': LibraryJson.partner(widget.partner), 'enabled': !_inTimeline},
+  );
+
+  Future<void> _setInTimeline() async {
     final user = ref.read(currentUserProvider);
     if (user == null) {
       return;

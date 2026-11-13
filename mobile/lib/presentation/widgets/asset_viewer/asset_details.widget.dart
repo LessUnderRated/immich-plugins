@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:immich_mobile/domain/models/asset/base_asset.model.dart';
 import 'package:immich_mobile/extensions/build_context_extensions.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/viewer/viewer_builtins.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/viewer/viewer_ids.dart';
 import 'package:immich_mobile/presentation/widgets/asset_viewer/asset_details/appears_in_details.widget.dart';
 import 'package:immich_mobile/presentation/widgets/asset_viewer/asset_details/asset_owner_details.widget.dart';
 import 'package:immich_mobile/presentation/widgets/asset_viewer/asset_details/date_time_details.widget.dart';
@@ -12,6 +14,7 @@ import 'package:immich_mobile/presentation/widgets/asset_viewer/asset_details/pe
 import 'package:immich_mobile/presentation/widgets/asset_viewer/asset_details/rating_details.widget.dart';
 import 'package:immich_mobile/presentation/widgets/asset_viewer/asset_details/tag_details.widget.dart';
 import 'package:immich_mobile/presentation/widgets/asset_viewer/asset_details/technical_details.widget.dart';
+import 'package:immich_mobile/presentation/widgets/asset_viewer/viewer_slots.dart';
 import 'package:immich_mobile/providers/infrastructure/asset_viewer/asset.provider.dart';
 
 class AssetDetails extends ConsumerWidget {
@@ -44,15 +47,19 @@ class AssetDetails extends ConsumerWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const DragHandle(),
-            DateTimeDetails(asset: asset, exifInfo: exifInfo),
-            AssetOwnerDetails(asset: asset),
-            SheetAssetDescription(asset: asset, exifInfo: exifInfo),
-            PeopleDetails(asset: asset),
-            LocationDetails(asset: asset, exifInfo: exifInfo),
-            TechnicalDetails(asset: asset, exifInfo: exifInfo),
-            RatingDetails(exifInfo: exifInfo),
-            AppearsInDetails(asset: asset),
-            TagDetails(asset: asset),
+            // Section ids: ViewerBuiltinIds.infoSections.
+            ...arrangeViewerSlot<Widget>(ref, ViewerSlotIds.infoSections, [
+              ViewerSlotItem('dateTime', DateTimeDetails(asset: asset, exifInfo: exifInfo)),
+              ViewerSlotItem('owner', AssetOwnerDetails(asset: asset)),
+              ViewerSlotItem('description', SheetAssetDescription(asset: asset, exifInfo: exifInfo)),
+              ViewerSlotItem('people', PeopleDetails(asset: asset)),
+              ViewerSlotItem('location', LocationDetails(asset: asset, exifInfo: exifInfo)),
+              ViewerSlotItem('technical', TechnicalDetails(asset: asset, exifInfo: exifInfo)),
+              ViewerSlotItem('rating', RatingDetails(exifInfo: exifInfo)),
+              ViewerSlotItem('appearsIn', AppearsInDetails(asset: asset)),
+              ViewerSlotItem('tags', TagDetails(asset: asset)),
+            ]),
+            ?viewerSlotContent(ref, ViewerSlotIds.infoSections, assets: [asset]),
             SizedBox(height: context.padding.bottom + 48),
           ],
         ),

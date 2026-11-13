@@ -7,7 +7,11 @@ import 'package:immich_mobile/domain/models/events.model.dart';
 import 'package:immich_mobile/domain/services/timeline.service.dart';
 import 'package:immich_mobile/domain/utils/event_stream.dart';
 import 'package:immich_mobile/generated/translations.g.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/timeline/builtin_rules.dart';
+import 'package:immich_mobile/presentation/actions/action.dart';
 import 'package:immich_mobile/presentation/actions/action.widget.dart';
+import 'package:immich_mobile/presentation/actions/action_ids.dart';
+import 'package:immich_mobile/presentation/actions/action_slots.dart';
 import 'package:immich_mobile/presentation/actions/archive.action.dart';
 import 'package:immich_mobile/presentation/actions/asset_debug.action.dart';
 import 'package:immich_mobile/presentation/actions/cast.action.dart';
@@ -257,26 +261,68 @@ class ActionButtonBuilder {
     ActionButtonType.restoreTrash,
   };
 
-  static List<Widget> buildViewerKebabMenu(ActionButtonContext context, BuildContext buildContext) {
+  /// The viewer ⋮ menu. Every entry has the id `ActionIds.forActionButtonType(type.name)` (the action id of the
+  /// builder it shows, so `archive` covers Archive and Unarchive); plugin [rules] hide, reorder and rename entries,
+  /// and [extra] plugin actions are merged in among them (in the "others" group). Dividers separate the groups of
+  /// neighbouring entries. Without rules and extras this is the built-in menu.
+  static List<Widget> buildViewerKebabMenu(
+    ActionButtonContext context,
+    BuildContext buildContext, {
+    BuiltinItemRules rules = BuiltinItemRules.none,
+    List<SlotExtraItem<ActionBuilder>> extra = const [],
+  }) {
     final visibleButtons = defaultViewerKebabMenuOrder
         .where((type) => !defaultViewerBottomBarButtons.contains(type) && type.shouldShow(context))
         .toList();
 
-    if (visibleButtons.isEmpty) {
+    final entries = arrangeSlotItems<_KebabEntry>(
+      [
+        for (final type in visibleButtons)
+          _KebabEntry(
+            ActionIds.forActionButtonType(type.name),
+            type.kebabMenuGroup,
+            () => type.buildButton(context, buildContext, false, true),
+          ),
+      ],
+      (entry) => entry.id,
+      rules: rules,
+      extra: [
+        for (final item in extra)
+          SlotExtraItem(
+            id: item.id,
+            item: _KebabEntry(item.id, 1, () => ActionMenuItem(action: item.item)),
+            order: item.order,
+          ),
+      ],
+    );
+
+    if (entries.isEmpty) {
       return [];
     }
 
     final List<Widget> result = [];
     int? lastGroup;
 
-    for (final type in visibleButtons) {
-      if (lastGroup != null && type.kebabMenuGroup != lastGroup) {
+    for (final entry in entries) {
+      if (lastGroup != null && entry.group != lastGroup) {
         result.add(const Divider(height: 1));
       }
-      result.add(type.buildButton(context, buildContext, false, true));
-      lastGroup = type.kebabMenuGroup;
+      result.add(_renamed(entry.build(), rules.rename[entry.id]));
+      lastGroup = entry.group;
     }
 
     return result;
   }
+
+  static Widget _renamed(Widget widget, String? label) =>
+      label != null && widget is ActionWidget ? widget.withAction(RenamedActionBuilder(widget.action, label)) : widget;
+}
+
+/// One entry of the viewer ⋮ menu before it is built.
+class _KebabEntry {
+  final String id;
+  final int group;
+  final Widget Function() build;
+
+  const _KebabEntry(this.id, this.group, this.build);
 }

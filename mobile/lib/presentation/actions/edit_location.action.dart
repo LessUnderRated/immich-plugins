@@ -5,6 +5,7 @@ import 'package:immich_mobile/constants/enums.dart';
 import 'package:immich_mobile/domain/models/asset/base_asset.model.dart';
 import 'package:immich_mobile/generated/translations.g.dart';
 import 'package:immich_mobile/presentation/actions/action.dart';
+import 'package:immich_mobile/presentation/actions/action_ids.dart';
 import 'package:immich_mobile/providers/infrastructure/asset.provider.dart';
 import 'package:immich_mobile/providers/infrastructure/db.provider.dart';
 import 'package:immich_mobile/providers/infrastructure/toast.provider.dart';
@@ -25,6 +26,9 @@ final _stateProvider = Provider.family.autoDispose<_State?, ActionSource>((ref, 
 
 class EditLocationAction extends AssetActionBuilder {
   const EditLocationAction({required super.source});
+
+  @override
+  String get id => ActionIds.editLocation;
 
   @override
   ActionItem? create(BuildContext context, WidgetRef ref) {

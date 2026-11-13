@@ -4,6 +4,8 @@ import 'dart:typed_data';
 import 'package:immich_mobile/domain/models/store.model.dart';
 import 'package:immich_mobile/domain/models/user.model.dart';
 import 'package:immich_mobile/domain/services/store.service.dart';
+import 'package:immich_mobile/domain/utils/plugin_data_ids.dart';
+import 'package:immich_mobile/domain/utils/plugin_hooks.dart';
 import 'package:immich_mobile/infrastructure/repositories/user.repository.dart';
 import 'package:immich_mobile/infrastructure/repositories/user_api.repository.dart';
 import 'package:logging/logging.dart';
@@ -37,7 +39,18 @@ class UserService {
     return user;
   }
 
-  Future<String?> createProfileImage(String name, Uint8List image) async {
+  /// Uploads a new profile picture; runs as `user.update` with `field: "profileImage"`.
+  Future<String?> createProfileImage(String name, Uint8List image) => PluginHooks.run<String?>(
+    DataHooks.userUpdate,
+    () => {'field': 'profileImage', 'name': name, 'size': image.length},
+    () => _createProfileImage(name, image),
+    encode: (path) => path,
+    decode: PluginArgs.string,
+    event: DataEvents.userUpdated,
+    eventData: (args, path) => {...args, 'path': path},
+  );
+
+  Future<String?> _createProfileImage(String name, Uint8List image) async {
     try {
       final path = await _userApiRepository.createProfileImage(name: name, data: image);
       final updatedUser = getMyUser();

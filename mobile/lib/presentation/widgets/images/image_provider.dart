@@ -6,6 +6,7 @@ import 'package:async/async.dart';
 import 'package:flutter/widgets.dart';
 import 'package:immich_mobile/domain/models/asset/base_asset.model.dart';
 import 'package:immich_mobile/infrastructure/loaders/image_request.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/viewer/image_pipeline.dart';
 import 'package:immich_mobile/infrastructure/repositories/settings.repository.dart';
 import 'package:immich_mobile/presentation/widgets/images/local_image_provider.dart';
 import 'package:immich_mobile/presentation/widgets/images/remote_image_provider.dart';
@@ -54,17 +55,38 @@ class ImageLoader {
     return null;
   }
 
-  Stream<ImageInfo> loadRequest(ImageRequest request, ImageDecoderCallback decode, {required bool isFinal}) async* {
+  /// Loads [request]. With a [pipeline] target, the image goes through the plugin image pipeline
+  /// (`image.thumbnail` / `image.preview` / `image.full`) when anything hooks that stage; otherwise nothing changes.
+  /// A non-final image whose own stage is not processed is shown blurred while [finalStage] is processed, so an
+  /// unprocessed image never shows sharp before the processed one.
+  Stream<ImageInfo> loadRequest(
+    ImageRequest request,
+    ImageDecoderCallback decode, {
+    required bool isFinal,
+    ImagePipelineTarget? pipeline,
+    ImageStage? finalStage,
+  }) async* {
     if (isCancelled) {
       this.request = null;
       return;
     }
 
     try {
-      final image = await request.load(decode);
+      var image = await request.load(decode);
       if (isCancelled || image == null) {
         image?.dispose();
         return;
+      }
+      if (pipeline != null) {
+        if (ImagePipeline.isActiveFor(pipeline)) {
+          image = await ImagePipeline.apply(pipeline, image);
+          if (isCancelled) {
+            image.dispose();
+            return;
+          }
+        } else if (!isFinal && finalStage != null && finalStage != pipeline.stage) {
+          image = ImagePipeline.pendingPlaceholder(image, finalStage);
+        }
       }
       isFinished = isFinal;
       yield image;
@@ -83,17 +105,32 @@ class ImageLoader {
     }
   }
 
-  Future<ui.Codec?> loadCodecRequest(ImageRequest request, {required bool isFinal}) async {
+  /// Loads an animated image. With a [pipeline] target that is processed, the first frame goes through the
+  /// pipeline: a replacement is shown as a still image; when it stays unchanged, [reload] provides a fresh request so
+  /// the animation starts at its first frame.
+  Future<ui.Codec?> loadCodecRequest(
+    ImageRequest request, {
+    required bool isFinal,
+    ImagePipelineTarget? pipeline,
+    ImageRequest Function()? reload,
+  }) async {
     if (isCancelled) {
       this.request = null;
       return null;
     }
 
     try {
-      final codec = await request.loadCodec();
+      var codec = await request.loadCodec();
       if (isCancelled || codec == null) {
         codec?.dispose();
         return null;
+      }
+      if (pipeline != null && ImagePipeline.isActiveFor(pipeline)) {
+        codec = await _processAnimated(codec, pipeline, reload);
+        if (isCancelled || codec == null) {
+          codec?.dispose();
+          return null;
+        }
       }
       isFinished = isFinal;
       return codec;
@@ -110,6 +147,29 @@ class ImageLoader {
     } finally {
       this.request = null;
     }
+  }
+
+  Future<ui.Codec?> _processAnimated(
+    ui.Codec codec,
+    ImagePipelineTarget pipeline,
+    ImageRequest Function()? reload,
+  ) async {
+    final frame = await codec.getNextFrame();
+    final replaced = await ImagePipeline.applyToImage(pipeline, frame.image).whenComplete(frame.image.dispose);
+    if (replaced != null) {
+      codec.dispose();
+      try {
+        return await ImagePipeline.codecOf(replaced);
+      } finally {
+        replaced.dispose();
+      }
+    }
+    if (reload == null || isCancelled) {
+      return codec;
+    }
+    codec.dispose();
+    final again = request = reload();
+    return again.loadCodec();
   }
 
   Stream<ImageInfo> initialImageStream() async* {
@@ -219,7 +279,13 @@ ImageProvider? getThumbnailImageProvider(
   final assetId = asset is RemoteAsset ? asset.id : (asset as LocalAsset).remoteId;
   final thumbhash = asset is RemoteAsset ? asset.thumbHash ?? "" : "";
   return assetId != null
-      ? RemoteImageProvider.thumbnail(assetId: assetId, thumbhash: thumbhash, edited: edited, decodeSize: remoteSize)
+      ? RemoteImageProvider.thumbnail(
+          assetId: assetId,
+          thumbhash: thumbhash,
+          edited: edited,
+          decodeSize: remoteSize,
+          assetType: asset.type,
+        )
       : null;
 }
 

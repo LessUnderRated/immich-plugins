@@ -6,6 +6,7 @@ import 'package:immich_mobile/constants/enums.dart';
 import 'package:immich_mobile/domain/models/asset/base_asset.model.dart';
 import 'package:immich_mobile/generated/translations.g.dart';
 import 'package:immich_mobile/presentation/actions/action.dart';
+import 'package:immich_mobile/presentation/actions/action_ids.dart';
 import 'package:immich_mobile/providers/background_sync.provider.dart';
 import 'package:immich_mobile/repositories/download.repository.dart';
 import 'package:immich_mobile/utils/error_handler.dart';
@@ -18,6 +19,9 @@ final _stateProvider = Provider.family.autoDispose<List<RemoteAsset>?, ActionSou
 
 class DownloadAction extends AssetActionBuilder {
   const DownloadAction({required super.source});
+
+  @override
+  String get id => ActionIds.download;
 
   @override
   ActionItem? create(BuildContext context, WidgetRef ref) {

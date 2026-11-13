@@ -11,6 +11,8 @@ import 'package:immich_mobile/domain/models/config/app_config.dart';
 import 'package:immich_mobile/domain/services/offline_user.service.dart';
 import 'package:immich_mobile/generated/codegen_loader.g.dart';
 import 'package:immich_mobile/generated/translations.g.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/shell/shell_hooks.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/shell/shell_ids.dart';
 import 'package:immich_mobile/providers/background_sync.provider.dart';
 import 'package:immich_mobile/providers/device_plugins.provider.dart';
 import 'package:immich_mobile/providers/downloads_rule.provider.dart';
@@ -322,7 +324,26 @@ class SplashScreenPageState extends ConsumerState<SplashScreenPage> {
     }
 
     if (mounted && context.router.current.name == SplashScreenRoute.name) {
-      unawaited(context.router.replaceAll([const TabShellRoute(), ?widget.deepLink]));
+      final router = context.router;
+      final deepLink = widget.deepLink;
+      await ShellHookRunner.guard<void>(
+        ShellHooks.splashNavigate,
+        {
+          'routes': [TabShellRoute.name, ?deepLink?.routeName],
+          'deepLink': deepLink?.routeName,
+          'path': null,
+        },
+        (args) async {
+          unawaited(router.replaceAll([const TabShellRoute(), ?deepLink]));
+          final path = args['path'];
+          if (path is String && path.isNotEmpty) {
+            unawaited(router.pushPath(path));
+          }
+        },
+        decode: (_) {},
+        event: ShellEvents.appReady,
+        eventData: (args, _) => {'deepLink': deepLink?.routeName, 'path': args['path']},
+      );
     }
   }
 

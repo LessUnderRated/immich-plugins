@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:immich_mobile/domain/models/asset/base_asset.model.dart';
 import 'package:immich_mobile/domain/services/timeline.service.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/shell/shell_hooks.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/shell/shell_ids.dart';
 import 'package:immich_mobile/platform/view_intent_api.g.dart';
 import 'package:immich_mobile/providers/asset_viewer/asset_viewer.provider.dart';
 import 'package:immich_mobile/providers/auth.provider.dart';
@@ -71,12 +73,26 @@ class AndroidViewIntentHandler implements ViewIntentHandler {
       return;
     }
 
-    final resolvedAsset = await _viewIntentAssetResolver.resolve(attachment);
-    _logger.fine('resolved view intent asset: ${resolvedAsset.asset}');
-    await _openAssetViewer(
-      resolvedAsset.asset,
-      resolvedAsset.timelineService,
-      viewIntentFilePath: resolvedAsset.viewIntentFilePath,
+    // Plugins may cancel or take over (`instead`) opening a file sent to the app.
+    await ShellHookRunner.guard<void>(
+      ShellHooks.intentView,
+      {'path': attachment.path, 'mimeType': attachment.mimeType, 'localAssetId': attachment.localAssetId},
+      (args) async {
+        final payload = ViewIntentPayload(
+          path: args['path'] as String? ?? attachment.path,
+          mimeType: args['mimeType'] as String? ?? attachment.mimeType,
+          localAssetId: args['localAssetId'] as String? ?? attachment.localAssetId,
+        );
+        final resolvedAsset = await _viewIntentAssetResolver.resolve(payload);
+        _logger.fine('resolved view intent asset: ${resolvedAsset.asset}');
+        await _openAssetViewer(
+          resolvedAsset.asset,
+          resolvedAsset.timelineService,
+          viewIntentFilePath: resolvedAsset.viewIntentFilePath,
+        );
+      },
+      decode: (_) {},
+      event: ShellEvents.intentViewed,
     );
   }
 

@@ -5,6 +5,7 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:immich_mobile/constants/enums.dart';
 import 'package:immich_mobile/domain/models/asset/base_asset.model.dart';
 import 'package:immich_mobile/presentation/actions/action.dart';
+import 'package:immich_mobile/presentation/actions/action_ids.dart';
 import 'package:immich_mobile/presentation/actions/private_files.helpers.dart';
 import 'package:immich_mobile/providers/background_sync.provider.dart';
 import 'package:immich_mobile/providers/private_vault.provider.dart';
@@ -17,6 +18,9 @@ final _stateProvider = Provider.family.autoDispose<List<LocalAsset>?, ActionSour
 
 class MoveToPrivateAction extends AssetActionBuilder {
   const MoveToPrivateAction({required super.source});
+
+  @override
+  String get id => ActionIds.moveToPrivate;
 
   @override
   ActionItem? create(BuildContext context, WidgetRef ref) {

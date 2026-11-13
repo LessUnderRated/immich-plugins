@@ -6,19 +6,27 @@ import 'package:drift/drift.dart';
 import 'package:http/http.dart' as http;
 import 'package:immich_mobile/data/db/main/database.dart';
 import 'package:immich_mobile/data/db/main/table/local/asset.dart';
+import 'package:immich_mobile/data/db/main/table/remote/asset.dart';
 import 'package:immich_mobile/domain/models/asset/base_asset.model.dart';
 import 'package:immich_mobile/domain/models/device_plugin.model.dart';
 import 'package:immich_mobile/domain/services/offline_user.service.dart';
 import 'package:immich_mobile/infrastructure/plugins/device_plugin_store.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/data/media_writer.dart';
 import 'package:immich_mobile/infrastructure/plugins/plugin_host_extras.dart';
 import 'package:immich_mobile/infrastructure/plugins/plugin_runtime.dart';
 import 'package:immich_mobile/infrastructure/repositories/app_album.repository.dart';
+import 'package:immich_mobile/infrastructure/repositories/device_album.repository.dart';
 import 'package:immich_mobile/infrastructure/repositories/device_edit.repository.dart';
+import 'package:immich_mobile/infrastructure/repositories/device_tag.repository.dart';
 import 'package:logging/logging.dart';
 import 'package:photo_manager/photo_manager.dart' hide AssetType;
 
 const _engineStateFile = 'engine.json';
 const _batchSize = 200;
+
+/// A host function plugins call with `host.callHost(name, argsJson)`: receives the calling plugin's name and the
+/// decoded argument array, returns any JSON value. Throw [HostFunctionException] for a status other than 500.
+typedef HostFunction = Future<Object?> Function(String plugin, List<dynamic> args);
 
 class HostFunctionException implements Exception {
   final int status;
@@ -45,7 +53,14 @@ class DeviceWorkflowEngine {
   final PluginRuntime _runtime;
   final DeviceEditRepository _edits;
   final AppAlbumRepository _albums;
+
+  /// Replaces device photos for `writeImage` (keeps the original, makes the result the edit base).
+  final MediaWriter? mediaWriter;
+
+  /// Device tags (`bulkTagAssets`, AssetV1 `tags`).
+  final DeviceTagRepository? tagRepository;
   final _log = Logger('DeviceWorkflowEngine');
+  StreamSubscription<String>? _createdSubscription;
 
   final Map<String, DevicePlugin> _loaded = {};
   final List<DeviceWorkflowRun> recentRuns = [];
@@ -54,19 +69,80 @@ class DeviceWorkflowEngine {
   bool _pending = false;
   Future<void>? _ready;
 
-  DeviceWorkflowEngine(this._db, this._store, this._runtime, this._edits, this._albums) {
+  DeviceWorkflowEngine(
+    this._db,
+    this._store,
+    this._runtime,
+    this._edits,
+    this._albums, {
+    this.mediaWriter,
+    this.tagRepository,
+  }) {
     _runtime.hostHandler = _handleHostCall;
     _runtime.eventHandler = (plugin, name, payload) => _performUi(plugin, {'type': name, ...?_decodeMap(payload)});
+    // Items the app itself writes (copies, saves) are not "new photos" for workflows.
+    _createdSubscription = MediaWriter.created.listen((id) => unawaited(_markCreated(id)));
+  }
+
+  /// Stops watching the database and the media writer.
+  Future<void> dispose() async {
+    _debounce?.cancel();
+    await _watch?.cancel();
+    await _createdSubscription?.cancel();
   }
 
   Stream<void> get changes => _changes.stream;
+
+  /// The native plugin bridge (method channel `immich/dex_plugins`).
+  PluginRuntime get runtime => _runtime;
+
+  /// Host functions registered with the plugin kernel. Consulted before the built-in names below, so a registered
+  /// function can also upgrade a legacy one; names neither knows answer 501.
+  HostFunction? Function(String name)? hostLookup;
+
+  /// The kernel's event bus. When set, [emit] hands events to it (pattern subscriptions, throttling, non-blocking);
+  /// without it (background isolates, tests) events are delivered here as before.
+  void Function(String event, Map<String, dynamic> data)? eventBus;
+
+  /// Enabled plugins whose code is loaded, in display order.
+  Future<List<DevicePlugin>> activePlugins() async {
+    await ensureReady();
+    return [
+      for (final plugin in await _store.list())
+        if (plugin.enabled && _loaded.containsKey(plugin.name)) plugin,
+    ];
+  }
+
+  /// Whether [plugin] is enabled and its code is loaded.
+  bool isLoaded(String plugin) => _loaded.containsKey(plugin);
 
   Future<void> ensureReady() => _ready ??= _initialize();
 
   Future<void> _initialize() async {
     await _store.installFromDropFolder();
+    await _importLegacyTags();
     await reload();
     unawaited(emit('app.start', const {}));
+  }
+
+  /// Moves tags kept in `engine.json` (before device tags existed) into [DeviceTagRepository], once.
+  Future<void> _importLegacyTags() async {
+    final tags = tagRepository;
+    if (tags == null) {
+      return;
+    }
+    try {
+      final state = await _store.readJson(_engineStateFile);
+      final legacy = state['tags'];
+      if (legacy is! Map || legacy.isEmpty) {
+        return;
+      }
+      await tags.importAssetTags({for (final MapEntry(:key, :value) in legacy.entries) '$key': _strings(value)});
+      final latest = await _store.readJson(_engineStateFile)..remove('tags');
+      await _store.writeJson(_engineStateFile, latest);
+    } catch (error, stack) {
+      _log.warning('Unable to import plugin tags', error, stack);
+    }
   }
 
   Future<List<DevicePlugin>> plugins() => _store.list();
@@ -109,7 +185,22 @@ class DeviceWorkflowEngine {
     ];
   }
 
-  Future<Map<String, dynamic>> assetJson(LocalAsset asset) => _assetV1(asset);
+  /// AssetV1 JSON for a local or a remote asset (remote assets add `ownerId`, `visibility`, `stackId`, ... and their
+  /// exif). Both carry `isLocal`, `isRemote`, `localId` and `remoteId`.
+  Future<Map<String, dynamic>> assetJson(BaseAsset asset) => switch (asset) {
+    final LocalAsset local => _assetV1(local),
+    final RemoteAsset remote => _remoteAssetV1(remote),
+  };
+
+  /// Finds an asset by id: a local asset id first, then a remote asset id.
+  Future<BaseAsset?> findAsset(String id) async {
+    final local = await (_db.localAssetEntity.select()..where((row) => row.id.equals(id))).getSingleOrNull();
+    if (local != null) {
+      return local.toDto();
+    }
+    final remote = await (_db.remoteAssetEntity.select()..where((row) => row.id.equals(id))).getSingleOrNull();
+    return remote?.toDto();
+  }
 
   Future<String> pluginsRoot() async => (await _store.root).path;
 
@@ -133,7 +224,7 @@ class DeviceWorkflowEngine {
     }
   }
 
-  Future<void> runContribution(PluginContribution contribution, {List<LocalAsset> assets = const []}) async {
+  Future<void> runContribution(PluginContribution contribution, {List<BaseAsset> assets = const []}) async {
     final method = contribution.method;
     if (method == null) {
       if (contribution.view != null) {
@@ -152,13 +243,18 @@ class DeviceWorkflowEngine {
       'workflow': {'id': 'button', 'authToken': '', 'stepId': contribution.id},
       'data': {
         'slot': contribution.slot,
-        'assets': [for (final asset in assets) await _assetV1(asset)],
+        'assets': [for (final asset in assets) await assetJson(asset)],
       },
     });
     await performResponse(contribution.plugin, response);
   }
 
   Future<void> emit(String event, Map<String, dynamic> data) async {
+    final bus = eventBus;
+    if (bus != null) {
+      bus(event, data);
+      return;
+    }
     for (final plugin in await _store.list()) {
       final method = plugin.events[event];
       if (method == null || !plugin.enabled || !_loaded.containsKey(plugin.name)) {
@@ -241,10 +337,50 @@ class DeviceWorkflowEngine {
     };
   }
 
+  /// Replaces a local photo with plugin pixels. In-place replacements go through [DeviceEditRepository.replaceBase]:
+  /// the original stays backed up and the new image becomes the base later non-destructive edits render from (so a
+  /// later crop or mosaic does not silently undo the replacement). Formats that cannot be replaced in place are saved
+  /// as a new copy, as before.
   Future<Map<String, dynamic>> _writeImage(String assetId, Map<String, dynamic> image) async {
     final asset = await _localAsset(assetId);
     final bytes = await PluginHostExtras.decodePixels(image, png: _edits.replacesAsPng(asset));
-    final result = await _edits.replaceImage(asset, bytes);
+    final writer = mediaWriter;
+    if (writer != null) {
+      final pixels = image['encoded'] is! String;
+      try {
+        final written = await writer.replace(
+          assetId,
+          bytes: bytes,
+          width: pixels ? (image['width'] as num?)?.toInt() : null,
+          height: pixels ? (image['height'] as num?)?.toInt() : null,
+        );
+        return {'assetId': written.assetId ?? assetId, 'outcome': written.outcome.name, 'createdId': written.createdId};
+      } on MediaWriteException catch (error) {
+        throw HostFunctionException(error.status, error.message);
+      }
+    }
+    final DeviceEditResult result;
+    if (_edits.replaceFormat(asset) != null) {
+      final temp = File(
+        '${Directory.systemTemp.path}/plugin-write-${asset.id}-${DateTime.now().microsecondsSinceEpoch}.bin',
+      );
+      await temp.writeAsBytes(bytes, flush: true);
+      try {
+        final pixels = image['encoded'] is! String;
+        result = await _edits.replaceBase(
+          asset,
+          temp,
+          width: pixels ? (image['width'] as num?)?.toInt() : null,
+          height: pixels ? (image['height'] as num?)?.toInt() : null,
+        );
+      } finally {
+        if (temp.existsSync()) {
+          await temp.delete();
+        }
+      }
+    } else {
+      result = await _edits.replaceImage(asset, bytes);
+    }
     if (result.createdId != null) {
       await _markCreated(result.createdId!);
     }
@@ -409,7 +545,7 @@ class DeviceWorkflowEngine {
   Future<List<LocalAsset>> _assetsAfter(int watermark) {
     final query = _db.localAssetEntity.select()
       ..where((row) => CustomExpression<bool>('CAST(id AS INTEGER) > $watermark'))
-      ..orderBy([(row) => OrderingTerm.asc(CustomExpression<int>('CAST(id AS INTEGER)'))])
+      ..orderBy([(row) => OrderingTerm.asc(const CustomExpression<int>('CAST(id AS INTEGER)'))])
       ..limit(_batchSize);
     return query.map((row) => row.toDto()).get();
   }
@@ -527,6 +663,15 @@ class DeviceWorkflowEngine {
         for (final tag in tags) {'id': tag, 'value': tag, 'name': tag.split('/').last},
       ],
       'ocr': null,
+      'isLocal': true,
+      'isRemote': asset.remoteId != null,
+      'localId': asset.id,
+      'remoteId': asset.remoteId,
+      'width': asset.width,
+      'height': asset.height,
+      'durationMs': asset.durationMs,
+      'isEdited': asset.isEdited,
+      'storage': asset.storage.name,
       'exifInfo': {
         'exifImageWidth': asset.width,
         'exifImageHeight': asset.height,
@@ -560,15 +705,85 @@ class DeviceWorkflowEngine {
     };
   }
 
+  Future<Map<String, dynamic>> _remoteAssetV1(RemoteAsset asset) async {
+    final exif = await (_db.remoteExifEntity.select()..where((row) => row.assetId.equals(asset.id))).getSingleOrNull();
+    final created = asset.createdAt.toUtc().toIso8601String();
+    return {
+      'id': asset.id,
+      'ownerId': asset.ownerId,
+      'type': switch (asset.type) {
+        AssetType.image => 'IMAGE',
+        AssetType.video => 'VIDEO',
+        AssetType.audio => 'AUDIO',
+        AssetType.other => 'OTHER',
+      },
+      'originalFileName': asset.name,
+      'originalPath': asset.name,
+      'isFavorite': asset.isFavorite,
+      'visibility': asset.visibility.name,
+      'livePhotoVideoId': asset.livePhotoVideoId,
+      'checksum': asset.checksum,
+      'fileCreatedAt': created,
+      'fileModifiedAt': asset.updatedAt.toUtc().toIso8601String(),
+      'localDateTime': asset.createdAt.toLocal().toIso8601String(),
+      'duration': asset.durationMs == null ? null : Duration(milliseconds: asset.durationMs!).toString(),
+      'isOffline': false,
+      'deletedAt': asset.deletedAt?.toUtc().toIso8601String(),
+      'tags': const [],
+      'ocr': null,
+      'isLocal': asset.localId != null,
+      'isRemote': true,
+      'localId': asset.localId,
+      'remoteId': asset.id,
+      'width': asset.width,
+      'height': asset.height,
+      'durationMs': asset.durationMs,
+      'isEdited': asset.isEdited,
+      'storage': asset.storage.name,
+      'thumbhash': asset.thumbHash,
+      'stackId': asset.stackId,
+      'uploadedAt': asset.uploadedAt?.toUtc().toIso8601String(),
+      'isTrashed': asset.isTrashed,
+      'isArchived': asset.isArchived,
+      'isLocked': asset.isLocked,
+      'exifInfo': {
+        'exifImageWidth': exif?.width ?? asset.width,
+        'exifImageHeight': exif?.height ?? asset.height,
+        'orientation': exif?.orientation,
+        'latitude': exif?.latitude,
+        'longitude': exif?.longitude,
+        'dateTimeOriginal': exif?.dateTimeOriginal?.toUtc().toIso8601String() ?? created,
+        'modifyDate': asset.updatedAt.toUtc().toIso8601String(),
+        'timeZone': exif?.timeZone,
+        'make': exif?.make,
+        'model': exif?.model,
+        'lensModel': exif?.lens,
+        'fNumber': exif?.fNumber,
+        'focalLength': exif?.focalLength,
+        'iso': exif?.iso,
+        'exposureTime': exif?.exposureTime,
+        'fileSizeInByte': exif?.fileSize,
+        'city': exif?.city,
+        'state': exif?.state,
+        'country': exif?.country,
+        'description': exif?.description,
+        'rating': exif?.rating,
+        'fps': null,
+        'livePhotoCID': null,
+        'projectionType': exif?.projectionType,
+        'profileDescription': null,
+        'colorspace': null,
+        'bitsPerSample': null,
+        'tags': const [],
+      },
+    };
+  }
+
   Future<void> _applyChanges(LocalAsset asset, Map<String, dynamic> changes) async {
     final favorite = changes['isFavorite'];
     if (favorite is bool && favorite != asset.isFavorite) {
-      final entity = await AssetEntity.fromId(asset.id);
-      if (entity != null) {
-        Platform.isAndroid
-            ? await PhotoManager.editor.android.favoriteAsset(entity: entity, favorite: favorite)
-            : await PhotoManager.editor.darwin.favoriteAsset(entity: entity, favorite: favorite);
-      }
+      // through the data layer so `asset.favorite` hooks and `asset.favorited` events see it
+      await const DeviceAlbumRepository().setFavoriteByIds([asset.id], favorite);
     }
     if (changes['visibility'] != null && changes['visibility'] != 'timeline') {
       _log.info('Visibility "${changes['visibility']}" is not available on the device; ignoring for ${asset.name}');
@@ -589,7 +804,15 @@ class DeviceWorkflowEngine {
     }
   }
 
+  /// Runs host function [name] for [plugin] exactly as a `host.callHost` call would (registered functions first, then
+  /// the built-in names). Throws [HostFunctionException] for unknown names.
+  Future<Object?> dispatchHost(String plugin, String name, List<dynamic> args) => _dispatch(plugin, name, args);
+
   Future<Object?> _dispatch(String plugin, String name, List<dynamic> args) {
+    final registered = hostLookup?.call(name);
+    if (registered != null) {
+      return registered(plugin, args);
+    }
     Map<String, dynamic> arg(int index) =>
         index < args.length && args[index] is Map ? Map<String, dynamic>.from(args[index] as Map) : {};
     String text(int index) => index < args.length ? '${args[index]}' : '';
@@ -690,32 +913,44 @@ class DeviceWorkflowEngine {
   }
 
   Future<List<String>> _tagsFor(String assetId) async {
+    final tags = tagRepository;
+    if (tags != null) {
+      return [for (final tag in await tags.forAsset(assetId)) tag.value];
+    }
     final state = await _store.readJson(_engineStateFile);
-    final tags = state['tags'];
-    return tags is Map ? _strings(tags[assetId]) : const [];
+    final legacy = state['tags'];
+    return legacy is Map ? _strings(legacy[assetId]) : const [];
   }
 
   Future<List<String>> knownTags() async {
+    final tags = tagRepository;
+    if (tags != null) {
+      return [for (final tag in await tags.all()) tag.value];
+    }
     final state = await _store.readJson(_engineStateFile);
-    final tags = state['tags'];
-    if (tags is! Map) {
+    final legacy = state['tags'];
+    if (legacy is! Map) {
       return const [];
     }
-    return tags.values.expand(_strings).toSet().toList()..sort();
+    return legacy.values.expand(_strings).toSet().toList()..sort();
   }
 
   Future<Map<String, dynamic>> _bulkTag(List<String> tagIds, List<String> assetIds) async {
+    final tags = tagRepository;
+    if (tags != null) {
+      return {'count': await tags.assign(assetIds, tagIds)};
+    }
     final state = await _store.readJson(_engineStateFile);
-    final tags = state['tags'] is Map ? Map<String, dynamic>.from(state['tags'] as Map) : <String, dynamic>{};
+    final legacy = state['tags'] is Map ? Map<String, dynamic>.from(state['tags'] as Map) : <String, dynamic>{};
     var count = 0;
     for (final assetId in assetIds) {
-      final current = _strings(tags[assetId]).toSet();
+      final current = _strings(legacy[assetId]).toSet();
       final before = current.length;
       current.addAll(tagIds);
       count += current.length - before;
-      tags[assetId] = current.toList();
+      legacy[assetId] = current.toList();
     }
-    state['tags'] = tags;
+    state['tags'] = legacy;
     await _store.writeJson(_engineStateFile, state);
     return {'count': count};
   }

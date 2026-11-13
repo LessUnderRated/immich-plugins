@@ -70,7 +70,7 @@ class _TagDetailsState extends ConsumerState<TagDetails> {
     }
 
     final tags = ref.watch(Store.tags.forAsset(asset.id)).valueOrNull ?? const <Tag>[];
-    final tagAction = const TagAction(source: .viewer).create(context, ref);
+    final tagAction = const TagAction(source: .viewer).resolve(context, ref);
     final tagBackground = context.primaryColor.withAlpha(25);
     final tagBorder = context.colorScheme.outlineVariant;
     final tagText = context.colorScheme.onSurface;
@@ -101,7 +101,7 @@ class _TagDetailsState extends ConsumerState<TagDetails> {
               shape: const StadiumBorder(),
               side: BorderSide(color: tagBorder),
               deleteIcon: Icon(Icons.close, size: 16, color: tagText),
-              onDeleted: switch (UntagAction(source: .viewer, tagId: tag.id).create(context, ref)) {
+              onDeleted: switch (UntagAction(source: .viewer, tagId: tag.id).resolve(context, ref)) {
                 final action? => () async => await action.onAction(),
                 null => null,
               },

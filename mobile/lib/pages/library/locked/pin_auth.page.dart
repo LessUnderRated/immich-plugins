@@ -6,6 +6,9 @@ import 'package:flutter_hooks/flutter_hooks.dart' show useState;
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:immich_mobile/extensions/build_context_extensions.dart';
 import 'package:immich_mobile/generated/translations.g.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/library/library_hooks.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/library/library_ids.dart';
+import 'package:immich_mobile/presentation/widgets/library/library_plugins.widget.dart';
 import 'package:immich_mobile/providers/local_auth.provider.dart';
 import 'package:immich_mobile/routing/router.dart';
 import 'package:immich_mobile/widgets/forms/pin_registration_form.dart';
@@ -37,6 +40,7 @@ class PinAuthPage extends HookConsumerWidget {
         ),
       );
 
+      LibraryPluginHooks.emit(LibraryEvents.lockedFolderUnlocked, () => const {'method': 'biometric'});
       unawaited(context.replaceRoute(const LockedFolderRoute()));
     }
 
@@ -85,24 +89,33 @@ class PinAuthPage extends HookConsumerWidget {
                         child: PinVerificationForm(
                           autoFocus: true,
                           onSuccess: (_) {
+                            LibraryPluginHooks.emit(LibraryEvents.lockedFolderUnlocked, () => const {'method': 'pin'});
                             unawaited(context.replaceRoute(const LockedFolderRoute()));
                           },
                         ),
                       ),
                       const SizedBox(height: 24),
-                      if (localAuthState.canAuthenticate) ...[
-                        Padding(
-                          padding: const EdgeInsets.only(right: 16.0),
-                          child: TextButton.icon(
-                            icon: const Icon(Icons.fingerprint, size: 28),
-                            onPressed: () => unawaited(enableBiometricAuth()),
-                            label: Text(
-                              context.t.use_biometric,
-                              style: context.textTheme.labelLarge?.copyWith(color: context.primaryColor, fontSize: 18),
+                      ...LibraryPluginHooks.arrange(LibrarySlots.pinAuthActions, [
+                        if (localAuthState.canAuthenticate)
+                          (
+                            id: 'biometric',
+                            item: Padding(
+                              padding: const EdgeInsets.only(right: 16.0),
+                              child: TextButton.icon(
+                                icon: const Icon(Icons.fingerprint, size: 28),
+                                onPressed: () =>
+                                    libraryTap(context, LibraryPages.pinAuth, 'biometric', enableBiometricAuth),
+                                label: Text(
+                                  context.t.use_biometric,
+                                  style: context.textTheme.labelLarge?.copyWith(
+                                    color: context.primaryColor,
+                                    fontSize: 18,
+                                  ),
+                                ),
+                              ),
                             ),
                           ),
-                        ),
-                      ],
+                      ]),
                     ],
                   ),
           ),

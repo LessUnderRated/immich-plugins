@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:immich_mobile/generated/translations.g.dart';
 import 'package:immich_mobile/presentation/actions/action.dart';
+import 'package:immich_mobile/presentation/actions/action_ids.dart';
 import 'package:immich_mobile/presentation/pages/search/paginated_search.provider.dart';
 import 'package:immich_mobile/providers/asset_viewer/asset_viewer.provider.dart';
 import 'package:immich_mobile/routing/router.dart';
@@ -13,6 +14,12 @@ class SimilarPhotosAction extends ActionBuilder {
   final String assetId;
 
   const SimilarPhotosAction({required this.assetId});
+
+  @override
+  String get id => ActionIds.similarPhotos;
+
+  @override
+  Map<String, dynamic> get hookArgs => {'assetId': assetId};
 
   @override
   ActionItem create(BuildContext context, WidgetRef ref) =>

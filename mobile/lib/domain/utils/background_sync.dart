@@ -1,6 +1,8 @@
 import 'dart:async';
 
 import 'package:immich_mobile/domain/utils/migrate_cloud_ids.dart' as m;
+import 'package:immich_mobile/domain/utils/plugin_data_ids.dart';
+import 'package:immich_mobile/domain/utils/plugin_hooks.dart';
 import 'package:immich_mobile/domain/utils/sync_linked_album.dart';
 import 'package:immich_mobile/providers/infrastructure/sync.provider.dart';
 import 'package:immich_mobile/utils/isolate.dart';
@@ -97,13 +99,47 @@ class BackgroundSyncManager {
     }
   }
 
+  /// Whether each kind of sync is running right now.
+  Map<String, bool> get running => {
+    'local': _deviceAlbumSyncTask != null,
+    'remote': _syncTask != null,
+    'hash': _hashTask != null,
+    'cloudIds': _cloudIdSyncTask != null,
+    'linkedAlbums': _linkedAlbumSyncTask != null,
+    'websocket': _syncWebsocketTask != null,
+  };
+
+  static void _emitStarted(String kind, [Map<String, dynamic> extra = const {}]) =>
+      PluginHooks.emit(DataEvents.syncStarted, () => {'kind': kind, ...extra});
+
+  static void _emitCompleted(String kind, [Map<String, dynamic> extra = const {}]) =>
+      PluginHooks.emit(DataEvents.syncCompleted, () => {'kind': kind, ...extra});
+
+  static void _emitFailed(String kind, Object error) =>
+      PluginHooks.emit(DataEvents.syncFailed, () => {'kind': kind, 'error': error.toString()});
+
+  /// Scans the device library into the local database; runs as `sync.run` with `kind: "local"` when it starts a
+  /// new scan (joining a running scan does not run the hook).
   // No need to cancel the task, as it can also be run when the user logs out
   Future<void> syncLocal({bool full = false}) {
     if (_deviceAlbumSyncTask != null) {
       return _deviceAlbumSyncTask!.future.catchError((_) {}, test: (error) => error is CanceledError);
     }
+    return PluginHooks.run<void>(
+      DataHooks.syncRun,
+      () => {'kind': 'local', 'full': full},
+      () => _syncLocal(full: full),
+      withArgs: (args) => _syncLocal(full: PluginArgs.boolean(args['full']) ?? full),
+    );
+  }
+
+  Future<void> _syncLocal({bool full = false}) {
+    if (_deviceAlbumSyncTask != null) {
+      return _deviceAlbumSyncTask!.future.catchError((_) {}, test: (error) => error is CanceledError);
+    }
 
     onLocalSyncStart?.call();
+    _emitStarted('local', {'full': full});
 
     // We use a ternary operator to avoid [_deviceAlbumSyncTask] from being
     // captured by the closure passed to [runInIsolateGentle].
@@ -123,20 +159,31 @@ class BackgroundSyncManager {
             _deviceAlbumSyncTask = null;
           }
           onLocalSyncComplete?.call();
+          _emitCompleted('local', {'full': full});
         })
         .catchError((error) {
           if (error is! CanceledError) {
             onLocalSyncError?.call(error.toString());
+            _emitFailed('local', error);
           }
         });
   }
 
+  /// Hashes new device assets; runs as `sync.run` with `kind: "hash"` when it starts a new job.
   Future<void> hashAssets() {
+    if (_hashTask != null) {
+      return _hashTask!.future.catchError((_) {}, test: (error) => error is CanceledError);
+    }
+    return PluginHooks.run<void>(DataHooks.syncRun, () => {'kind': 'hash'}, _hashAssets);
+  }
+
+  Future<void> _hashAssets() {
     if (_hashTask != null) {
       return _hashTask!.future.catchError((_) {}, test: (error) => error is CanceledError);
     }
 
     onHashingStart?.call();
+    _emitStarted('hash');
 
     final task = _hashTask = runInIsolateGentle(
       computation: (ref) => ref.read(hashServiceProvider).hashAssets(),
@@ -146,6 +193,7 @@ class BackgroundSyncManager {
     return task
         .whenComplete(() {
           onHashingComplete?.call();
+          _emitCompleted('hash');
           if (identical(_hashTask, task)) {
             _hashTask = null;
           }
@@ -153,17 +201,38 @@ class BackgroundSyncManager {
         .catchError((error) {
           if (error is! CanceledError) {
             onHashingError?.call(error.toString());
+            _emitFailed('hash', error);
           }
         });
   }
 
+  /// Syncs with the server; runs as `sync.run` with `kind: "remote"` when it starts a new sync. A cancelled hook
+  /// resolves to false.
   Future<bool> syncRemote({bool enqueue = false}) {
+    if (_syncTask != null) {
+      _syncQueued |= enqueue;
+      return _syncTask!.future.then((result) => result ?? false).catchError((_) => false);
+    }
+    return PluginHooks.orSkip(
+      PluginHooks.run<bool>(
+        DataHooks.syncRun,
+        () => {'kind': 'remote', 'enqueue': enqueue},
+        () => _syncRemote(enqueue: enqueue),
+        encode: (success) => success,
+        decode: (json) => PluginArgs.boolean(json) ?? false,
+      ),
+      false,
+    );
+  }
+
+  Future<bool> _syncRemote({bool enqueue = false}) {
     if (_syncTask != null) {
       _syncQueued |= enqueue;
       return _syncTask!.future.then((result) => result ?? false).catchError((_) => false);
     }
 
     onRemoteSyncStart?.call();
+    _emitStarted('remote');
 
     final task = _syncTask = runInIsolateGentle(
       computation: (ref) => ref.read(syncStreamServiceProvider).sync(),
@@ -173,12 +242,14 @@ class BackgroundSyncManager {
         .then((result) {
           final success = result ?? false;
           onRemoteSyncComplete?.call(success);
+          _emitCompleted('remote', {'success': success});
           _syncQueued &= success;
           return success;
         })
         .catchError((error) {
           if (error is! CanceledError) {
             onRemoteSyncError?.call(error.toString());
+            _emitFailed('remote', error);
           }
           _syncQueued = false;
           return false;
@@ -190,7 +261,7 @@ class BackgroundSyncManager {
             _syncTask = null;
             if (_syncQueued) {
               _syncQueued = false;
-              unawaited(syncRemote());
+              unawaited(_syncRemote());
             }
           }
         });

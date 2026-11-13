@@ -1,5 +1,6 @@
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:immich_mobile/data/data_controller.dart';
+import 'package:immich_mobile/data/db/logger/database.dart';
 import 'package:immich_mobile/data/db/main/database.dart';
 import 'package:immich_mobile/data/store/activity.dart';
 import 'package:immich_mobile/data/store/ocr.dart';
@@ -34,6 +35,9 @@ abstract final class Store {
   /// Direct API access for the repositories that have not yet been migrated to `Store`
   // TODO(rewrite): Remove this provider once all repositories have migrated to `Store`
   static final api = Provider<ApiService>((ref) => ref.watch(_apiServiceProvider));
+
+  /// The log database (raw access for plugins through `db.query` with `database: "logs"`)
+  static final logDb = Provider<DriftLogger>((ref) => ref.watch(_dataControllerProvider).logDb);
 
   // ----
 

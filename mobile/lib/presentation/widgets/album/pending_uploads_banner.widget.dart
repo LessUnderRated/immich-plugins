@@ -5,7 +5,10 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:immich_mobile/domain/models/asset/base_asset.model.dart';
 import 'package:immich_mobile/extensions/build_context_extensions.dart';
 import 'package:immich_mobile/generated/translations.g.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/library/library_hooks.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/library/library_ids.dart';
 import 'package:immich_mobile/presentation/widgets/images/thumbnail.widget.dart';
+import 'package:immich_mobile/presentation/widgets/library/library_plugins.widget.dart';
 import 'package:immich_mobile/providers/album/pending_album_uploads.provider.dart';
 import 'package:immich_mobile/providers/backup/asset_upload_progress.provider.dart';
 
@@ -99,7 +102,13 @@ class _PendingUploadsBannerContent extends StatelessWidget {
     return Material(
       color: hasFailures ? context.colorScheme.errorContainer : context.colorScheme.surfaceContainerHigh,
       child: InkWell(
-        onTap: () => unawaited(PendingUploadsBanner._openSheet(context, albumId)),
+        onTap: () => libraryTap(
+          context,
+          LibraryPages.remoteAlbum,
+          'pendingUploads',
+          () => PendingUploadsBanner._openSheet(context, albumId),
+          args: () => {'albumId': albumId, 'count': count},
+        ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -185,27 +194,41 @@ class _PendingUploadsSheet extends ConsumerWidget {
                   Expanded(
                     child: Text('${context.t.uploading} (${pending.length})', style: context.textTheme.titleMedium),
                   ),
-                  if (canAbort)
-                    TextButton.icon(
-                      onPressed: () {
-                        final cancelToken = ref.read(manualUploadCancelTokenProvider);
-                        if (cancelToken != null && !cancelToken.isCompleted) {
-                          cancelToken.complete();
-                        }
-                        ref.read(manualUploadCancelTokenProvider.notifier).state = null;
-                        ref.read(pendingAlbumUploadsProvider(albumId).notifier).clear();
-                      },
-                      icon: const Icon(Icons.stop_circle_outlined, size: 18),
-                      label: Text(context.t.cancel),
-                      style: TextButton.styleFrom(foregroundColor: context.colorScheme.error),
-                    )
-                  else if (failedCount > 0)
-                    TextButton.icon(
-                      onPressed: () => ref.read(pendingAlbumUploadsProvider(albumId).notifier).clearFailed(),
-                      icon: const Icon(Icons.clear_rounded, size: 18),
-                      label: Text(context.t.clear_failed_count(count: failedCount)),
-                      style: TextButton.styleFrom(foregroundColor: context.colorScheme.error),
-                    ),
+                  ...LibraryPluginHooks.arrange(LibrarySlots.remoteAlbumPendingUploadsActions, [
+                    if (canAbort)
+                      (
+                        id: 'cancelUploads',
+                        item: TextButton.icon(
+                          onPressed: () => libraryTap(context, LibraryPages.remoteAlbum, 'cancelUploads', () {
+                            final cancelToken = ref.read(manualUploadCancelTokenProvider);
+                            if (cancelToken != null && !cancelToken.isCompleted) {
+                              cancelToken.complete();
+                            }
+                            ref.read(manualUploadCancelTokenProvider.notifier).state = null;
+                            ref.read(pendingAlbumUploadsProvider(albumId).notifier).clear();
+                          }, args: () => {'albumId': albumId}),
+                          icon: const Icon(Icons.stop_circle_outlined, size: 18),
+                          label: Text(context.t.cancel),
+                          style: TextButton.styleFrom(foregroundColor: context.colorScheme.error),
+                        ),
+                      )
+                    else if (failedCount > 0)
+                      (
+                        id: 'clearFailed',
+                        item: TextButton.icon(
+                          onPressed: () => libraryTap(
+                            context,
+                            LibraryPages.remoteAlbum,
+                            'clearFailed',
+                            () => ref.read(pendingAlbumUploadsProvider(albumId).notifier).clearFailed(),
+                            args: () => {'albumId': albumId},
+                          ),
+                          icon: const Icon(Icons.clear_rounded, size: 18),
+                          label: Text(context.t.clear_failed_count(count: failedCount)),
+                          style: TextButton.styleFrom(foregroundColor: context.colorScheme.error),
+                        ),
+                      ),
+                  ]),
                 ],
               ),
             ),

@@ -17,8 +17,8 @@ import 'package:immich_mobile/constants/locales.dart';
 import 'package:immich_mobile/data/store.dart';
 import 'package:immich_mobile/domain/services/background_worker.service.dart';
 import 'package:immich_mobile/extensions/build_context_extensions.dart';
-import 'package:immich_mobile/generated/codegen_loader.g.dart';
 import 'package:immich_mobile/generated/translations.g.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/shell/shell_host_functions.dart';
 import 'package:immich_mobile/infrastructure/repositories/network.repository.dart';
 import 'package:immich_mobile/pages/common/splash_screen.page.dart';
 import 'package:immich_mobile/platform/background_worker_lock_api.g.dart';
@@ -28,9 +28,7 @@ import 'package:immich_mobile/presentation/pages/picker/picker_app.dart';
 import 'package:immich_mobile/presentation/plugins/plugin_ui.dart';
 import 'package:immich_mobile/providers/app_life_cycle.provider.dart';
 import 'package:immich_mobile/providers/asset_viewer/share_intent_upload.provider.dart';
-import 'package:immich_mobile/providers/device_plugins.provider.dart';
 import 'package:immich_mobile/providers/infrastructure/platform.provider.dart';
-import 'package:immich_mobile/providers/infrastructure/settings.provider.dart';
 import 'package:immich_mobile/providers/locale_provider.dart';
 import 'package:immich_mobile/providers/routes.provider.dart';
 import 'package:immich_mobile/providers/theme.provider.dart';
@@ -149,6 +147,7 @@ class ImmichAppState extends ConsumerState<ImmichApp> with WidgetsBindingObserve
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    emitAppLifecycle(state);
     switch (state) {
       case AppLifecycleState.resumed:
         dPrint(() => "[APP STATE] resumed");
@@ -241,6 +240,7 @@ class ImmichAppState extends ConsumerState<ImmichApp> with WidgetsBindingObserve
   void didChangeDependencies() {
     super.didChangeDependencies();
     Intl.defaultLocale = context.locale.toLanguageTag();
+    pluginStrings.setCurrentLocale(context.locale);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       configureFileDownloaderNotifications();
     });
@@ -265,10 +265,7 @@ class ImmichAppState extends ConsumerState<ImmichApp> with WidgetsBindingObserve
       }
     });
 
-    final pluginEngine = ref.read(deviceWorkflowEngineProvider);
-    pluginEngine.uiHandler = (plugin, action) => performPluginUiAction(ref.read(appRouterProvider), plugin, action);
-    _pluginChanges = pluginEngine.changes.listen((_) => unawaited(pluginSurfaces.refresh(pluginEngine)));
-    unawaited(pluginEngine.ensureReady().then((_) => pluginSurfaces.refresh(pluginEngine)));
+    _pluginChanges = startPluginKernel(ref);
 
     ref.read(viewIntentHandlerProvider).init();
     ref.read(shareIntentUploadProvider.notifier).init();
@@ -294,6 +291,7 @@ class ImmichAppState extends ConsumerState<ImmichApp> with WidgetsBindingObserve
   Widget build(BuildContext context) {
     final router = ref.watch(appRouterProvider);
     final immichTheme = ref.watch(immichThemeProvider);
+    final fontFamily = ref.watch(immichFontFamilyProvider);
 
     return ProviderScope(
       overrides: [localeProvider.overrideWithValue(context.locale)],
@@ -304,9 +302,9 @@ class ImmichAppState extends ConsumerState<ImmichApp> with WidgetsBindingObserve
         localizationsDelegates: [...context.localizationDelegates, ...fallbackLocalizationDelegates],
         supportedLocales: context.supportedLocales,
         locale: context.locale,
-        themeMode: ref.watch(appConfigProvider.select((config) => config.theme.mode)),
-        darkTheme: getThemeData(colorScheme: immichTheme.dark, locale: context.locale),
-        theme: getThemeData(colorScheme: immichTheme.light, locale: context.locale),
+        themeMode: ref.watch(immichThemeModeProvider),
+        darkTheme: getThemeData(colorScheme: immichTheme.dark, locale: context.locale, fontFamily: fontFamily),
+        theme: getThemeData(colorScheme: immichTheme.light, locale: context.locale, fontFamily: fontFamily),
         builder: (context, child) => ImmichTranslationProvider(
           translations: ImmichTranslations(
             submit: context.t.submit,
@@ -337,7 +335,7 @@ class MainWidget extends StatelessWidget {
       path: translationsPath,
       useFallbackTranslations: true,
       fallbackLocale: locales.values.first,
-      assetLoader: const CodegenLoader(),
+      assetLoader: pluginStrings.loader,
       child: const ImmichApp(),
     );
   }

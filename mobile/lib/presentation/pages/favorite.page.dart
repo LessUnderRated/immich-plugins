@@ -2,6 +2,7 @@ import 'package:auto_route/auto_route.dart';
 import 'package:flutter/material.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:immich_mobile/generated/translations.g.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/timeline/timeline_plugin_ids.dart';
 import 'package:immich_mobile/presentation/widgets/bottom_sheet/favorite_bottom_sheet.widget.dart';
 import 'package:immich_mobile/presentation/widgets/timeline/timeline.widget.dart';
 import 'package:immich_mobile/providers/infrastructure/timeline.provider.dart';
@@ -28,6 +29,7 @@ class FavoritePage extends StatelessWidget {
         }),
       ],
       child: Timeline(
+        page: TimelinePages.favorite,
         appBar: MesmerizingSliverAppBar(title: context.t.favorites),
         bottomSheet: const FavoriteBottomSheet(),
       ),

@@ -4,11 +4,15 @@ import 'package:flutter/material.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:immich_mobile/generated/translations.g.dart';
 import 'package:immich_mobile/presentation/actions/action.dart';
+import 'package:immich_mobile/presentation/actions/action_ids.dart';
 import 'package:immich_mobile/providers/cast.provider.dart';
 import 'package:immich_mobile/widgets/asset_viewer/cast_dialog.dart';
 
 class CastAction extends ActionBuilder {
   const CastAction();
+
+  @override
+  String get id => ActionIds.cast;
 
   @override
   ActionItem create(BuildContext context, WidgetRef ref) {

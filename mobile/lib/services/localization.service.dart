@@ -1,5 +1,6 @@
 // ignore_for_file: implementation_imports
 
+import 'package:easy_localization/easy_localization.dart' show AssetLoader;
 import 'package:easy_localization/src/easy_localization_controller.dart';
 import 'package:easy_localization/src/localization.dart';
 import 'package:immich_mobile/constants/locales.dart';
@@ -7,14 +8,16 @@ import 'package:immich_mobile/generated/codegen_loader.g.dart';
 import 'package:immich_mobile/utils/debug_print.dart';
 
 /// Workaround to manually load translations in another Isolate
-Future<bool> loadTranslations() async {
+///
+/// [assetLoader] replaces the generated loader, e.g. with one that merges plugin string overrides.
+Future<bool> loadTranslations({AssetLoader assetLoader = const CodegenLoader()}) async {
   await EasyLocalizationController.initEasyLocation();
 
   final controller = EasyLocalizationController(
     supportedLocales: locales.values.toList(),
     useFallbackTranslations: true,
     saveLocale: true,
-    assetLoader: const CodegenLoader(),
+    assetLoader: assetLoader,
     path: translationsPath,
     useOnlyLangCode: false,
     onLoadError: (e) => dPrint(() => e.toString()),

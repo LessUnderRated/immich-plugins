@@ -48,3 +48,15 @@
 
 # Dex plugins are compiled against this API and loaded at runtime
 -keep interface app.alextran.immich.plugins.api.** { *; }
+# Classes of the API too (ImmichNative, PluginTheme, Kotlin DefaultImpls used by plugins compiled with older Kotlin).
+-keep class app.alextran.immich.plugins.api.** { *; }
+# WorkManager stores the worker class name of scheduled plugin work; keep it stable across releases.
+-keep class app.alextran.immich.plugins.PluginWorker { *; }
+-keep class app.alextran.immich.plugins.PluginNotificationReceiver { *; }
+# Types that appear in the plugin API or that plugins reach through it (Kotlin function types and Unit in
+# PluginHost signatures, the Flutter engine and messenger exposed to advanced plugins).
+-keep class kotlin.jvm.functions.** { *; }
+-keep class kotlin.Unit { *; }
+-keep class io.flutter.plugin.common.** { *; }
+-keep class io.flutter.embedding.engine.FlutterEngine { public *; }
+-keep class io.flutter.embedding.engine.dart.DartExecutor { public *; }

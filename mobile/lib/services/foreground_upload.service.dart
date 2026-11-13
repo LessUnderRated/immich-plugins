@@ -8,6 +8,9 @@ import 'package:immich_mobile/domain/models/asset/asset_metadata.model.dart';
 import 'package:immich_mobile/domain/models/asset/base_asset.model.dart' hide AssetVisibility;
 import 'package:immich_mobile/domain/models/store.model.dart';
 import 'package:immich_mobile/domain/services/asset.service.dart';
+import 'package:immich_mobile/domain/utils/plugin_data_ids.dart';
+import 'package:immich_mobile/domain/utils/plugin_hooks.dart';
+import 'package:immich_mobile/domain/utils/plugin_json.dart';
 import 'package:immich_mobile/entities/store.entity.dart';
 import 'package:immich_mobile/extensions/network_capability_extensions.dart';
 import 'package:immich_mobile/extensions/platform_extensions.dart';
@@ -82,8 +85,30 @@ class ForegroundUploadService {
     return _backupRepository.getCandidates(userId, onlyHashed: onlyHashed);
   }
 
-  /// Bulk upload of backup candidates from selected albums
+  /// Bulk upload of backup candidates from selected albums; runs as `backup.start` (`mode: "foreground"`) and emits
+  /// `backup.started` / `backup.stopped`.
   Future<void> uploadCandidates(
+    String userId,
+    Completer<void> cancelToken, {
+    UploadCallbacks callbacks = const UploadCallbacks(),
+    bool useSequentialUpload = false,
+  }) => PluginHooks.run<void>(
+    DataHooks.backupStart,
+    () => {'mode': 'foreground', 'userId': userId, 'sequential': useSequentialUpload},
+    () async {
+      PluginHooks.emit(DataEvents.backupStarted, () => {'mode': 'foreground', 'userId': userId});
+      try {
+        await _uploadCandidates(userId, cancelToken, callbacks: callbacks, useSequentialUpload: useSequentialUpload);
+      } finally {
+        PluginHooks.emit(
+          DataEvents.backupStopped,
+          () => {'mode': 'foreground', 'userId': userId, 'cancelled': cancelToken.isCompleted || shouldAbortUpload},
+        );
+      }
+    },
+  );
+
+  Future<void> _uploadCandidates(
     String userId,
     Completer<void> cancelToken, {
     UploadCallbacks callbacks = const UploadCallbacks(),
@@ -340,7 +365,9 @@ class ForegroundUploadService {
         final livePhotoTitle = p.setExtension(originalFileName, p.extension(livePhotoFile.path));
 
         final onProgress = callbacks.onProgress;
-        final livePhotoResult = await _uploadRepository.uploadFile(
+        final livePhotoResult = await _uploadHooked(
+          kind: 'livePhotoVideo',
+          asset: asset,
           file: livePhotoFile,
           originalFileName: livePhotoTitle,
           // Visibility hidden on upload to prevent the server from running regular jobs on the live photo asset
@@ -378,7 +405,9 @@ class ForegroundUploadService {
       }
 
       final onProgress = callbacks.onProgress;
-      final result = await _uploadRepository.uploadFile(
+      final result = await _uploadHooked(
+        kind: 'asset',
+        asset: asset,
         file: file,
         originalFileName: originalFileName,
         fields: fields,
@@ -453,7 +482,9 @@ class ForegroundUploadService {
         'duration': '0',
       };
 
-      return await _uploadRepository.uploadFile(
+      return await _uploadHooked(
+        kind: 'shareIntent',
+        asset: null,
         file: file,
         originalFileName: filename,
         fields: fields,
@@ -464,6 +495,95 @@ class ForegroundUploadService {
     } catch (e) {
       return UploadResult.error(errorMessage: e.toString());
     }
+  }
+
+  /// Uploads one file through the `upload.asset` hook.
+  ///
+  /// `before` may skip the upload (cancel) or change `path` (upload another file, e.g. a converted copy),
+  /// `fileName` and the multipart `fields`; `instead` may upload by itself and answer `{ remoteId }`; `after` sees
+  /// `{ success, remoteId, cancelled, error, status }`. Emits `upload.started`, `upload.completed`,
+  /// `upload.failed` or `upload.skipped`, and `asset.uploaded` on success.
+  Future<UploadResult> _uploadHooked({
+    required String kind,
+    required LocalAsset? asset,
+    required File file,
+    required String originalFileName,
+    required Map<String, String> fields,
+    required Completer<void>? cancelToken,
+    void Function(int bytes, int totalBytes)? onProgress,
+    required String logContext,
+  }) async {
+    Map<String, dynamic> info() => {
+      'kind': kind,
+      'localId': asset?.localId ?? fields['deviceAssetId'],
+      'fileName': originalFileName,
+    };
+    Future<UploadResult> upload(File file, String fileName, Map<String, String> fields) {
+      PluginHooks.emit(DataEvents.uploadStarted, () => {...info(), 'path': file.path});
+      return _uploadRepository.uploadFile(
+        file: file,
+        originalFileName: fileName,
+        fields: fields,
+        cancelToken: cancelToken,
+        onProgress: onProgress,
+        logContext: logContext,
+      );
+    }
+
+    final UploadResult result;
+    try {
+      result = await PluginHooks.run<UploadResult>(
+        DataHooks.uploadAsset,
+        () => {
+          ...info(),
+          'asset': asset == null ? null : PluginJson.asset(asset),
+          'path': file.path,
+          'fields': fields,
+        },
+        () => upload(file, originalFileName, fields),
+        withArgs: (args) => upload(
+          File(PluginArgs.string(args['path']) ?? file.path),
+          PluginArgs.string(args['fileName']) ?? originalFileName,
+          args['fields'] is Map
+              ? {for (final entry in (args['fields'] as Map).entries) '${entry.key}': '${entry.value}'}
+              : fields,
+        ),
+        encode: (result) => {
+          'success': result.isSuccess,
+          'cancelled': result.isCancelled,
+          'remoteId': result.remoteAssetId,
+          'error': result.errorMessage,
+          'status': result.statusCode,
+        },
+        decode: (json) => switch (json) {
+          {'remoteId': final String remoteId} => UploadResult.success(remoteAssetId: remoteId),
+          {'cancelled': true} => UploadResult.cancelled(),
+          {'error': final Object error} => UploadResult.error(errorMessage: '$error', statusCode: null),
+          _ => throw const FormatException('upload.asset result needs remoteId, cancelled or error'),
+        },
+      );
+    } catch (error) {
+      if (!PluginHooks.isCancelled(error)) {
+        rethrow;
+      }
+      // A plugin skipped this upload: neither an error nor a cancellation of the whole run.
+      PluginHooks.emit(DataEvents.uploadSkipped, () => {...info(), 'message': PluginHooks.cancelMessage(error)});
+      return UploadResult.error();
+    }
+
+    if (result.isSuccess) {
+      PluginHooks.emit(DataEvents.uploadCompleted, () => {...info(), 'remoteId': result.remoteAssetId});
+      PluginHooks.emit(
+        DataEvents.assetUploaded,
+        () => {'localId': asset?.localId, 'remoteId': result.remoteAssetId, 'kind': kind},
+      );
+    } else if (!result.isCancelled) {
+      PluginHooks.emit(
+        DataEvents.uploadFailed,
+        () => {...info(), 'error': result.errorMessage, 'status': result.statusCode},
+      );
+    }
+    return result;
   }
 
   bool _shouldRequireWiFi(LocalAsset asset) {

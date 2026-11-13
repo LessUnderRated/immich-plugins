@@ -6,9 +6,13 @@ import 'package:immich_mobile/domain/models/user.model.dart';
 import 'package:immich_mobile/extensions/asyncvalue_extensions.dart';
 import 'package:immich_mobile/extensions/build_context_extensions.dart';
 import 'package:immich_mobile/generated/translations.g.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/library/library_hooks.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/library/library_ids.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/library/library_json.dart';
 import 'package:immich_mobile/presentation/widgets/images/local_album_thumbnail.widget.dart';
 import 'package:immich_mobile/presentation/widgets/images/remote_image_provider.dart';
 import 'package:immich_mobile/presentation/widgets/images/thumbnail.widget.dart';
+import 'package:immich_mobile/presentation/widgets/library/library_plugins.widget.dart';
 import 'package:immich_mobile/presentation/widgets/people/partner_user_avatar.widget.dart';
 import 'package:immich_mobile/providers/infrastructure/album.provider.dart';
 import 'package:immich_mobile/providers/infrastructure/memory.provider.dart';
@@ -21,19 +25,31 @@ import 'package:immich_mobile/widgets/common/immich_sliver_app_bar.dart';
 import 'package:immich_mobile/widgets/map/map_thumbnail.dart';
 import 'package:maplibre_gl/maplibre_gl.dart';
 
+const _page = LibraryPages.library;
+
+/// Opens a library entry through hook `action.library.<id>`.
+void _open(
+  BuildContext context,
+  String id,
+  Future<void> Function() original, {
+  Map<String, dynamic> Function()? args,
+}) => libraryTap(context, _page, id, original, args: args);
+
 @RoutePage()
 class LibraryPage extends StatelessWidget {
   const LibraryPage({super.key});
 
   @override
   Widget build(BuildContext context) {
-    return const Scaffold(
+    return Scaffold(
       body: CustomScrollView(
         slivers: [
-          ImmichSliverAppBar(snap: false, floating: false, pinned: true, showUploadButton: false),
-          _ActionButtonGrid(),
-          _CollectionCards(),
-          _QuickAccessButtonList(),
+          const ImmichSliverAppBar(snap: false, floating: false, pinned: true, showUploadButton: false),
+          ...LibraryPluginHooks.arrange(LibrarySlots.librarySections, const [
+            (id: 'actions', item: _ActionButtonGrid()),
+            (id: 'collections', item: _CollectionCards()),
+            (id: 'quickAccess', item: _QuickAccessButtonList()),
+          ]),
         ],
       ),
     );
@@ -46,48 +62,61 @@ class _ActionButtonGrid extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final isTrashEnable = ref.watch(serverInfoProvider.select((state) => state.serverFeatures.trash));
+    final buttons = LibraryPluginHooks.arrange(LibrarySlots.libraryActions, [
+      (
+        id: 'favorites',
+        item: _ActionButton(
+          icon: Icons.favorite_outline_rounded,
+          onTap: () => _open(context, 'favorites', () => context.pushRoute(const FavoriteRoute())),
+          label: context.t.favorites,
+        ),
+      ),
+      (
+        id: 'archived',
+        item: _ActionButton(
+          icon: Icons.archive_outlined,
+          onTap: () => _open(context, 'archived', () => context.pushRoute(const ArchiveRoute())),
+          label: context.t.archived,
+        ),
+      ),
+      (
+        id: 'sharedLinks',
+        item: _ActionButton(
+          icon: Icons.link_outlined,
+          onTap: () => _open(context, 'sharedLinks', () => context.pushRoute(const SharedLinkRoute())),
+          label: context.t.shared_links,
+        ),
+      ),
+      if (isTrashEnable)
+        (
+          id: 'trash',
+          item: _ActionButton(
+            icon: Icons.delete_outline_rounded,
+            onTap: () => _open(context, 'trash', () => context.pushRoute(const TrashRoute())),
+            label: context.t.trash,
+          ),
+        ),
+    ]);
+
+    // Two buttons per row
+    final rows = <Widget>[];
+    for (var i = 0; i < buttons.length; i += 2) {
+      if (rows.isNotEmpty) {
+        rows.add(const SizedBox(height: 8));
+      }
+      rows.add(
+        Row(
+          children: [
+            buttons[i],
+            if (i + 1 < buttons.length) ...[const SizedBox(width: 8), buttons[i + 1]],
+          ],
+        ),
+      );
+    }
 
     return SliverPadding(
       padding: const EdgeInsets.only(left: 16, top: 16, right: 16, bottom: 12),
-      sliver: SliverToBoxAdapter(
-        child: Column(
-          children: [
-            Row(
-              children: [
-                _ActionButton(
-                  icon: Icons.favorite_outline_rounded,
-                  onTap: () => context.pushRoute(const FavoriteRoute()),
-                  label: context.t.favorites,
-                ),
-                const SizedBox(width: 8),
-                _ActionButton(
-                  icon: Icons.archive_outlined,
-                  onTap: () => context.pushRoute(const ArchiveRoute()),
-                  label: context.t.archived,
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            Row(
-              children: [
-                _ActionButton(
-                  icon: Icons.link_outlined,
-                  onTap: () => context.pushRoute(const SharedLinkRoute()),
-                  label: context.t.shared_links,
-                ),
-                isTrashEnable ? const SizedBox(width: 8) : const SizedBox.shrink(),
-                isTrashEnable
-                    ? _ActionButton(
-                        icon: Icons.delete_outline_rounded,
-                        onTap: () => context.pushRoute(const TrashRoute()),
-                        label: context.t.trash,
-                      )
-                    : const SizedBox.shrink(),
-              ],
-            ),
-          ],
-        ),
-      ),
+      sliver: SliverToBoxAdapter(child: Column(children: rows)),
     );
   }
 }
@@ -129,18 +158,18 @@ class _CollectionCards extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const SliverPadding(
-      padding: EdgeInsets.symmetric(horizontal: 16),
+    return SliverPadding(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
       sliver: SliverToBoxAdapter(
         child: Wrap(
           spacing: 8,
           runSpacing: 8,
-          children: [
-            _PeopleCollectionCard(),
-            _PlacesCollectionCard(),
-            _LocalAlbumsCollectionCard(),
-            _MemoriesCollectionCard(),
-          ],
+          children: LibraryPluginHooks.arrange(LibrarySlots.libraryCollections, const [
+            (id: 'people', item: _PeopleCollectionCard()),
+            (id: 'places', item: _PlacesCollectionCard()),
+            (id: 'onThisDevice', item: _LocalAlbumsCollectionCard()),
+            (id: 'memories', item: _MemoriesCollectionCard()),
+          ]),
         ),
       ),
     );
@@ -161,7 +190,7 @@ class _PeopleCollectionCard extends ConsumerWidget {
         final size = context.width * widthFactor - 20.0;
 
         return GestureDetector(
-          onTap: () => context.pushRoute(const PeopleCollectionRoute()),
+          onTap: () => _open(context, 'people', () => context.pushRoute(const PeopleCollectionRoute())),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -226,7 +255,7 @@ class _PlacesCollectionCard extends StatelessWidget {
         final size = context.width * widthFactor - 20.0;
 
         return GestureDetector(
-          onTap: () => context.pushRoute(PlaceRoute(currentLocation: null)),
+          onTap: () => _open(context, 'places', () => context.pushRoute(PlaceRoute(currentLocation: null))),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -280,7 +309,7 @@ class _LocalAlbumsCollectionCard extends ConsumerWidget {
         final size = context.width * widthFactor - 20.0;
 
         return GestureDetector(
-          onTap: () => context.pushRoute(const LocalAlbumsRoute()),
+          onTap: () => _open(context, 'onThisDevice', () => context.pushRoute(const LocalAlbumsRoute())),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -350,7 +379,7 @@ class _MemoriesCollectionCard extends ConsumerWidget {
         final size = context.width * widthFactor - 20.0;
 
         return GestureDetector(
-          onTap: () => context.pushRoute(const MemoryListRoute()),
+          onTap: () => _open(context, 'memories', () => context.pushRoute(const MemoryListRoute())),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -436,30 +465,47 @@ class _QuickAccessButtonList extends ConsumerWidget {
     final partnerSharedWithAsync = ref.watch(sharedWithPartnerProvider);
     final partners = partnerSharedWithAsync.valueOrNull ?? [];
 
-    final items = [
-      _QuickAccessItem(
-        leading: const Icon(Icons.folder_outlined, size: 26),
-        title: context.t.folders,
-        onTap: () => context.pushRoute(FolderRoute()),
+    final items = LibraryPluginHooks.arrange(LibrarySlots.libraryQuickAccess, [
+      (
+        id: 'folders',
+        item: _QuickAccessItem(
+          leading: const Icon(Icons.folder_outlined, size: 26),
+          title: context.t.folders,
+          onTap: () => _open(context, 'folders', () => context.pushRoute(FolderRoute())),
+        ),
       ),
-      _QuickAccessItem(
-        leading: const Icon(Icons.lock_outline_rounded, size: 26),
-        title: context.t.locked_folder,
-        onTap: () => context.pushRoute(const LockedFolderRoute()),
+      (
+        id: 'lockedFolder',
+        item: _QuickAccessItem(
+          leading: const Icon(Icons.lock_outline_rounded, size: 26),
+          title: context.t.locked_folder,
+          onTap: () => _open(context, 'lockedFolder', () => context.pushRoute(const LockedFolderRoute())),
+        ),
       ),
-      _QuickAccessItem(
-        leading: const Icon(Icons.group_outlined, size: 26),
-        title: context.t.partners,
-        onTap: () => context.pushRoute(const PartnerRoute()),
+      (
+        id: 'partners',
+        item: _QuickAccessItem(
+          leading: const Icon(Icons.group_outlined, size: 26),
+          title: context.t.partners,
+          onTap: () => _open(context, 'partners', () => context.pushRoute(const PartnerRoute())),
+        ),
       ),
       for (final partner in partners)
-        _QuickAccessItem(
-          contentPadding: const EdgeInsets.only(left: 12.0, right: 18.0),
-          leading: PartnerUserAvatar(userId: partner.id, name: partner.name),
-          title: context.t.partner_list_user_photos(user: partner.name),
-          onTap: () => context.pushRoute(PartnerDetailRoute(partner: partner)),
+        (
+          id: 'partner:${partner.id}',
+          item: _QuickAccessItem(
+            contentPadding: const EdgeInsets.only(left: 12.0, right: 18.0),
+            leading: PartnerUserAvatar(userId: partner.id, name: partner.name),
+            title: context.t.partner_list_user_photos(user: partner.name),
+            onTap: () => _open(
+              context,
+              'partner',
+              () => context.pushRoute(PartnerDetailRoute(partner: partner)),
+              args: () => {'partner': LibraryJson.partner(partner)},
+            ),
+          ),
         ),
-    ];
+    ]);
 
     return SliverPadding(
       padding: const EdgeInsets.only(left: 16, top: 12, right: 16, bottom: 32),

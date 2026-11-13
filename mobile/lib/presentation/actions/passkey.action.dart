@@ -4,6 +4,7 @@ import 'package:immich_mobile/data/store.dart';
 import 'package:immich_mobile/domain/models/passkey.model.dart';
 import 'package:immich_mobile/generated/translations.g.dart';
 import 'package:immich_mobile/presentation/actions/action.dart';
+import 'package:immich_mobile/presentation/actions/action_ids.dart';
 import 'package:immich_mobile/providers/infrastructure/toast.provider.dart';
 import 'package:immich_mobile/utils/error_handler.dart';
 import 'package:immich_mobile/widgets/common/confirm_dialog.dart';
@@ -11,6 +12,9 @@ import 'package:immich_ui/immich_ui.dart';
 
 class PasskeyCreateAction extends ActionBuilder {
   const PasskeyCreateAction();
+
+  @override
+  String get id => ActionIds.passkeyCreate;
 
   @override
   ActionItem create(BuildContext context, WidgetRef ref) =>
@@ -33,6 +37,12 @@ class PasskeyCreateAction extends ActionBuilder {
 
 class PasskeyRenameAction extends ActionBuilder {
   const PasskeyRenameAction({required this.passkey});
+
+  @override
+  String get id => ActionIds.passkeyRename;
+
+  @override
+  Map<String, dynamic> get hookArgs => {'passkeyId': passkey.id};
 
   final Passkey passkey;
 
@@ -60,6 +70,12 @@ class PasskeyRenameAction extends ActionBuilder {
 
 class PasskeyDeleteAction extends ActionBuilder {
   const PasskeyDeleteAction({required this.passkey});
+
+  @override
+  String get id => ActionIds.passkeyDelete;
+
+  @override
+  Map<String, dynamic> get hookArgs => {'passkeyId': passkey.id};
 
   final Passkey passkey;
 

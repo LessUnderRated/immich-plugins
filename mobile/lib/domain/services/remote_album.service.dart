@@ -5,6 +5,9 @@ import 'package:immich_mobile/constants/enums.dart';
 import 'package:immich_mobile/domain/models/album/album.model.dart';
 import 'package:immich_mobile/domain/models/asset/base_asset.model.dart';
 import 'package:immich_mobile/domain/models/user.model.dart';
+import 'package:immich_mobile/domain/utils/plugin_data_ids.dart';
+import 'package:immich_mobile/domain/utils/plugin_hooks.dart';
+import 'package:immich_mobile/domain/utils/plugin_json.dart';
 import 'package:immich_mobile/infrastructure/repositories/remote_album.repository.dart';
 import 'package:immich_mobile/models/albums/album_search.model.dart';
 import 'package:immich_mobile/providers/album/album_sort_by_options.provider.dart';
@@ -55,8 +58,10 @@ class RemoteAlbumService {
     return _repository.watchAlbum(albumId);
   }
 
-  Future<List<RemoteAlbum>> getAll() {
-    return _repository.getAll();
+  /// Every remote album; plugins can filter, sort or extend the list through `album.query` (`kind: "remote"`).
+  Future<List<RemoteAlbum>> getAll() async {
+    final albums = await _repository.getAll();
+    return PluginHooks.filterList<RemoteAlbum>(DataHooks.albumQuery, () => {'kind': 'remote'}, albums, PluginJson.remoteAlbums);
   }
 
   Future<RemoteAlbum?> get(String albumId) {
@@ -120,6 +125,26 @@ class RemoteAlbumService {
     required UserDto owner,
     required List<String> assetIds,
     String? description,
+  }) => PluginHooks.run<RemoteAlbum>(
+    DataHooks.albumCreate,
+    () => {'kind': 'remote', 'name': title, 'description': description, 'assetIds': assetIds, 'ownerId': owner.id},
+    () => _createAlbum(title: title, owner: owner, assetIds: assetIds, description: description),
+    withArgs: (args) => _createAlbum(
+      title: PluginArgs.string(args['name']) ?? title,
+      owner: owner,
+      assetIds: PluginArgs.strings(args['assetIds']),
+      description: PluginArgs.string(args['description']),
+    ),
+    encode: PluginJson.remoteAlbum,
+    event: DataEvents.albumCreated,
+    eventData: (args, album) => PluginJson.remoteAlbum(album),
+  );
+
+  Future<RemoteAlbum> _createAlbum({
+    required String title,
+    required UserDto owner,
+    required List<String> assetIds,
+    String? description,
   }) async {
     final album = await _albumApiRepository.createDriftAlbum(
       title,
@@ -132,7 +157,50 @@ class RemoteAlbumService {
     return album;
   }
 
+  /// Runs as `album.rename` when only the name changes and as `album.update` otherwise.
   Future<RemoteAlbum> updateAlbum(
+    String albumId, {
+    String? name,
+    String? description,
+    String? thumbnailAssetId,
+    bool? isActivityEnabled,
+    AlbumAssetOrder? order,
+  }) {
+    final renameOnly =
+        name != null && description == null && thumbnailAssetId == null && isActivityEnabled == null && order == null;
+    return PluginHooks.run<RemoteAlbum>(
+      renameOnly ? DataHooks.albumRename : DataHooks.albumUpdate,
+      () => {
+        'kind': 'remote',
+        'id': albumId,
+        'name': ?name,
+        'description': ?description,
+        'coverAssetId': ?thumbnailAssetId,
+        'isActivityEnabled': ?isActivityEnabled,
+        'order': ?order?.name,
+      },
+      () => _updateAlbum(
+        albumId,
+        name: name,
+        description: description,
+        thumbnailAssetId: thumbnailAssetId,
+        isActivityEnabled: isActivityEnabled,
+        order: order,
+      ),
+      withArgs: (args) => _updateAlbum(
+        PluginArgs.string(args['id']) ?? albumId,
+        name: PluginArgs.string(args['name']),
+        description: PluginArgs.string(args['description']),
+        thumbnailAssetId: PluginArgs.string(args['coverAssetId']),
+        isActivityEnabled: PluginArgs.boolean(args['isActivityEnabled']),
+        order: AlbumAssetOrder.values.where((value) => value.name == args['order']).firstOrNull,
+      ),
+      encode: PluginJson.remoteAlbum,
+      event: renameOnly ? DataEvents.albumRenamed : DataEvents.albumUpdated,
+    );
+  }
+
+  Future<RemoteAlbum> _updateAlbum(
     String albumId, {
     String? name,
     String? description,
@@ -169,11 +237,33 @@ class RemoteAlbumService {
     return _repository.getUserRole(albumId, userId);
   }
 
-  Future<List<RemoteAsset>> getAssets(String albumId) {
-    return _repository.getAssets(albumId);
+  /// The assets of an album; plugins can change the list through `album.assets.query`.
+  Future<List<RemoteAsset>> getAssets(String albumId) async {
+    final assets = await _repository.getAssets(albumId);
+    return PluginHooks.filterList<RemoteAsset>(
+      DataHooks.albumAssetsQuery,
+      () => {'kind': 'remote', 'id': albumId},
+      assets,
+      () => PluginJson.list<RemoteAsset>((asset) => asset.id, PluginJson.asset),
+    );
   }
 
-  Future<({int added, int failed})> addAssets({required String albumId, required List<String> assetIds}) async {
+  Future<({int added, int failed})> addAssets({required String albumId, required List<String> assetIds}) =>
+      PluginHooks.run<({int added, int failed})>(
+        DataHooks.albumAddAssets,
+        () => {'kind': 'remote', 'id': albumId, 'assetIds': assetIds},
+        () => _addAssets(albumId: albumId, assetIds: assetIds),
+        withArgs: (args) =>
+            _addAssets(albumId: PluginArgs.string(args['id']) ?? albumId, assetIds: PluginArgs.strings(args['assetIds'])),
+        encode: (result) => {'added': result.added, 'failed': result.failed},
+        decode: (json) => json is Map
+            ? (added: PluginArgs.integer(json['added']) ?? 0, failed: PluginArgs.integer(json['failed']) ?? 0)
+            : (added: 0, failed: 0),
+        event: DataEvents.albumAssetsAdded,
+        eventData: (args, result) => {...args, 'added': result.added, 'failed': result.failed},
+      );
+
+  Future<({int added, int failed})> _addAssets({required String albumId, required List<String> assetIds}) async {
     final album = await _albumApiRepository.addAssets(albumId, assetIds);
 
     await _repository.addAssets(albumId, album.added);
@@ -281,28 +371,69 @@ class RemoteAlbumService {
 
     await _repository.upsertRemoteAssetStub(remoteId: remoteId, ownerId: uploader.id, source: source);
     await _repository.addAssets(albumId, result.added);
+    PluginHooks.emit(
+      DataEvents.albumAssetsAdded,
+      () => {'kind': 'remote', 'id': albumId, 'assetIds': result.added, 'added': result.added.length},
+    );
     return result.added.length;
   }
 
-  Future<void> deleteAlbum(String albumId) async {
+  Future<void> deleteAlbum(String albumId) => PluginHooks.run<void>(
+    DataHooks.albumDelete,
+    () => {'kind': 'remote', 'id': albumId},
+    () => _deleteAlbum(albumId),
+    withArgs: (args) => _deleteAlbum(PluginArgs.string(args['id']) ?? albumId),
+    event: DataEvents.albumDeleted,
+  );
+
+  Future<void> _deleteAlbum(String albumId) async {
     await _albumApiRepository.deleteAlbum(albumId);
 
     await _repository.deleteAlbum(albumId);
   }
 
-  Future<void> addUsers({required String albumId, required List<String> userIds}) async {
+  Future<void> addUsers({required String albumId, required List<String> userIds}) => PluginHooks.run<void>(
+    DataHooks.albumShare,
+    () => {'kind': 'remote', 'id': albumId, 'userIds': userIds},
+    () => _addUsers(albumId: albumId, userIds: userIds),
+    withArgs: (args) =>
+        _addUsers(albumId: PluginArgs.string(args['id']) ?? albumId, userIds: PluginArgs.strings(args['userIds'])),
+    event: DataEvents.albumShared,
+  );
+
+  Future<void> _addUsers({required String albumId, required List<String> userIds}) async {
     await _albumApiRepository.addUsers(albumId, userIds);
 
     return _repository.addUsers(albumId, userIds);
   }
 
-  Future<void> removeUser(String albumId, {required String userId}) async {
+  Future<void> removeUser(String albumId, {required String userId}) => PluginHooks.run<void>(
+    DataHooks.albumUnshare,
+    () => {'kind': 'remote', 'id': albumId, 'userId': userId},
+    () => _removeUser(albumId, userId: userId),
+    withArgs: (args) =>
+        _removeUser(PluginArgs.string(args['id']) ?? albumId, userId: PluginArgs.string(args['userId']) ?? userId),
+    event: DataEvents.albumUnshared,
+  );
+
+  Future<void> _removeUser(String albumId, {required String userId}) async {
     await _albumApiRepository.removeUser(albumId, userId: userId);
 
     return _repository.removeUser(albumId, userId: userId);
   }
 
-  Future<void> setActivityStatus(String albumId, bool enabled) async {
+  Future<void> setActivityStatus(String albumId, bool enabled) => PluginHooks.run<void>(
+    DataHooks.albumUpdate,
+    () => {'kind': 'remote', 'id': albumId, 'isActivityEnabled': enabled},
+    () => _setActivityStatus(albumId, enabled),
+    withArgs: (args) => _setActivityStatus(
+      PluginArgs.string(args['id']) ?? albumId,
+      PluginArgs.boolean(args['isActivityEnabled']) ?? enabled,
+    ),
+    event: DataEvents.albumUpdated,
+  );
+
+  Future<void> _setActivityStatus(String albumId, bool enabled) async {
     await _albumApiRepository.setActivityStatus(albumId, enabled);
 
     return _repository.setActivityStatus(albumId, enabled);
@@ -340,7 +471,19 @@ class RemoteAlbumService {
     return sortedAlbums;
   }
 
-  Future<int> removeAssets({required String albumId, required List<String> assetIds}) async {
+  Future<int> removeAssets({required String albumId, required List<String> assetIds}) => PluginHooks.run<int>(
+    DataHooks.albumRemoveAssets,
+    () => {'kind': 'remote', 'id': albumId, 'assetIds': assetIds},
+    () => _removeAssets(albumId: albumId, assetIds: assetIds),
+    withArgs: (args) =>
+        _removeAssets(albumId: PluginArgs.string(args['id']) ?? albumId, assetIds: PluginArgs.strings(args['assetIds'])),
+    encode: (removed) => removed,
+    decode: (json) => PluginArgs.integer(json) ?? 0,
+    event: DataEvents.albumAssetsRemoved,
+    eventData: (args, removed) => {...args, 'removed': removed},
+  );
+
+  Future<int> _removeAssets({required String albumId, required List<String> assetIds}) async {
     final result = await _albumApiRepository.removeAssets(albumId, assetIds);
     await _repository.removeAssets(albumId, result.removed);
     return result.removed.length;

@@ -5,6 +5,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_hooks/flutter_hooks.dart';
 import 'package:immich_mobile/extensions/build_context_extensions.dart';
 import 'package:immich_mobile/extensions/theme_extensions.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/shell/shell_ids.dart';
+import 'package:immich_mobile/presentation/widgets/shell/shell_list.widget.dart';
 import 'package:immich_mobile/routing/router.dart';
 import 'package:immich_mobile/widgets/forms/login/login_form.dart';
 import 'package:package_info_plus/package_info_plus.dart';
@@ -37,27 +39,43 @@ class LoginPage extends HookWidget {
             child: Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Text(
-                  'v${appVersion.value}',
-                  style: TextStyle(
-                    color: context.colorScheme.onSurfaceSecondary,
-                    fontWeight: FontWeight.bold,
-                    fontFamily: "GoogleSansCode",
+                ShellList(
+                  slot: ShellSlots.loginFooter,
+                  builder: (context, items) => Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      for (final (index, item) in items.indexed) ...[if (index > 0) const Text(' '), item],
+                    ],
                   ),
-                ),
-                const Text(' '),
-                GestureDetector(
-                  child: Text(
-                    'Logs',
-                    style: TextStyle(
-                      color: context.primaryColor,
-                      fontWeight: FontWeight.bold,
-                      fontFamily: "GoogleSansCode",
+                  items: [
+                    ShellItem(
+                      LoginIds.version,
+                      Text(
+                        'v${appVersion.value}',
+                        style: TextStyle(
+                          color: context.colorScheme.onSurfaceSecondary,
+                          fontWeight: FontWeight.bold,
+                          fontFamily: "GoogleSansCode",
+                        ),
+                      ),
                     ),
-                  ),
-                  onTap: () {
-                    unawaited(context.pushRoute(const AppLogRoute()));
-                  },
+                    ShellItem(
+                      LoginIds.logs,
+                      GestureDetector(
+                        child: Text(
+                          'Logs',
+                          style: TextStyle(
+                            color: context.primaryColor,
+                            fontWeight: FontWeight.bold,
+                            fontFamily: "GoogleSansCode",
+                          ),
+                        ),
+                        onTap: () {
+                          unawaited(context.pushRoute(const AppLogRoute()));
+                        },
+                      ),
+                    ),
+                  ],
                 ),
               ],
             ),

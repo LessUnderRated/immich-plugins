@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/viewer/image_pipeline.dart';
 
 /// An [Image] that incrementally follows the content of an [ImageProvider]
 ///
@@ -26,10 +27,28 @@ class _ProgressiveImageState extends State<ProgressiveImage> {
 
   bool _isFirstFrame = true;
 
+  /// The image pipeline generation the shown image belongs to; a new one (plugins changed) reloads the image.
+  int _generation = ImagePipeline.generation.value;
+
   @override
   void initState() {
     super.initState();
+    ImagePipeline.generation.addListener(_onPipelineChanged);
     _resolve();
+  }
+
+  void _onPipelineChanged() {
+    if (!mounted || _generation == ImagePipeline.generation.value) {
+      return;
+    }
+    setState(() {
+      _generation = ImagePipeline.generation.value;
+      _removeListener();
+      _activeStream = null;
+      _setImageInfo(null);
+      _frame = null;
+      _resolve();
+    });
   }
 
   @override
@@ -42,6 +61,7 @@ class _ProgressiveImageState extends State<ProgressiveImage> {
 
   @override
   void dispose() {
+    ImagePipeline.generation.removeListener(_onPipelineChanged);
     _removeListener();
     _setImageInfo(null);
 
@@ -115,7 +135,11 @@ class _ProgressiveImageState extends State<ProgressiveImage> {
   }
 
   @override
-  Widget build(BuildContext context) => widget.builder(context, _frame ?? widget.provider);
+  Widget build(BuildContext context) {
+    final child = widget.builder(context, _frame ?? widget.provider);
+    // After a pipeline change the image widgets below must resolve the provider again.
+    return _generation == 0 ? child : KeyedSubtree(key: ValueKey(_generation), child: child);
+  }
 }
 
 /// Directly displays a single image

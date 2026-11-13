@@ -7,7 +7,11 @@ import 'package:fluttertoast/fluttertoast.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:immich_mobile/extensions/build_context_extensions.dart';
 import 'package:immich_mobile/generated/translations.g.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/library/library_hooks.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/library/library_ids.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/library/library_json.dart';
 import 'package:immich_mobile/models/shared_link/shared_link.model.dart';
+import 'package:immich_mobile/presentation/widgets/library/library_plugins.widget.dart';
 import 'package:immich_mobile/providers/server_info.provider.dart';
 import 'package:immich_mobile/providers/shared_link.provider.dart';
 import 'package:immich_mobile/routing/router.dart';
@@ -69,6 +73,20 @@ class SharedLinkItem extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final thumbnailUrl = sharedLink.thumbAssetId != null ? getThumbnailUrlForRemoteId(sharedLink.thumbAssetId!) : null;
     final imageSize = math.min(context.width / 4, 100.0);
+    const page = LibraryPages.sharedLink;
+    Map<String, dynamic> linkArgs() => {'link': LibraryJson.sharedLink(sharedLink)};
+    final shown = LibraryPluginHooks.arrange(LibrarySlots.sharedLinkTileActions, const [
+      (id: 'edit', item: 'edit'),
+      (id: 'copy', item: 'copy'),
+      (id: 'delete', item: 'delete'),
+    ]).toSet();
+    void edit() => libraryTap(
+      context,
+      page,
+      'edit',
+      () => context.pushRoute(SharedLinkEditRoute(existingLink: sharedLink)),
+      args: linkArgs,
+    );
 
     Future<void> copyShareLinkToClipboard() async {
       final externalDomain = ref.read(serverInfoProvider.select((s) => s.serverConfig.externalDomain));
@@ -114,7 +132,7 @@ class SharedLinkItem extends ConsumerWidget {
                 key: key,
                 textInfo: '',
                 noImageIcon: Icons.image_not_supported_outlined,
-                onTap: () => context.pushRoute(SharedLinkEditRoute(existingLink: sharedLink)),
+                onTap: shown.contains('edit') ? edit : null,
               ),
       );
     }
@@ -160,44 +178,54 @@ class SharedLinkItem extends ConsumerWidget {
       );
     }
 
-    return Dismissible(
-      key: ValueKey(sharedLink.id),
-      direction: DismissDirection.endToStart,
-      background: Container(
-        color: Theme.of(context).colorScheme.error,
-        alignment: Alignment.centerRight,
-        padding: const EdgeInsets.only(right: 20),
-        child: Icon(Icons.delete, color: Theme.of(context).colorScheme.onError),
-      ),
-      confirmDismiss: (_) async {
-        final confirmed = await showDialog<bool>(
-          context: context,
-          builder: (BuildContext context) => ConfirmDialog(
-            title: context.t.delete_shared_link_dialog_title,
-            content: context.t.confirm_delete_shared_link,
-            onOk: () {},
-          ),
-        );
+    return LibraryTileDecoration(
+      slot: LibrarySlots.sharedLinkTile,
+      slotContext: linkArgs,
+      child: Dismissible(
+        key: ValueKey(sharedLink.id),
+        direction: shown.contains('delete') ? DismissDirection.endToStart : DismissDirection.none,
+        background: Container(
+          color: Theme.of(context).colorScheme.error,
+          alignment: Alignment.centerRight,
+          padding: const EdgeInsets.only(right: 20),
+          child: Icon(Icons.delete, color: Theme.of(context).colorScheme.onError),
+        ),
+        confirmDismiss: (_) async {
+          final confirmed = await showDialog<bool>(
+            context: context,
+            builder: (BuildContext context) => ConfirmDialog(
+              title: context.t.delete_shared_link_dialog_title,
+              content: context.t.confirm_delete_shared_link,
+              onOk: () {},
+            ),
+          );
 
-        if (confirmed == true && context.mounted) {
-          await ref.read(sharedLinksStateProvider.notifier).deleteLink(sharedLink.id);
-          return true;
-        }
+          if (confirmed == true && context.mounted) {
+            var deleted = false;
+            await runLibraryAction<void>(context, page, 'delete', () async {
+              await ref.read(sharedLinksStateProvider.notifier).deleteLink(sharedLink.id);
+              deleted = true;
+            }, args: linkArgs);
+            return deleted;
+          }
 
-        return false;
-      },
-      child: InkWell(
-        onTap: () => context.pushRoute(SharedLinkEditRoute(existingLink: sharedLink)),
-        onLongPress: copyShareLinkToClipboard,
-        child: Padding(
-          padding: const EdgeInsets.all(12),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              buildThumbnail(),
-              const SizedBox(width: 12),
-              Expanded(child: buildSharedLinkDetails()),
-            ],
+          return false;
+        },
+        child: InkWell(
+          onTap: shown.contains('edit') ? edit : null,
+          onLongPress: shown.contains('copy')
+              ? () => libraryTap(context, page, 'copy', copyShareLinkToClipboard, args: linkArgs)
+              : null,
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                buildThumbnail(),
+                const SizedBox(width: 12),
+                Expanded(child: buildSharedLinkDetails()),
+              ],
+            ),
           ),
         ),
       ),

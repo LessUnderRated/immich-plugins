@@ -1,6 +1,9 @@
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:immich_mobile/constants/enums.dart';
 import 'package:immich_mobile/domain/models/asset/base_asset.model.dart';
+import 'package:immich_mobile/domain/utils/plugin_data_ids.dart';
+import 'package:immich_mobile/domain/utils/plugin_hooks.dart';
+import 'package:immich_mobile/domain/utils/plugin_json.dart';
 import 'package:immich_mobile/models/folder/recursive_folder.model.dart';
 import 'package:immich_mobile/models/folder/root_folder.model.dart';
 import 'package:immich_mobile/repositories/folder_api.repository.dart';
@@ -14,8 +17,18 @@ class FolderService {
 
   FolderService(this._folderApiRepository);
 
+  /// Plugins can hide, reorder or add folder paths through `folder.query` (`scope: "paths"`).
   Future<RootFolder> getFolderStructure(SortOrder order) async {
-    final paths = await _folderApiRepository.getAllUniquePaths();
+    final paths = await PluginHooks.filterList<String>(
+      DataHooks.folderQuery,
+      () => {'scope': 'paths', 'order': order.name},
+      await _folderApiRepository.getAllUniquePaths(),
+      () => PluginListCodec<String>(
+        id: (path) => path,
+        toJson: (path) => {'id': path, 'path': path},
+        fromJson: (json) => PluginArgs.string(json['path'] ?? json['id']),
+      ),
+    );
 
     // Create folder structure
     final Map<String, List<RecursiveFolder>> folderMap = {};
@@ -78,7 +91,20 @@ class FolderService {
     return RootFolder(subfolders: rootSubfolders, path: '/');
   }
 
-  Future<List<RemoteAssetExif>> getFolderAssets(RootFolder folder, SortOrder order) async {
+  /// Plugins can filter or sort the assets of a folder through `folder.query` (`scope: "assets"`).
+  Future<List<RemoteAssetExif>> getFolderAssets(RootFolder folder, SortOrder order) async =>
+      PluginHooks.filterList<RemoteAssetExif>(
+        DataHooks.folderQuery,
+        () => {
+          'scope': 'assets',
+          'path': folder is RecursiveFolder ? (folder.path.isEmpty ? folder.name : '${folder.path}/${folder.name}') : '/',
+          'order': order.name,
+        },
+        await _getFolderAssets(folder, order),
+        () => PluginJson.list<RemoteAssetExif>((asset) => asset.id, PluginJson.asset),
+      );
+
+  Future<List<RemoteAssetExif>> _getFolderAssets(RootFolder folder, SortOrder order) async {
     try {
       if (folder is RecursiveFolder) {
         String fullPath = folder.path.isEmpty ? folder.name : '${folder.path}/${folder.name}';

@@ -6,6 +6,7 @@ import 'package:freezed_annotation/freezed_annotation.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:immich_mobile/constants/constants.dart';
 import 'package:immich_mobile/domain/models/timeline.model.dart';
+import 'package:immich_mobile/domain/models/timeline_plugin.model.dart';
 import 'package:immich_mobile/extensions/build_context_extensions.dart';
 import 'package:immich_mobile/extensions/datetime_extensions.dart';
 import 'package:immich_mobile/extensions/theme_extensions.dart';
@@ -65,18 +66,26 @@ List<_Segment> _buildSegments({required List<Segment> layoutSegments, required d
 
   final formatter = DateFormat.yMMM(resolvedDateTimeLocale());
   DateTime? lastDate;
+  String? lastPluginLabel;
   double lastOffset = -offsetThreshold;
   for (final layoutSegment in layoutSegments) {
     final scrollPercentage = layoutSegment.startOffset / layoutSegments.last.endOffset;
     final startOffset = scrollPercentage * timelineHeight;
 
-    final date = (layoutSegment.bucket as TimeBucket).date;
-    final label = formatter.format(date);
+    final bucket = layoutSegment.bucket as TimeBucket;
+    final date = bucket.date;
+    // A group a `timeline.query` plugin made brings its own label; a new label starts a segment like a new year
+    final pluginLabel = bucket is PluginGroupBucket ? bucket.label : null;
+    final label = pluginLabel ?? formatter.format(date);
+    final isNewSection = pluginLabel != null
+        ? pluginLabel != lastPluginLabel
+        : (lastDate == null || date.year != lastDate.year);
 
-    final showSegment = lastOffset + offsetThreshold <= startOffset && (lastDate == null || date.year != lastDate.year);
+    final showSegment = lastOffset + offsetThreshold <= startOffset && isNewSection;
 
     segments.add(_Segment(date: date, startOffset: startOffset, scrollLabel: label, showSegment: showSegment));
     lastDate = date;
+    lastPluginLabel = pluginLabel;
     if (showSegment) {
       lastOffset = startOffset;
     }

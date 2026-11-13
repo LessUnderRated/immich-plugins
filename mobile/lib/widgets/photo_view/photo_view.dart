@@ -260,6 +260,7 @@ class PhotoView extends StatefulWidget {
     this.onDragCancel,
     this.onScaleEnd,
     this.onLongPressStart,
+    this.onDoubleTap,
     this.customSize,
     this.gestureDetectorBehavior,
     this.tightMode,
@@ -303,6 +304,7 @@ class PhotoView extends StatefulWidget {
     this.onDragCancel,
     this.onScaleEnd,
     this.onLongPressStart,
+    this.onDoubleTap,
     this.customSize,
     this.gestureDetectorBehavior,
     this.tightMode,
@@ -429,6 +431,10 @@ class PhotoView extends StatefulWidget {
   /// A pointer that might cause a tap has contacted the screen at a particular
   /// location.
   final PhotoViewImageLongPressStartCallback? onLongPressStart;
+
+  /// Replaces the built-in double tap (zoom to the next scale state). The callback gets that built-in action as
+  /// `zoom` and decides whether to run it.
+  final PhotoViewImageDoubleTapCallback? onDoubleTap;
 
   /// [HitTestBehavior] to be passed to the internal gesture detector.
   final HitTestBehavior? gestureDetectorBehavior;
@@ -572,6 +578,7 @@ class _PhotoViewState extends State<PhotoView> with AutomaticKeepAliveClientMixi
                 onDragCancel: widget.onDragCancel,
                 onScaleEnd: widget.onScaleEnd,
                 onLongPressStart: widget.onLongPressStart,
+                onDoubleTap: widget.onDoubleTap,
                 outerSize: computedOuterSize,
                 gestureDetectorBehavior: widget.gestureDetectorBehavior,
                 tightMode: widget.tightMode,
@@ -605,6 +612,7 @@ class _PhotoViewState extends State<PhotoView> with AutomaticKeepAliveClientMixi
                 onDragCancel: widget.onDragCancel,
                 onScaleEnd: widget.onScaleEnd,
                 onLongPressStart: widget.onLongPressStart,
+                onDoubleTap: widget.onDoubleTap,
                 outerSize: computedOuterSize,
                 gestureDetectorBehavior: widget.gestureDetectorBehavior,
                 tightMode: widget.tightMode,
@@ -668,6 +676,15 @@ typedef PhotoViewImageScaleEndCallback =
 /// A type definition for a callback when the user long press start
 typedef PhotoViewImageLongPressStartCallback =
     Function(BuildContext context, LongPressStartDetails details, PhotoViewControllerValue controllerValue);
+
+/// A type definition for a callback when the user double taps; [zoom] is the built-in behaviour
+typedef PhotoViewImageDoubleTapCallback =
+    void Function(
+      BuildContext context,
+      TapDownDetails? details,
+      PhotoViewControllerValue controllerValue,
+      VoidCallback zoom,
+    );
 
 /// A type definition for a callback to show a widget while the image is loading, a [ImageChunkEvent] is passed to inform progress
 typedef LoadingBuilder = Widget Function(BuildContext context, ImageChunkEvent? event, int index);

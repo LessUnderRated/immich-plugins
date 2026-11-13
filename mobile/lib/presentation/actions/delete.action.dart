@@ -5,6 +5,7 @@ import 'package:immich_mobile/domain/models/asset/base_asset.model.dart';
 import 'package:immich_mobile/extensions/platform_extensions.dart';
 import 'package:immich_mobile/generated/translations.g.dart';
 import 'package:immich_mobile/presentation/actions/action.dart';
+import 'package:immich_mobile/presentation/actions/action_ids.dart';
 import 'package:immich_mobile/presentation/actions/private_files.helpers.dart';
 import 'package:immich_mobile/providers/infrastructure/asset.provider.dart';
 import 'package:immich_mobile/providers/infrastructure/store.provider.dart';
@@ -50,6 +51,9 @@ final _stateProvider = Provider.family.autoDispose<_State?, ActionSource>((ref, 
 
 class DeleteAction extends AssetActionBuilder {
   const DeleteAction({required super.source});
+
+  @override
+  String get id => ActionIds.delete;
 
   @override
   ActionItem? create(BuildContext context, WidgetRef ref) {
@@ -194,6 +198,9 @@ final _cleanupStateProvider = Provider.family.autoDispose<List<String>?, ActionS
 
 class CleanupLocalAction extends AssetActionBuilder {
   const CleanupLocalAction({required super.source});
+
+  @override
+  String get id => ActionIds.deleteLocal;
 
   @override
   ActionItem? create(BuildContext context, WidgetRef ref) {

@@ -7,6 +7,8 @@ import 'package:background_downloader/background_downloader.dart';
 import 'package:collection/collection.dart';
 import 'package:flutter/services.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
+import 'package:immich_mobile/domain/utils/plugin_data_ids.dart';
+import 'package:immich_mobile/domain/utils/plugin_hooks.dart';
 import 'package:immich_mobile/models/download/livephotos_medatada.model.dart';
 import 'package:immich_mobile/repositories/download.repository.dart';
 import 'package:immich_mobile/repositories/file_media.repository.dart';
@@ -76,6 +78,16 @@ class DownloadService {
     await _saveLivePhotos(livePhotosId);
   }
 
+  static void _emitDownloaded(Task task, String? localId) {
+    if (localId == null) {
+      return;
+    }
+    PluginHooks.emit(
+      DataEvents.assetDownloaded,
+      () => {'remoteId': task.taskId, 'localId': localId, 'fileName': task.filename},
+    );
+  }
+
   Future<bool> _saveImageWithPath(Task task) async {
     final filePath = await task.filePath();
     final title = task.filename;
@@ -86,6 +98,7 @@ class DownloadService {
         title: title,
         relativePath: relativePath,
       );
+      _emitDownloaded(task, resultAsset?.id);
       return resultAsset != null;
     } catch (error, stack) {
       _log.severe("Error saving image", error, stack);
@@ -104,6 +117,7 @@ class DownloadService {
     final file = File(filePath);
     try {
       final resultAsset = await _fileMediaRepository.saveVideo(file, title: title, relativePath: relativePath);
+      _emitDownloaded(task, resultAsset?.id);
       return resultAsset != null;
     } catch (error, stack) {
       _log.severe("Error saving video", error, stack);

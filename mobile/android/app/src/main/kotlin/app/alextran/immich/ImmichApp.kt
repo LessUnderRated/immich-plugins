@@ -5,10 +5,14 @@ import android.os.Handler
 import android.os.Looper
 import app.alextran.immich.background.BackgroundEngineLock
 import app.alextran.immich.background.BackgroundWorkerApiImpl
+import app.alextran.immich.plugins.PluginRuntime
 
 class ImmichApp : Application() {
   override fun onCreate() {
     super.onCreate()
+    // Native plugin runtime: activity lifecycle tracking and natively implemented host functions. Cheap; plugins
+    // are only loaded natively on demand (background work, notification actions, startup loads they asked for).
+    PluginRuntime.init(this)
     // After the process is killed (by user or system), the first trigger (taking a new picture) is lost.
     // Thus, the BackupWorker is not started. If the system kills the process after each initialization
     // (because of low memory etc.), the backup is never performed.

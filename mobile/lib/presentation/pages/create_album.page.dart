@@ -6,7 +6,11 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:immich_mobile/domain/models/asset/base_asset.model.dart';
 import 'package:immich_mobile/extensions/build_context_extensions.dart';
 import 'package:immich_mobile/generated/translations.g.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/library/library_hooks.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/library/library_ids.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/library/library_json.dart';
 import 'package:immich_mobile/presentation/widgets/images/thumbnail.widget.dart';
+import 'package:immich_mobile/presentation/widgets/library/library_plugins.widget.dart';
 import 'package:immich_mobile/providers/infrastructure/album.provider.dart';
 import 'package:immich_mobile/routing/router.dart';
 import 'package:immich_mobile/widgets/album/album_action_filled_button.dart';
@@ -21,6 +25,7 @@ class CreateAlbumPage extends ConsumerStatefulWidget {
 }
 
 class _CreateAlbumPageState extends ConsumerState<CreateAlbumPage> {
+  static const _page = LibraryPages.createAlbum;
   TextEditingController albumTitleController = TextEditingController();
   TextEditingController albumDescriptionController = TextEditingController();
   FocusNode albumTitleTextFieldFocusNode = FocusNode();
@@ -70,8 +75,10 @@ class _CreateAlbumPageState extends ConsumerState<CreateAlbumPage> {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.start,
             children: [
-              buildTitleInputField(),
-              buildDescriptionInputField(),
+              ...LibraryPluginHooks.arrange(LibrarySlots.createAlbumFields, [
+                (id: 'title', item: buildTitleInputField()),
+                (id: 'description', item: buildDescriptionInputField()),
+              ]),
               if (selectedAssets.isNotEmpty) buildControlButton(),
             ],
           ),
@@ -82,7 +89,14 @@ class _CreateAlbumPageState extends ConsumerState<CreateAlbumPage> {
 
   Widget _buildContent() {
     if (selectedAssets.isEmpty) {
-      return SliverList(delegate: SliverChildListDelegate([_buildEmptyState(), _buildSelectPhotosButton()]));
+      return SliverList(
+        delegate: SliverChildListDelegate(
+          LibraryPluginHooks.arrange(LibrarySlots.empty(_page), [
+            (id: 'hint', item: _buildEmptyState()),
+            (id: 'selectPhotos', item: _buildSelectPhotosButton()),
+          ]),
+        ),
+      );
     } else {
       return _buildSelectedImageGrid();
     }
@@ -105,7 +119,7 @@ class _CreateAlbumPageState extends ConsumerState<CreateAlbumPage> {
           shape: const RoundedRectangleBorder(borderRadius: BorderRadius.all(Radius.circular(10.0))),
           backgroundColor: context.colorScheme.surfaceContainerHigh,
         ),
-        onPressed: onSelectPhotos,
+        onPressed: () => libraryTap(context, _page, 'selectPhotos', onSelectPhotos, args: _assetArgs),
         icon: Icon(Icons.add_rounded, color: context.primaryColor),
         label: Padding(
           padding: const EdgeInsets.only(left: 8.0),
@@ -151,6 +165,10 @@ class _CreateAlbumPageState extends ConsumerState<CreateAlbumPage> {
     }
   }
 
+  Map<String, dynamic> _assetArgs() => {
+    'assets': [for (final asset in selectedAssets) LibraryJson.asset(asset)],
+  };
+
   Future<void> onSelectPhotos() async {
     final assets = await context.pushRoute<Set<BaseAsset>>(
       AssetSelectionTimelineRoute(lockedSelectionAssets: selectedAssets),
@@ -176,13 +194,24 @@ class _CreateAlbumPageState extends ConsumerState<CreateAlbumPage> {
     final title = _getEffectiveTitle().trim();
 
     try {
-      final album = await ref
-          .read(remoteAlbumProvider.notifier)
-          .createAlbumWithAssets(
-            title: title,
-            description: albumDescriptionController.text.trim(),
-            assets: selectedAssets,
-          );
+      final description = albumDescriptionController.text.trim();
+      // `before` may change `title` / `description` or cancel
+      final album = await runLibraryAction(
+        context,
+        _page,
+        'create',
+        () => ref
+            .read(remoteAlbumProvider.notifier)
+            .createAlbumWithAssets(title: title, description: description, assets: selectedAssets),
+        args: () => {'title': title, 'description': description, ..._assetArgs()},
+        withArgs: (args) => ref
+            .read(remoteAlbumProvider.notifier)
+            .createAlbumWithAssets(
+              title: '${args['title'] ?? title}',
+              description: '${args['description'] ?? description}',
+              assets: selectedAssets,
+            ),
+      );
 
       if (!mounted || album == null) {
         return;
@@ -235,13 +264,16 @@ class _CreateAlbumPageState extends ConsumerState<CreateAlbumPage> {
         height: 42.0,
         child: ListView(
           scrollDirection: Axis.horizontal,
-          children: [
-            AlbumActionFilledButton(
-              iconData: Icons.add_photo_alternate_outlined,
-              onPressed: onSelectPhotos,
-              labelText: context.t.add_photos,
+          children: LibraryPluginHooks.arrange(LibrarySlots.createAlbumActions, [
+            (
+              id: 'addPhotos',
+              item: AlbumActionFilledButton(
+                iconData: Icons.add_photo_alternate_outlined,
+                onPressed: () => libraryTap(context, _page, 'addPhotos', onSelectPhotos, args: _assetArgs),
+                labelText: context.t.add_photos,
+              ),
             ),
-          ],
+          ]),
         ),
       ),
     );
@@ -256,18 +288,21 @@ class _CreateAlbumPageState extends ConsumerState<CreateAlbumPage> {
         backgroundColor: context.scaffoldBackgroundColor,
         leading: IconButton(onPressed: () => context.maybePop(), icon: const Icon(Icons.close_rounded)),
         title: Text(context.t.create_album),
-        actions: [
-          TextButton(
-            onPressed: _canCreateAlbum ? createAlbum : null,
-            child: Text(
-              context.t.create,
-              style: TextStyle(
-                fontWeight: FontWeight.bold,
-                color: _canCreateAlbum ? context.primaryColor : context.themeData.disabledColor,
+        actions: LibraryPluginHooks.arrange(LibrarySlots.appBarActions(_page), [
+          (
+            id: 'create',
+            item: TextButton(
+              onPressed: _canCreateAlbum ? createAlbum : null,
+              child: Text(
+                context.t.create,
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  color: _canCreateAlbum ? context.primaryColor : context.themeData.disabledColor,
+                ),
               ),
             ),
           ),
-        ],
+        ]),
       ),
       body: GestureDetector(
         onTap: onBackgroundTapped,

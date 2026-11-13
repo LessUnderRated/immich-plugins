@@ -11,7 +11,11 @@ import 'package:immich_mobile/domain/models/user.model.dart';
 import 'package:immich_mobile/extensions/build_context_extensions.dart';
 import 'package:immich_mobile/extensions/theme_extensions.dart';
 import 'package:immich_mobile/generated/translations.g.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/library/library_hooks.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/library/library_ids.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/library/library_json.dart';
 import 'package:immich_mobile/presentation/pages/user_selection.page.dart';
+import 'package:immich_mobile/presentation/widgets/library/library_plugins.widget.dart';
 import 'package:immich_mobile/providers/auth.provider.dart';
 import 'package:immich_mobile/providers/infrastructure/album.provider.dart';
 import 'package:immich_mobile/providers/infrastructure/current_album.provider.dart';
@@ -34,6 +38,8 @@ class AlbumOptionsPage extends HookConsumerWidget {
     final isOwner = album.ownerId == userId;
     final owner = isOwner ? ref.watch(currentUserProvider) : null;
     final allUsers = isOwner ? null : ref.watch(usersProvider);
+    const page = LibraryPages.albumOptions;
+    Map<String, dynamic> albumArgs() => {'album': LibraryJson.remoteAlbum(album)};
 
     void showErrorMessage() {
       ContextHelper(context).pop();
@@ -45,7 +51,7 @@ class AlbumOptionsPage extends HookConsumerWidget {
       );
     }
 
-    Future<void> leaveAlbum() async {
+    Future<void> leaveAlbum() => runLibraryAction<void>(context, page, 'leave', () async {
       try {
         await ref.read(remoteAlbumProvider.notifier).leaveAlbum(album.id, userId: userId);
         if (!context.mounted) {
@@ -56,9 +62,9 @@ class AlbumOptionsPage extends HookConsumerWidget {
       } catch (_) {
         showErrorMessage();
       }
-    }
+    }, args: albumArgs);
 
-    Future<void> removeUserFromAlbum(UserDto user) async {
+    Future<void> removeUserFromAlbum(UserDto user) => runLibraryAction<void>(context, page, 'remove', () async {
       try {
         await ref.read(remoteAlbumProvider.notifier).removeUser(album.id, user.id);
         ref.invalidate(remoteAlbumSharedUsersProvider(album.id));
@@ -67,9 +73,9 @@ class AlbumOptionsPage extends HookConsumerWidget {
       }
 
       ContextHelper(context).pop();
-    }
+    }, args: () => {...albumArgs(), 'user': LibraryJson.user(user)});
 
-    Future<void> addUsers() async {
+    Future<void> addUsers() => runLibraryAction<void>(context, page, 'invite', () async {
       final newUsers = await context.pushRoute<List<String>>(UserSelectionRoute(album: album));
 
       if (newUsers == null || newUsers.isEmpty) {
@@ -99,27 +105,33 @@ class AlbumOptionsPage extends HookConsumerWidget {
 
         ImmichToast.show(context: context, msg: "Failed to add users to album: $e", toastType: ToastType.error);
       }
-    }
+    }, args: albumArgs);
 
     void handleUserClick(UserDto user) {
-      var actions = [];
+      var actions = <LibrarySlotItem<Widget>>[];
 
       if (user.id == userId) {
         actions = [
-          ListTile(
-            leading: const Icon(Icons.exit_to_app_rounded),
-            title: Text(context.t.leave_album),
-            onTap: leaveAlbum,
+          (
+            id: 'leave',
+            item: ListTile(
+              leading: const Icon(Icons.exit_to_app_rounded),
+              title: Text(context.t.leave_album),
+              onTap: leaveAlbum,
+            ),
           ),
         ];
       }
 
       if (isOwner) {
         actions = [
-          ListTile(
-            leading: const Icon(Icons.person_remove_rounded),
-            title: Text(context.t.remove_user),
-            onTap: () => removeUserFromAlbum(user),
+          (
+            id: 'remove',
+            item: ListTile(
+              leading: const Icon(Icons.person_remove_rounded),
+              title: Text(context.t.remove_user),
+              onTap: () => removeUserFromAlbum(user),
+            ),
           ),
         ];
       }
@@ -133,7 +145,10 @@ class AlbumOptionsPage extends HookConsumerWidget {
             return SafeArea(
               child: Padding(
                 padding: const EdgeInsets.only(top: 24.0),
-                child: Column(mainAxisSize: MainAxisSize.min, children: [...actions]),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: LibraryPluginHooks.arrange(LibrarySlots.albumOptionsUserMenu, actions),
+                ),
               ),
             );
           },
@@ -176,20 +191,27 @@ class AlbumOptionsPage extends HookConsumerWidget {
 
     Widget buildSharedUsersList() {
       return sharedUsersAsync.maybeWhen(
-        data: (sharedUsers) => ListView.builder(
-          primary: false,
-          shrinkWrap: true,
-          itemCount: sharedUsers.length,
-          itemBuilder: (context, index) {
-            final user = sharedUsers[index];
-            return ListTile(
-              leading: UserCircleAvatar(user: user),
-              title: Text(user.name, style: const TextStyle(fontWeight: FontWeight.w500)),
-              subtitle: Text(user.email, style: TextStyle(color: context.colorScheme.onSurfaceSecondary)),
-              trailing: userId == user.id || isOwner ? const Icon(Icons.more_horiz_rounded) : const SizedBox(),
-              onTap: userId == user.id || isOwner ? () => handleUserClick(user) : null,
-            );
-          },
+        data: (allSharedUsers) => LibraryQueryBuilder<UserDto>(
+          hook: LibraryHooks.albumUsersQuery,
+          items: allSharedUsers,
+          id: (user) => user.id,
+          toJson: LibraryJson.user,
+          args: albumArgs,
+          builder: (context, sharedUsers) => ListView.builder(
+            primary: false,
+            shrinkWrap: true,
+            itemCount: sharedUsers.length,
+            itemBuilder: (context, index) {
+              final user = sharedUsers[index];
+              return ListTile(
+                leading: UserCircleAvatar(user: user),
+                title: Text(user.name, style: const TextStyle(fontWeight: FontWeight.w500)),
+                subtitle: Text(user.email, style: TextStyle(color: context.colorScheme.onSurfaceSecondary)),
+                trailing: userId == user.id || isOwner ? const Icon(Icons.more_horiz_rounded) : const SizedBox(),
+                onTap: userId == user.id || isOwner ? () => handleUserClick(user) : null,
+              );
+            },
+          ),
         ),
         orElse: () => const Center(child: CircularProgressIndicator()),
       );
@@ -216,35 +238,54 @@ class AlbumOptionsPage extends HookConsumerWidget {
         body: ListView(
           children: [
             const SizedBox(height: 8),
-            if (isOwner)
-              SwitchListTile.adaptive(
-                value: activityEnabled.value,
-                onChanged: (bool value) async {
-                  activityEnabled.value = value;
-                  await ref.read(remoteAlbumProvider.notifier).setActivityStatus(album.id, value);
-                },
-                activeThumbColor: activityEnabled.value ? context.primaryColor : context.themeData.disabledColor,
-                dense: true,
-                title: Text(
-                  context.t.comments_and_likes,
-                  style: context.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w500),
+            ...LibraryPluginHooks.arrange(LibrarySlots.albumOptionsSections, [
+              if (isOwner)
+                (
+                  id: 'activity',
+                  item: SwitchListTile.adaptive(
+                    value: activityEnabled.value,
+                    onChanged: (bool value) => runLibraryAction<void>(context, page, 'activity', () async {
+                      activityEnabled.value = value;
+                      await ref.read(remoteAlbumProvider.notifier).setActivityStatus(album.id, value);
+                    }, args: () => {...albumArgs(), 'enabled': value}),
+                    activeThumbColor: activityEnabled.value ? context.primaryColor : context.themeData.disabledColor,
+                    dense: true,
+                    title: Text(
+                      context.t.comments_and_likes,
+                      style: context.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w500),
+                    ),
+                    subtitle: Text(
+                      context.t.let_others_respond,
+                      style: context.textTheme.labelLarge?.copyWith(color: context.colorScheme.onSurfaceSecondary),
+                    ),
+                  ),
                 ),
-                subtitle: Text(
-                  context.t.let_others_respond,
-                  style: context.textTheme.labelLarge?.copyWith(color: context.colorScheme.onSurfaceSecondary),
+              (
+                id: 'people',
+                item: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    buildSectionTitle(context.t.shared_album_section_people_title),
+                    if (isOwner) ...[
+                      ...LibraryPluginHooks.arrange(LibrarySlots.albumOptionsPeopleActions, [
+                        (
+                          id: 'invite',
+                          item: ListTile(
+                            leading: const Icon(Icons.person_add_rounded),
+                            title: Text(context.t.invite_people),
+                            onTap: () async => addUsers(),
+                          ),
+                        ),
+                      ]),
+                      const Divider(indent: 16),
+                    ],
+                    buildOwnerInfo(),
+                    buildSharedUsersList(),
+                  ],
                 ),
               ),
-            buildSectionTitle(context.t.shared_album_section_people_title),
-            if (isOwner) ...[
-              ListTile(
-                leading: const Icon(Icons.person_add_rounded),
-                title: Text(context.t.invite_people),
-                onTap: () async => addUsers(),
-              ),
-              const Divider(indent: 16),
-            ],
-            buildOwnerInfo(),
-            buildSharedUsersList(),
+            ]),
           ],
         ),
       ),

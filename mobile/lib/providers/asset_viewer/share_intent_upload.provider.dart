@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:hooks_riverpod/hooks_riverpod.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/shell/shell_hooks.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/shell/shell_ids.dart';
 import 'package:immich_mobile/models/upload/share_intent_attachment.model.dart';
 import 'package:immich_mobile/routing/router.dart';
 import 'package:immich_mobile/services/foreground_upload.service.dart';
@@ -28,11 +30,66 @@ class ShareIntentUploadStateNotifier extends StateNotifier<List<ShareIntentAttac
     _shareIntentService.init();
   }
 
+  /// Files shared to the app. Runs the `share.intent` hook (a plugin may cancel, reduce or replace the files, or
+  /// handle them `instead` so the share page does not open) and emits `shareIntent.received`.
   void onSharedMedia(List<ShareIntentAttachment> attachments) {
+    if (!ShellHookRunner.has(ShellHooks.shareIntent)) {
+      _openSharePage(attachments);
+      return;
+    }
+    unawaited(
+      ShellHookRunner.guard<bool>(
+        ShellHooks.shareIntent,
+        {'files': _filesJson(attachments)},
+        (args) async {
+          _openSharePage(_attachmentsFrom(args['files'], attachments));
+          return true;
+        },
+        encode: (opened) => opened,
+        decode: (_) => false,
+      ),
+    );
+  }
+
+  void _openSharePage(List<ShareIntentAttachment> attachments) {
+    ShellHookRunner.emit(ShellEvents.shareIntentReceived, () => {'files': _filesJson(attachments)});
     router.removeWhere((route) => route.name == "ShareIntentRoute");
     clearAttachments();
     addAttachments(attachments);
     unawaited(router.push(ShareIntentRoute(attachments: attachments)));
+  }
+
+  static List<Map<String, dynamic>> _filesJson(List<ShareIntentAttachment> attachments) => [
+    for (final attachment in attachments)
+      {'path': attachment.path, 'type': attachment.type.name, 'size': attachment.fileLength},
+  ];
+
+  /// The attachments for the (possibly plugin-changed) `files` of the hook: known paths keep their attachment, new
+  /// paths become attachments of their own.
+  static List<ShareIntentAttachment> _attachmentsFrom(Object? files, List<ShareIntentAttachment> original) {
+    if (files is! List) {
+      return original;
+    }
+    final byPath = {for (final attachment in original) attachment.path: attachment};
+    return [
+      for (final file in files.whereType<Map>())
+        if (file['path'] case final String path)
+          byPath[path] ??
+              ShareIntentAttachment(
+                path: path,
+                type: file['type'] == 'video' ? ShareIntentAttachmentType.video : ShareIntentAttachmentType.image,
+                status: UploadStatus.enqueued,
+                fileLength: file['size'] is num ? (file['size'] as num).toInt() : _length(path),
+              ),
+    ];
+  }
+
+  static int _length(String path) {
+    try {
+      return File(path).lengthSync();
+    } catch (_) {
+      return 0;
+    }
   }
 
   void addAttachments(List<ShareIntentAttachment> attachments) {
