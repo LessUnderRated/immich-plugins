@@ -131,6 +131,7 @@ Queries (`after` changes the list; not cancellable).
 | `asset.trashed` | `{ ids, source }` | |
 | `asset.restored` | `{ ids, source }`; restore-all: `{ userId, all: true, count }` | |
 | `asset.deleted` | `{ ids, source, permanent, trash? }` (local: the ids really deleted) | use it to clean per-asset plugin data |
+| `asset.created` | `{ asset: AssetV1, byApp }` (every new gallery item once: photos taken, downloads; `byApp` for copies the app saved) | |
 | `asset.stacked`, `asset.unstacked`, `asset.edited`, `asset.moved` (`+ moved`), `asset.privateChanged` (`+ changed`) | hook args | |
 | `asset.uploaded` | `{ localId, remoteId, kind }` | foreground and background uploads |
 | `asset.downloaded` | `{ remoteId, localId, fileName }` | server asset saved into the gallery |

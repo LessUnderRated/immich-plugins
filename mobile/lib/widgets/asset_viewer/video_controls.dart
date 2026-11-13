@@ -1,13 +1,17 @@
 import 'dart:math';
 
 import 'package:async/async.dart';
+import 'package:collection/collection.dart';
 import 'package:flutter/material.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:immich_mobile/constants/colors.dart';
 import 'package:immich_mobile/extensions/duration_extensions.dart';
 import 'package:immich_mobile/infrastructure/plugins/plugin_api/viewer/video_hooks.dart';
 import 'package:immich_mobile/infrastructure/plugins/plugin_api/viewer/video_sessions.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/viewer/viewer_ids.dart';
 import 'package:immich_mobile/models/cast/cast_manager_state.dart';
+import 'package:immich_mobile/presentation/actions/action_slots.dart';
+import 'package:immich_mobile/presentation/widgets/timeline/plugins/timeline_plugin_bridge.dart';
 import 'package:immich_mobile/providers/asset_viewer/asset_viewer.provider.dart';
 import 'package:immich_mobile/providers/asset_viewer/video_player_provider.dart';
 import 'package:immich_mobile/providers/cast.provider.dart';
@@ -164,55 +168,83 @@ class _VideoControlsState extends ConsumerState<VideoControls> {
     final notifier = ref.watch(_provider.notifier);
     final isLoaded = duration != Duration.zero;
 
+    final session = VideoSessions.instance.sessions
+        .where((session) => session.assetId == widget.videoPlayerName)
+        .sortedBy<num>((session) => session.isCurrent ? 0 : 1)
+        .firstOrNull;
+    final slotContext = {
+      'sessionId': ?session?.id,
+      'assetId': widget.videoPlayerName,
+      'positionMs': position.inMilliseconds,
+      'durationMs': duration.inMilliseconds,
+      'playing': isPlaying,
+    };
+
     return Padding(
       padding: const EdgeInsets.fromLTRB(4, 0, 12, 4),
       child: Row(
-        children: [
-          IconButton(
-            iconSize: 22,
-            padding: const EdgeInsets.all(8),
-            constraints: const BoxConstraints(),
-            visualDensity: VisualDensity.compact,
-            icon: isFinished
-                ? const Icon(Icons.replay, color: Colors.white, shadows: VideoControls._controlShadows)
-                : AnimatedPlayPause(color: Colors.white, playing: isPlaying, shadows: VideoControls._controlShadows),
-            onPressed: () => _toggle(isCasting),
-          ),
-          Expanded(
-            child: SliderTheme(
-              data: SliderTheme.of(context).copyWith(
-                trackHeight: 2,
-                thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 5, disabledThumbRadius: 4),
-                overlayShape: const RoundSliderOverlayShape(overlayRadius: 12),
-                trackShape: const RoundedRectSliderTrackShape(),
-              ),
-              child: Slider(
-                value: min(position.inMicroseconds.toDouble(), duration.inMicroseconds.toDouble()),
-                min: 0,
-                max: max(duration.inMicroseconds.toDouble(), 1),
-                thumbColor: Colors.white,
-                activeColor: Colors.white,
-                inactiveColor: whiteOpacity75.withValues(alpha: 0.35),
-                padding: const EdgeInsets.symmetric(horizontal: 8),
-                onChangeStart: (_) => _onSeekStart(notifier),
-                onChangeEnd: (value) => _onSeekEnd(notifier, isCasting, value),
-                onChanged: isLoaded ? (value) => _onSeek(isCasting, value) : null,
-              ),
-            ),
-          ),
-          IgnorePointer(
-            child: Text(
-              "${position.format()} / ${duration.format()}",
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 12,
-                fontWeight: FontWeight.w500,
-                fontFeatures: [FontFeature.tabularFigures()],
-                shadows: VideoControls._controlShadows,
-              ),
-            ),
-          ),
-        ],
+        // Built-in ids: playPause, scrubber, time; plugin buttons of `videoPlayer.controls` join them.
+        children:
+            arrangeButtons(ref, ViewerSlotIds.videoControls, [
+                  BuiltinSlotItem(
+                    id: 'playPause',
+                    child: IconButton(
+                      iconSize: 22,
+                      padding: const EdgeInsets.all(8),
+                      constraints: const BoxConstraints(),
+                      visualDensity: VisualDensity.compact,
+                      icon: isFinished
+                          ? const Icon(Icons.replay, color: Colors.white, shadows: VideoControls._controlShadows)
+                          : AnimatedPlayPause(
+                              color: Colors.white,
+                              playing: isPlaying,
+                              shadows: VideoControls._controlShadows,
+                            ),
+                      onPressed: () => _toggle(isCasting),
+                    ),
+                  ),
+                  BuiltinSlotItem(
+                    id: 'scrubber',
+                    child: SliderTheme(
+                      data: SliderTheme.of(context).copyWith(
+                        trackHeight: 2,
+                        thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 5, disabledThumbRadius: 4),
+                        overlayShape: const RoundSliderOverlayShape(overlayRadius: 12),
+                        trackShape: const RoundedRectSliderTrackShape(),
+                      ),
+                      child: Slider(
+                        value: min(position.inMicroseconds.toDouble(), duration.inMicroseconds.toDouble()),
+                        min: 0,
+                        max: max(duration.inMicroseconds.toDouble(), 1),
+                        thumbColor: Colors.white,
+                        activeColor: Colors.white,
+                        inactiveColor: whiteOpacity75.withValues(alpha: 0.35),
+                        padding: const EdgeInsets.symmetric(horizontal: 8),
+                        onChangeStart: (_) => _onSeekStart(notifier),
+                        onChangeEnd: (value) => _onSeekEnd(notifier, isCasting, value),
+                        onChanged: isLoaded ? (value) => _onSeek(isCasting, value) : null,
+                      ),
+                    ),
+                  ),
+                  BuiltinSlotItem(
+                    id: 'time',
+                    child: IgnorePointer(
+                      child: Text(
+                        "${position.format()} / ${duration.format()}",
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w500,
+                          fontFeatures: [FontFeature.tabularFigures()],
+                          shadows: VideoControls._controlShadows,
+                        ),
+                      ),
+                    ),
+                  ),
+                ], context: slotContext)
+                // The scrubber takes the remaining width (Expanded must sit directly in the Row).
+                .map((item) => slotItemId(item) == 'scrubber' ? Expanded(child: item) : item)
+                .toList(),
       ),
     );
   }

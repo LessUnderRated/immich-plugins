@@ -538,57 +538,63 @@ class _TransformControls extends ConsumerWidget {
     return SizedBox(
       height: 40,
       child: Row(
-        children: arrangeButtons(ref, EditorPluginIds.cropControls, [
-          BuiltinSlotItem(
-            id: EditorBuiltinItemIds.rotateLeft,
-            child: _CompactIconButton(
-              icon: Icons.rotate_left,
-              tooltip: 'Rotate left',
-              onPressed: editorNotifier.rotateCCW,
-            ),
-          ),
-          BuiltinSlotItem(
-            id: EditorBuiltinItemIds.rotateRight,
-            child: _CompactIconButton(
-              icon: Icons.rotate_right,
-              tooltip: 'Rotate right',
-              onPressed: editorNotifier.rotateCW,
-            ),
-          ),
-          BuiltinSlotItem(
-            id: EditorBuiltinItemIds.flipHorizontal,
-            child: _CompactIconButton(icon: Icons.flip, tooltip: 'Flip', onPressed: editorNotifier.flipHorizontally),
-          ),
-          BuiltinSlotItem(
-            id: EditorBuiltinItemIds.flipVertical,
-            child: _CompactIconButton(
-              icon: Icons.flip,
-              tooltip: 'Flip vertically',
-              quarterTurns: 1,
-              onPressed: editorNotifier.flipVertically,
-            ),
-          ),
-          const VerticalDivider(width: 12, indent: 8, endIndent: 8),
-          BuiltinSlotItem(
-            id: EditorBuiltinItemIds.aspectRatios,
-            child: Expanded(
-              child: ListView(
-                scrollDirection: Axis.horizontal,
-                children: [
-                  for (final ratio in CropAspectRatio.values)
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 4),
-                      child: _AspectRatioChip(
-                        ratio: ratio,
-                        isSelected: aspectRatio == ratio,
-                        onPressed: () => editorNotifier.setAspectRatio(ratio),
-                      ),
+        children:
+            arrangeButtons(ref, EditorPluginIds.cropControls, [
+                  BuiltinSlotItem(
+                    id: EditorBuiltinItemIds.rotateLeft,
+                    child: _CompactIconButton(
+                      icon: Icons.rotate_left,
+                      tooltip: 'Rotate left',
+                      onPressed: editorNotifier.rotateCCW,
                     ),
-                ],
-              ),
-            ),
-          ),
-        ], context: editorSlotContext(ref)),
+                  ),
+                  BuiltinSlotItem(
+                    id: EditorBuiltinItemIds.rotateRight,
+                    child: _CompactIconButton(
+                      icon: Icons.rotate_right,
+                      tooltip: 'Rotate right',
+                      onPressed: editorNotifier.rotateCW,
+                    ),
+                  ),
+                  BuiltinSlotItem(
+                    id: EditorBuiltinItemIds.flipHorizontal,
+                    child: _CompactIconButton(
+                      icon: Icons.flip,
+                      tooltip: 'Flip',
+                      onPressed: editorNotifier.flipHorizontally,
+                    ),
+                  ),
+                  BuiltinSlotItem(
+                    id: EditorBuiltinItemIds.flipVertical,
+                    child: _CompactIconButton(
+                      icon: Icons.flip,
+                      tooltip: 'Flip vertically',
+                      quarterTurns: 1,
+                      onPressed: editorNotifier.flipVertically,
+                    ),
+                  ),
+                  const VerticalDivider(width: 12, indent: 8, endIndent: 8),
+                  BuiltinSlotItem(
+                    id: EditorBuiltinItemIds.aspectRatios,
+                    child: ListView(
+                      scrollDirection: Axis.horizontal,
+                      children: [
+                        for (final ratio in CropAspectRatio.values)
+                          Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 4),
+                            child: _AspectRatioChip(
+                              ratio: ratio,
+                              isSelected: aspectRatio == ratio,
+                              onPressed: () => editorNotifier.setAspectRatio(ratio),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                ], context: editorSlotContext(ref))
+                // The ratio list takes the remaining width (Expanded must sit directly in the Row).
+                .map((item) => slotItemId(item) == EditorBuiltinItemIds.aspectRatios ? Expanded(child: item) : item)
+                .toList(),
       ),
     );
   }

@@ -93,6 +93,11 @@ class DeviceWorkflowEngine {
 
   Stream<void> get changes => _changes.stream;
 
+  final _assetsCreated = StreamController<({LocalAsset asset, bool byApp})>.broadcast();
+
+  /// Every new gallery item, once, in id order (photos taken, downloads, copies the app saved: [byApp]).
+  Stream<({LocalAsset asset, bool byApp})> get assetsCreated => _assetsCreated.stream;
+
   /// The native plugin bridge (method channel `immich/dex_plugins`).
   PluginRuntime get runtime => _runtime;
 
@@ -525,6 +530,7 @@ class DeviceWorkflowEngine {
       for (final asset in assets) {
         current = int.parse(asset.id);
         final created = await _consumeCreated(asset.id);
+        _assetsCreated.add((asset: asset, byApp: created));
         if (!created) {
           for (final workflow in workflows) {
             await _run(workflow, asset);

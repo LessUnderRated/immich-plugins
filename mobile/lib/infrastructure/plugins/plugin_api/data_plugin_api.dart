@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:hooks_riverpod/hooks_riverpod.dart';
+import 'package:immich_mobile/domain/utils/plugin_data_ids.dart';
 import 'package:immich_mobile/infrastructure/plugins/plugin_api/data/data_host.dart';
 import 'package:immich_mobile/infrastructure/plugins/plugin_api/data/data_host_registry.dart';
 import 'package:immich_mobile/infrastructure/plugins/plugin_kernel.dart';
@@ -29,9 +30,17 @@ void registerDataPluginApi(PluginKernel kernel, Ref ref) {
   // Plugins' database change subscriptions follow the installed plugins; downloads stop with their plugin.
   kernel.addListener(services.watcher.refresh);
   final unloaded = kernel.pluginUnloaded.listen((plugin) => unawaited(services.downloader.cancelAll(plugin)));
+  // `asset.created`: every new gallery item, once (photos taken, downloads, and copies the app saved: `byApp`).
+  final created = kernel.engine.assetsCreated.listen((event) async {
+    if (!kernel.hasListenersFor(DataEvents.assetCreated)) {
+      return;
+    }
+    kernel.emit(DataEvents.assetCreated, {'asset': await kernel.assetJson(event.asset), 'byApp': event.byApp});
+  });
   ref.onDispose(() {
     kernel.removeListener(services.watcher.refresh);
     unawaited(unloaded.cancel());
+    unawaited(created.cancel());
     unawaited(services.dispose());
   });
 }
