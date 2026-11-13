@@ -31,14 +31,15 @@ String pageSlot(String routeName, String suffix) => '${routeSlotPrefix(routeName
 /// Slots of the shell area and the built-in item ids each one holds.
 abstract final class ShellSlots {
   // ---- main settings page (SettingsRoute) ---------------------------------------------------------------------
-  /// Entries of the main Settings page (one card per entry). Built-ins: [SettingsEntryIds].
+  /// Sections (with headers) of the main Settings page. Built-ins: [SettingsSectionIds.all].
   static const settingsSections = 'settings.sections';
 
-  /// Entries of the settings tablet layout's side list (same ids as [settingsSections]).
-  static const settingsSectionsTablet = 'settings.sections';
+  /// Tiles of one section of the main Settings page: `settings.<sectionId>.tiles` (built-ins in
+  /// [SettingsSectionIds.tiles]). Every plugin's `contributes.settings` page is a tile of `settings.plugins.tiles`.
+  static String settingsTiles(String section) => 'settings.$section.tiles';
 
-  /// Items of a built-in settings sub page: `settings.<section>.items` (see [SettingsEntryIds] for sections).
-  static String settingsItems(String section) => 'settings.$section.items';
+  /// Items of a built-in settings sub page: `settings.<entryId>.items` (see [SettingsItemIds]).
+  static String settingsItems(String entry) => 'settings.$entry.items';
 
   // ---- app bar profile dialog -----------------------------------------------------------------------------------
   /// Information boxes at the top of the profile dialog. Built-ins: [ProfileMenuIds.sections].
@@ -83,41 +84,62 @@ abstract final class ShellSlots {
   static const splashBody = 'splashScreen.body';
 }
 
-/// Built-in entries of the main Settings page and the sub pages they open (`settings.<id>.items`).
-abstract final class SettingsEntryIds {
+/// Built-in sections of the main Settings page and their tiles.
+abstract final class SettingsSectionIds {
+  static const general = 'general';
+  static const media = 'media';
+  static const plugins = 'plugins';
+  static const privacy = 'privacy';
+
+  /// Server, backup and sync; shown while signed in to a server or a server is configured.
+  static const account = 'account';
   static const advanced = 'advanced';
-  static const assetViewer = 'assetViewer';
-  static const backup = 'backup';
-  static const freeUpSpace = 'freeUpSpace';
-  static const languages = 'languages';
-  static const networking = 'networking';
-  static const notifications = 'notifications';
-  static const passkeys = 'passkeys';
+  static const about = 'about';
+
+  static const all = [general, media, plugins, privacy, account, advanced, about];
+
+  /// Built-in tile ids per section. `sync` sits in [account] when a server is relevant, else in [advanced].
+  static const tiles = {
+    general: [SettingsEntryIds.preferences, SettingsEntryIds.languages, SettingsEntryIds.notifications],
+    media: [SettingsEntryIds.timeline, SettingsEntryIds.assetViewer, SettingsEntryIds.freeUpSpace],
+    plugins: [SettingsEntryIds.plugins],
+    privacy: [SettingsEntryIds.privateGallery, SettingsEntryIds.lockedFolder],
+    account: [
+      SettingsEntryIds.networking,
+      SettingsEntryIds.backup,
+      SettingsEntryIds.sync,
+      SettingsEntryIds.passkeys,
+    ],
+    advanced: [SettingsEntryIds.advanced, SettingsEntryIds.appLogs, SettingsEntryIds.sync],
+    about: [SettingsEntryIds.whatsNew, SettingsEntryIds.version, SettingsEntryIds.licenses],
+  };
+}
+
+/// Built-in tiles of the main Settings page. Tiles that open a built-in sub page share its id with
+/// `settings.<id>.items`.
+abstract final class SettingsEntryIds {
   static const preferences = 'preferences';
+  static const languages = 'languages';
+  static const notifications = 'notifications';
   static const timeline = 'timeline';
+  static const assetViewer = 'assetViewer';
+  static const freeUpSpace = 'freeUpSpace';
+
+  /// Opens the Plugins page.
+  static const plugins = 'plugins';
+  static const privateGallery = 'privateGallery';
+  static const lockedFolder = 'lockedFolder';
+  static const networking = 'networking';
+  static const backup = 'backup';
 
   /// Opens the sync status page (`SyncStatusRoute`); its items slot is `settings.sync.items`.
   static const sync = 'sync';
+  static const passkeys = 'passkeys';
+  static const advanced = 'advanced';
+  static const appLogs = 'appLogs';
   static const whatsNew = 'whatsNew';
-
-  /// The block listing every plugin's `contributes.settings` page (hide or move it as a whole).
-  static const pluginSettings = 'pluginSettings';
-
-  static const all = [
-    advanced,
-    assetViewer,
-    backup,
-    freeUpSpace,
-    languages,
-    networking,
-    notifications,
-    passkeys,
-    preferences,
-    timeline,
-    sync,
-    whatsNew,
-    pluginSettings,
-  ];
+  static const version = 'version';
+  static const licenses = 'licenses';
 }
 
 /// Built-in item ids of each settings sub page (`settings.<section>.items`).
@@ -196,8 +218,13 @@ abstract final class AppBarIds {
   /// The actions the page itself passes to the app bar, as one block.
   static const pageActions = 'pageActions';
   static const backup = 'backup';
+
+  /// The profile avatar (opens the profile dialog); shown while signed in to a server.
   static const profile = 'profile';
-  static const immichAppBar = [syncStatus, cast, pageActions, backup, profile];
+
+  /// Settings gear; shown instead of [profile] while no server account is signed in.
+  static const settings = 'settings';
+  static const immichAppBar = [syncStatus, cast, pageActions, backup, profile, settings];
 
   // RemoteAlbumSliverAppBar
   static const slideshow = 'slideshow';

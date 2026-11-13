@@ -6,6 +6,7 @@ import 'package:drift/drift.dart';
 import 'package:http/http.dart' as http;
 import 'package:immich_mobile/data/db/main/database.dart';
 import 'package:immich_mobile/data/db/main/table/local/asset.dart';
+import 'package:immich_mobile/data/db/main/table/remote/asset.dart';
 import 'package:immich_mobile/domain/models/asset/base_asset.model.dart';
 import 'package:immich_mobile/domain/models/device_plugin.model.dart';
 import 'package:immich_mobile/domain/services/offline_user.service.dart';
@@ -19,6 +20,10 @@ import 'package:photo_manager/photo_manager.dart' hide AssetType;
 
 const _engineStateFile = 'engine.json';
 const _batchSize = 200;
+
+/// A host function plugins call with `host.callHost(name, argsJson)`: receives the calling plugin's name and the
+/// decoded argument array, returns any JSON value. Throw [HostFunctionException] for a status other than 500.
+typedef HostFunction = Future<Object?> Function(String plugin, List<dynamic> args);
 
 class HostFunctionException implements Exception {
   final int status;
@@ -60,6 +65,29 @@ class DeviceWorkflowEngine {
   }
 
   Stream<void> get changes => _changes.stream;
+
+  /// The native plugin bridge (method channel `immich/dex_plugins`).
+  PluginRuntime get runtime => _runtime;
+
+  /// Host functions registered with the plugin kernel. Consulted before the built-in names below, so a registered
+  /// function can also upgrade a legacy one; names neither knows answer 501.
+  HostFunction? Function(String name)? hostLookup;
+
+  /// The kernel's event bus. When set, [emit] hands events to it (pattern subscriptions, throttling, non-blocking);
+  /// without it (background isolates, tests) events are delivered here as before.
+  void Function(String event, Map<String, dynamic> data)? eventBus;
+
+  /// Enabled plugins whose code is loaded, in display order.
+  Future<List<DevicePlugin>> activePlugins() async {
+    await ensureReady();
+    return [
+      for (final plugin in await _store.list())
+        if (plugin.enabled && _loaded.containsKey(plugin.name)) plugin,
+    ];
+  }
+
+  /// Whether [plugin] is enabled and its code is loaded.
+  bool isLoaded(String plugin) => _loaded.containsKey(plugin);
 
   Future<void> ensureReady() => _ready ??= _initialize();
 
@@ -109,7 +137,22 @@ class DeviceWorkflowEngine {
     ];
   }
 
-  Future<Map<String, dynamic>> assetJson(LocalAsset asset) => _assetV1(asset);
+  /// AssetV1 JSON for a local or a remote asset (remote assets add `ownerId`, `visibility`, `stackId`, ... and their
+  /// exif). Both carry `isLocal`, `isRemote`, `localId` and `remoteId`.
+  Future<Map<String, dynamic>> assetJson(BaseAsset asset) => switch (asset) {
+    final LocalAsset local => _assetV1(local),
+    final RemoteAsset remote => _remoteAssetV1(remote),
+  };
+
+  /// Finds an asset by id: a local asset id first, then a remote asset id.
+  Future<BaseAsset?> findAsset(String id) async {
+    final local = await (_db.localAssetEntity.select()..where((row) => row.id.equals(id))).getSingleOrNull();
+    if (local != null) {
+      return local.toDto();
+    }
+    final remote = await (_db.remoteAssetEntity.select()..where((row) => row.id.equals(id))).getSingleOrNull();
+    return remote?.toDto();
+  }
 
   Future<String> pluginsRoot() async => (await _store.root).path;
 
@@ -133,7 +176,7 @@ class DeviceWorkflowEngine {
     }
   }
 
-  Future<void> runContribution(PluginContribution contribution, {List<LocalAsset> assets = const []}) async {
+  Future<void> runContribution(PluginContribution contribution, {List<BaseAsset> assets = const []}) async {
     final method = contribution.method;
     if (method == null) {
       if (contribution.view != null) {
@@ -152,13 +195,18 @@ class DeviceWorkflowEngine {
       'workflow': {'id': 'button', 'authToken': '', 'stepId': contribution.id},
       'data': {
         'slot': contribution.slot,
-        'assets': [for (final asset in assets) await _assetV1(asset)],
+        'assets': [for (final asset in assets) await assetJson(asset)],
       },
     });
     await performResponse(contribution.plugin, response);
   }
 
   Future<void> emit(String event, Map<String, dynamic> data) async {
+    final bus = eventBus;
+    if (bus != null) {
+      bus(event, data);
+      return;
+    }
     for (final plugin in await _store.list()) {
       final method = plugin.events[event];
       if (method == null || !plugin.enabled || !_loaded.containsKey(plugin.name)) {
@@ -527,6 +575,15 @@ class DeviceWorkflowEngine {
         for (final tag in tags) {'id': tag, 'value': tag, 'name': tag.split('/').last},
       ],
       'ocr': null,
+      'isLocal': true,
+      'isRemote': asset.remoteId != null,
+      'localId': asset.id,
+      'remoteId': asset.remoteId,
+      'width': asset.width,
+      'height': asset.height,
+      'durationMs': asset.durationMs,
+      'isEdited': asset.isEdited,
+      'storage': asset.storage.name,
       'exifInfo': {
         'exifImageWidth': asset.width,
         'exifImageHeight': asset.height,
@@ -556,6 +613,80 @@ class DeviceWorkflowEngine {
         'colorspace': null,
         'bitsPerSample': null,
         'tags': tags,
+      },
+    };
+  }
+
+  Future<Map<String, dynamic>> _remoteAssetV1(RemoteAsset asset) async {
+    final exif = await (_db.remoteExifEntity.select()..where((row) => row.assetId.equals(asset.id))).getSingleOrNull();
+    final created = asset.createdAt.toUtc().toIso8601String();
+    return {
+      'id': asset.id,
+      'ownerId': asset.ownerId,
+      'type': switch (asset.type) {
+        AssetType.image => 'IMAGE',
+        AssetType.video => 'VIDEO',
+        AssetType.audio => 'AUDIO',
+        AssetType.other => 'OTHER',
+      },
+      'originalFileName': asset.name,
+      'originalPath': asset.name,
+      'isFavorite': asset.isFavorite,
+      'visibility': asset.visibility.name,
+      'livePhotoVideoId': asset.livePhotoVideoId,
+      'checksum': asset.checksum,
+      'fileCreatedAt': created,
+      'fileModifiedAt': asset.updatedAt.toUtc().toIso8601String(),
+      'localDateTime': asset.createdAt.toLocal().toIso8601String(),
+      'duration': asset.durationMs == null ? null : Duration(milliseconds: asset.durationMs!).toString(),
+      'isOffline': false,
+      'deletedAt': asset.deletedAt?.toUtc().toIso8601String(),
+      'tags': const [],
+      'ocr': null,
+      'isLocal': asset.localId != null,
+      'isRemote': true,
+      'localId': asset.localId,
+      'remoteId': asset.id,
+      'width': asset.width,
+      'height': asset.height,
+      'durationMs': asset.durationMs,
+      'isEdited': asset.isEdited,
+      'storage': asset.storage.name,
+      'thumbhash': asset.thumbHash,
+      'stackId': asset.stackId,
+      'uploadedAt': asset.uploadedAt?.toUtc().toIso8601String(),
+      'isTrashed': asset.isTrashed,
+      'isArchived': asset.isArchived,
+      'isLocked': asset.isLocked,
+      'exifInfo': {
+        'exifImageWidth': exif?.width ?? asset.width,
+        'exifImageHeight': exif?.height ?? asset.height,
+        'orientation': exif?.orientation,
+        'latitude': exif?.latitude,
+        'longitude': exif?.longitude,
+        'dateTimeOriginal': exif?.dateTimeOriginal?.toUtc().toIso8601String() ?? created,
+        'modifyDate': asset.updatedAt.toUtc().toIso8601String(),
+        'timeZone': exif?.timeZone,
+        'make': exif?.make,
+        'model': exif?.model,
+        'lensModel': exif?.lens,
+        'fNumber': exif?.fNumber,
+        'focalLength': exif?.focalLength,
+        'iso': exif?.iso,
+        'exposureTime': exif?.exposureTime,
+        'fileSizeInByte': exif?.fileSize,
+        'city': exif?.city,
+        'state': exif?.state,
+        'country': exif?.country,
+        'description': exif?.description,
+        'rating': exif?.rating,
+        'fps': null,
+        'livePhotoCID': null,
+        'projectionType': exif?.projectionType,
+        'profileDescription': null,
+        'colorspace': null,
+        'bitsPerSample': null,
+        'tags': const [],
       },
     };
   }
@@ -590,6 +721,10 @@ class DeviceWorkflowEngine {
   }
 
   Future<Object?> _dispatch(String plugin, String name, List<dynamic> args) {
+    final registered = hostLookup?.call(name);
+    if (registered != null) {
+      return registered(plugin, args);
+    }
     Map<String, dynamic> arg(int index) =>
         index < args.length && args[index] is Map ? Map<String, dynamic>.from(args[index] as Map) : {};
     String text(int index) => index < args.length ? '${args[index]}' : '';

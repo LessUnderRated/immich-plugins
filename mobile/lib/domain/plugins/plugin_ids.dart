@@ -90,7 +90,10 @@ enum PluginSlotKind {
   overlay,
   page,
   replace,
-  wrap;
+  wrap,
+
+  /// On/off icon whose state the app persists per plugin and id (`toggles.get` / `toggles.set`, `toggle.changed`).
+  toggle;
 
   static PluginSlotKind? parse(Object? value) {
     if (value is! String) {
@@ -105,6 +108,7 @@ enum PluginSlotKind {
       'menu' || 'menuitem' || 'menu_item' => PluginSlotKind.menuItem,
       'listTile' || 'item' => PluginSlotKind.tile,
       'nativeView' => PluginSlotKind.view,
+      'switch' || 'checkbox' => PluginSlotKind.toggle,
       _ => null,
     };
   }
@@ -120,6 +124,7 @@ abstract final class PluginSlotKindGroups {
     PluginSlotKind.chip,
     PluginSlotKind.page,
     PluginSlotKind.tab,
+    PluginSlotKind.toggle,
   };
 
   /// Items that render a block of UI (JSON UI or a native view).
@@ -165,6 +170,56 @@ abstract final class PluginContextKeys {
     }
     return {...derived, ...context};
   }
+}
+
+/// Generic slot suffixes every page gets (plan section 4): `<page>.appBar.actions`, `<page>.appBar.menu`, ...
+abstract final class PluginSlotSuffix {
+  static const appBarActions = '.appBar.actions';
+  static const appBarMenu = '.appBar.menu';
+  static const header = '.header';
+  static const footer = '.footer';
+  static const empty = '.empty';
+  static const fab = '.fab';
+  static const body = '.body';
+
+  static const all = [appBarActions, appBarMenu, header, footer, empty, fab, body];
+}
+
+/// The slot prefix of a page: its route name in lower camel case without `Route` (`MainTimelineRoute` ->
+/// `mainTimeline`, `SettingsSubRoute` -> `settingsSub`).
+String routeSlotPrefix(String routeName) {
+  var name = routeName.endsWith('Route') ? routeName.substring(0, routeName.length - 'Route'.length) : routeName;
+  if (name.endsWith('Page')) {
+    name = name.substring(0, name.length - 'Page'.length);
+  }
+  return name.isEmpty ? name : name[0].toLowerCase() + name.substring(1);
+}
+
+/// `<page>.<part>` for a route name, e.g. `pageSlot('AlbumOptionsRoute', PluginSlotSuffix.header)`.
+String pageSlot(String routeName, String suffix) =>
+    '${routeSlotPrefix(routeName)}${suffix.startsWith('.') ? suffix : '.$suffix'}';
+
+/// Hook id of a UI action (plan section 6): `action.<actionId>`.
+String actionHookId(String actionId) => 'action.$actionId';
+
+/// Overlay slots: `global` (every screen) and `route:<RouteName>` (one screen).
+const globalOverlaySlot = 'global';
+
+String routeOverlaySlot(String routeName) => 'route:$routeName';
+
+/// Owner of app (built-in) toggles in the toggle store: keys are `app/<id>`.
+const appToggleOwner = 'app';
+
+/// Key of a toggle in the toggle store: `<owner>/<id>` (owner is a plugin name or [appToggleOwner]).
+String toggleKey(String owner, String id) => '$owner/$id';
+
+/// Splits a toggle key; a key without `/` belongs to [defaultOwner].
+(String, String) parseToggleKey(String key, {required String defaultOwner}) {
+  final slash = key.indexOf('/');
+  if (slash <= 0 || slash == key.length - 1) {
+    return (defaultOwner, key);
+  }
+  return (key.substring(0, slash), key.substring(slash + 1));
 }
 
 /// Prefix of plugin item ids in built-in rules (`order`, `hide`): `plugin:<plugin>/<id>`.

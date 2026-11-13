@@ -1,5 +1,7 @@
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:immich_mobile/constants/enums.dart';
+import 'package:immich_mobile/domain/utils/plugin_data_ids.dart';
+import 'package:immich_mobile/domain/utils/plugin_hooks.dart';
 import 'package:immich_mobile/extensions/platform_extensions.dart';
 import 'package:immich_mobile/infrastructure/repositories/local_asset.repository.dart';
 import 'package:immich_mobile/providers/infrastructure/db.provider.dart';
@@ -33,7 +35,17 @@ class CleanupService {
     );
   }
 
-  Future<int> deleteLocalAssets(List<String> localIds) async {
+  /// Removes device copies; runs as `asset.delete` with `source: "local"`. Returns how many were deleted.
+  Future<int> deleteLocalAssets(List<String> localIds) => PluginHooks.run<int>(
+    DataHooks.assetDelete,
+    () => {'ids': localIds, 'source': 'local', 'trash': true, 'permanent': false},
+    () => _deleteLocalAssets(localIds),
+    withArgs: (args) => _deleteLocalAssets(PluginArgs.strings(args['ids'])),
+    encode: (count) => count,
+    decode: (json) => PluginArgs.integer(json) ?? 0,
+  );
+
+  Future<int> _deleteLocalAssets(List<String> localIds) async {
     if (localIds.isEmpty) {
       return 0;
     }
@@ -48,6 +60,10 @@ class CleanupService {
       if (deletedIds.isNotEmpty) {
         await _localAssetRepository.deleteAssets(deletedIds);
         deletedCount += deletedIds.length;
+        PluginHooks.emit(
+          DataEvents.assetDeleted,
+          () => {'ids': deletedIds, 'source': 'local', 'trash': true, 'permanent': false},
+        );
       }
     }
 

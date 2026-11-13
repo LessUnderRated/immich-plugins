@@ -139,6 +139,36 @@ abstract final class PluginHooks {
     required T Function(Object? json) decode,
   }) => source.asyncMap((value) => filter<T>(hookId, args, value, encode: encode, decode: decode));
 
+  /// [filter] for list results: [codec] builds a fresh [PluginListCodec] per call (codecs remember the items of the
+  /// call they encoded), so plugins can drop items, reorder them or, where the codec has `fromJson`, add items.
+  static FutureOr<List<T>> filterList<T>(
+    String hookId,
+    PluginHookArgs Function() args,
+    List<T> value,
+    PluginListCodec<T> Function() codec,
+  ) {
+    final binding = _binding;
+    if (binding == null || !binding.hasHook(hookId)) {
+      return value;
+    }
+    final listCodec = codec();
+    return binding.run<List<T>>(
+      hookId,
+      args(),
+      (_) async => value,
+      encode: listCodec.encode,
+      decode: listCodec.decode,
+    );
+  }
+
+  /// [filterList] applied to every list of [source].
+  static Stream<List<T>> filterListStream<T>(
+    Stream<List<T>> source,
+    String hookId,
+    PluginHookArgs Function() args,
+    PluginListCodec<T> Function() codec,
+  ) => source.asyncMap((value) => filterList<T>(hookId, args, value, codec));
+
   /// Awaits [operation] and returns [whenCancelled] instead of failing when a plugin cancelled it.
   ///
   /// For background paths (upload, sync) where a cancelled hook means "skip this one" rather than an error to show.
