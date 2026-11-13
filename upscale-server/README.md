@@ -29,7 +29,8 @@ default 256; lower it if the GPU runs out of memory), `--data` (folder for the m
 There is no password: the server is only reachable from your own network and tailnet. Allow TCP and UDP port 8765 in
 the PC's firewall for the LAN and Tailscale.
 
-Results are PNG. Finished jobs the phone never collects are deleted after an hour.
+Results are PNG (or JPEG when the phone asks for it). Finished jobs are kept for a day, so a phone that was locked or
+closed collects them when it comes back.
 
 ## Protocol
 
@@ -37,9 +38,9 @@ Results are PNG. Finished jobs the phone never collects are deleted after an hou
 | --- | --- |
 | UDP `IMMICH-UPSCALE?` to port 8765 | `{ service: "immich-upscale", name, port, addresses, version }` |
 | `GET /health` | `{ ok, version, name, addresses, providers, models, busy }` |
-| `POST /jobs?model=&width=&height=&denoise=` with the photo (PNG, JPEG or WebP) as the body | `{ id }` (`width`, `height`: output size) |
+| `POST /jobs?model=&width=&height=&denoise=&format=` with the photo (PNG, JPEG or WebP; EXIF orientation applied) as the body | `{ id }` (`width`, `height`: output size; `format`: `png` or `jpeg`) |
 | `GET /jobs/<id>` | `{ state: queued \| running \| done \| failed \| cancelled, progress, message, error? }` |
-| `GET /jobs/<id>/result` | the upscaled photo (PNG) |
+| `GET /jobs/<id>/result` | the upscaled photo (PNG or JPEG) |
 | `DELETE /jobs/<id>` | cancels the job and deletes its files |
 
 Jobs run one at a time.
