@@ -343,6 +343,10 @@ class EditorSessionNotifier extends Notifier<EditorSession> {
     );
   }
 
+  /// The `panel` of [tool]: its JSON UI (or native view) and initial input values, for the image the user sees.
+  Future<EditorToolResponse> toolPanel(EditorTool tool, Map<String, dynamic> toolState) async =>
+      ref.read(editorToolRunnerProvider).panel(tool, await toolContext(image: state.working), state: toolState);
+
   /// Runs `apply` of [tool] on what the user sees and makes the result the working image. Pending edits are baked
   /// into the source and restored by [undoTool].
   Future<EditorApplyResult> applyTool(EditorTool tool, Map<String, dynamic> toolState) async {

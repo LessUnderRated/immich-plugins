@@ -16,6 +16,7 @@ import 'package:immich_mobile/infrastructure/plugins/censor_styles.dart';
 import 'package:immich_mobile/infrastructure/plugins/plugin_api/editor/editor_ids.dart';
 import 'package:immich_mobile/infrastructure/plugins/plugin_api/editor/editor_media_writer.dart';
 import 'package:immich_mobile/infrastructure/plugins/plugin_api/editor/editor_tool.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/editor/editor_tool_protocol.dart';
 import 'package:immich_mobile/infrastructure/plugins/plugin_api/editor/editor_workspace.dart';
 import 'package:immich_mobile/presentation/pages/edit/editor.provider.dart';
 import 'package:immich_mobile/presentation/pages/edit/editor_edits.dart';
@@ -23,6 +24,7 @@ import 'package:immich_mobile/presentation/pages/edit/editor_save_dialog.dart';
 import 'package:immich_mobile/presentation/pages/edit/editor_session.provider.dart';
 import 'package:immich_mobile/presentation/pages/edit/editor_tools.provider.dart';
 import 'package:immich_mobile/presentation/pages/plugins/schema_form.widget.dart';
+import 'package:immich_mobile/presentation/plugins/plugin_ui_renderer.dart';
 import 'package:immich_mobile/providers/background_sync.provider.dart';
 import 'package:immich_mobile/providers/device_plugins.provider.dart';
 import 'package:immich_mobile/providers/theme.provider.dart';
@@ -751,8 +753,101 @@ class _PluginToolControls extends ConsumerStatefulWidget {
 
 class _PluginToolControlsState extends ConsumerState<_PluginToolControls> {
   bool _previewing = false;
+  final _panel = PluginUiController();
+  EditorToolResponse? _panelResponse;
+  int? _panelGeneration;
 
-  Map<String, dynamic> get _toolState => ref.read(editorToolStateProvider.notifier).of(widget.tool.id);
+  /// Values of the tool's panel inputs (kept per tool while the editor is open).
+  Map<String, dynamic> get _toolState => {
+    ...ref.read(editorToolStateProvider.notifier).of(widget.tool.id),
+    ..._panel.state,
+  };
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_loadPanel());
+  }
+
+  @override
+  void deactivate() {
+    _keepState();
+    super.deactivate();
+  }
+
+  void _keepState() {
+    final values = _panel.state;
+    if (values.isNotEmpty) {
+      ref.read(editorToolStateProvider.notifier).merge(widget.tool.id, values);
+    }
+  }
+
+  /// Asks the plugin for its panel (`panel` phase); again when the working image changes (new size).
+  Future<void> _loadPanel() async {
+    final generation = ref.read(editorSessionProvider).generation;
+    _panelGeneration = generation;
+    try {
+      final response = await ref.read(editorSessionProvider.notifier).toolPanel(widget.tool, _toolState);
+      if (!mounted || _panelGeneration != generation) {
+        return;
+      }
+      final state = response.state;
+      if (state != null) {
+        ref.read(editorToolStateProvider.notifier).merge(widget.tool.id, state);
+      }
+      setState(() => _panelResponse = response);
+    } catch (error, stack) {
+      handleError(error, stack: stack, description: 'Editor tool panel ${widget.tool.id} failed');
+    }
+  }
+
+  /// The plugin's panel (JSON UI, or a native view through a `nativeView` node), or null without one.
+  Widget? _buildPanel(BuildContext context) {
+    final response = _panelResponse;
+    final plugin = widget.tool.plugin;
+    if (response == null || plugin == null) {
+      return null;
+    }
+    final session = ref.read(editorSessionProvider);
+    final image = session.working;
+    final editor = ref.read(editorStateProvider);
+    final eventContext = <String, dynamic>{
+      'session': session.id,
+      'tool': widget.tool.toolId,
+      'generation': session.generation,
+      'image': {'width': image?.width ?? editor.originalWidth, 'height': image?.height ?? editor.originalHeight},
+    };
+    final view = response.view;
+    final ui =
+        response.ui ??
+        (view == null
+            ? null
+            : <String, dynamic>{
+                'type': 'nativeView',
+                'view': view,
+                'params': {...response.viewParams, 'session': session.id, 'tool': widget.tool.toolId},
+                'height': response.viewHeight ?? 160,
+                'interactive': true,
+                'composition': 'hybrid',
+              });
+    if (ui == null) {
+      return null;
+    }
+    return ConstrainedBox(
+      constraints: BoxConstraints(maxHeight: MediaQuery.sizeOf(context).height * 0.35),
+      child: PluginUiView(
+        key: ValueKey('${widget.tool.id}#$_panelGeneration'),
+        plugin: plugin,
+        ui: ui,
+        method: widget.tool.uiMethod ?? widget.tool.method,
+        surface: EditorPluginIds.panelSurface(widget.tool.toolId),
+        eventContext: eventContext,
+        initialState: ref.read(editorToolStateProvider.notifier).of(widget.tool.id),
+        controller: _panel,
+        scrollable: true,
+      ),
+    );
+  }
 
   void _show(String message, {bool error = false}) {
     if (mounted) {
@@ -791,6 +886,11 @@ class _PluginToolControlsState extends ConsumerState<_PluginToolControls> {
   Widget build(BuildContext context) {
     final run = ref.watch(editorSessionProvider.select((session) => session.run));
     final busy = ref.watch(editorStateProvider.select((state) => state.isApplyingEdits));
+    final generation = ref.watch(editorSessionProvider.select((session) => session.generation));
+    if (_panelGeneration != null && generation != _panelGeneration) {
+      _keepState();
+      unawaited(_loadPanel());
+    }
     final options = widget.tool.options;
 
     if (run != null) {
@@ -821,7 +921,8 @@ class _PluginToolControlsState extends ConsumerState<_PluginToolControls> {
       );
     }
 
-    return SizedBox(
+    final panel = _buildPanel(context);
+    final controls = SizedBox(
       height: 48,
       child: Row(
         children: [
@@ -835,10 +936,17 @@ class _PluginToolControlsState extends ConsumerState<_PluginToolControls> {
           ),
           if (options.preview && !options.livePreview)
             TextButton(onPressed: busy || _previewing ? null : _preview, child: Text(context.t.preview)),
-          FilledButton.tonal(onPressed: busy ? null : _apply, child: Text(options.applyLabel ?? widget.tool.title)),
+          FilledButton.tonal(
+            onPressed: busy ? null : _apply,
+            child: Text(_panelResponse?.applyLabel ?? options.applyLabel ?? widget.tool.title),
+          ),
         ],
       ),
     );
+    if (panel == null) {
+      return controls;
+    }
+    return Column(mainAxisSize: MainAxisSize.min, children: [panel, controls]);
   }
 }
 
