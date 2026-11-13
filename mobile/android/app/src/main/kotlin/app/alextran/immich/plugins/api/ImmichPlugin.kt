@@ -64,4 +64,12 @@ interface PluginHost {
   fun emit(event: String, payloadJson: String) {
     callHostAsync("events.emit", "[${JSONObject.quote(event)},${payloadJson.ifBlank { "null" }}]") { }
   }
+
+  /**
+   * Native capabilities of this plugin (lifecycle, intents, permissions, notifications, background work, media,
+   * video sessions, views, other plugins, native host functions); see docs/plugins/native.md. Same as
+   * `ImmichNative.of(host)`.
+   */
+  val native: NativeHost
+    get() = ImmichNative.of(this)
 }
