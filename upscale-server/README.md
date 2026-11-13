@@ -1,6 +1,6 @@
 # Upscale server
 
-Runs the Upscaler plugin's models on your computer instead of the phone. The phone uploads the photo, the PC
+Runs the Upscaler plugin's models on your computer (the plugin has no on-phone engine). The phone uploads the photo, the PC
 upscales it (on the GPU when one is available) and the phone downloads the result into the editor, with progress and
 Cancel as usual.
 
@@ -14,11 +14,11 @@ pip install -r requirements.txt     # NVIDIA: pip install onnxruntime-gpu · Win
 python upscale_server.py
 ```
 
-It prints its name, the ONNX Runtime provider (GPU or CPU) and its addresses. There is nothing to enter on the phone:
-in the editor pick **Upscale**, set **Run on** to **My PC**, and the plugin finds the PC by itself. The first time,
-the phone has to be on the same Wi-Fi as the PC (it finds it with a broadcast on UDP port 8765); the PC answers with
-its Tailscale address too, so afterwards it is found from anywhere while Tailscale is on. **Find my PC** in the panel
-searches again; only if it never finds it does the panel offer an address field.
+It prints its name, the ONNX Runtime provider (GPU or CPU) and its addresses (Tailscale first).
+
+On the phone, open **Settings > Plugins > Upscaler**, enter the PC's Tailscale address (or its Tailscale name) and tap
+**Test connection**. On the same Wi-Fi, **Find on this Wi-Fi** fills it in (it also learns the Tailscale address). Then
+in the editor pick **Upscale**: model, output size, **Upscale**.
 
 Models download from Hugging Face the first time each is used (same files and checksums as the plugin) into
 `~/.immich-upscale/models`.

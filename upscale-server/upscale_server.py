@@ -487,7 +487,7 @@ def main():
     print(f"Immich upscale server {VERSION} on {socket.gethostname()}")
     print(f"  ONNX Runtime providers: {', '.join(store.providers)}")
     print(f"  Addresses: {', '.join(_addresses(args.port)) or f'port {args.port}'}")
-    print("  In the editor pick Upscale > Run on: My PC; the phone finds this PC by itself (first time on the same Wi-Fi).")
+    print("  On the phone: Settings > Plugins > Upscaler, enter the Tailscale address above, Test connection.")
     try:
         server.serve_forever()
     except KeyboardInterrupt:
