@@ -25,6 +25,7 @@ import hashlib
 import io
 import json
 import math
+import multiprocessing
 import os
 import queue
 import secrets
@@ -42,10 +43,6 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
-
-import numpy as np
-import onnxruntime as ort
-from PIL import Image
 
 VERSION = "1.0.0"
 HF = "https://huggingface.co/"
@@ -70,6 +67,7 @@ MODELS = {
                        sha256="27c01a32e1d8f2c35141890577a873a13b38ed1fffa4393e8f990f16e893847e", scale=4, fixed=0),
 }
 
+IDLE_SECONDS = 120
 MAX_UPLOAD = 512 * 1024 * 1024
 MAX_OUTPUT_PIXELS = 256 * 1024 * 1024
 PAD = 16
@@ -82,17 +80,39 @@ class Cancelled(Exception):
 # ---------------------------------------------------------------------------------------------------------- models
 
 
+PREFERRED_PROVIDERS = ["CUDAExecutionProvider", "DmlExecutionProvider", "CoreMLExecutionProvider",
+                       "CPUExecutionProvider"]
+
+
+def _pick_providers(available: list[str]) -> list[str]:
+    return [p for p in PREFERRED_PROVIDERS if p in available] or available
+
+
+def _probe_providers() -> list[str]:
+    code = "import onnxruntime as o; print(','.join(o.get_available_providers()))"
+    try:
+        out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=120).stdout
+    except (OSError, subprocess.SubprocessError):
+        return []
+    return _pick_providers([p for p in out.strip().split(",") if p])
+
+
 class ModelStore:
     def __init__(self, cache: Path, tile: int):
+        import onnxruntime as ort
+
+        if hasattr(ort, "preload_dlls"):
+            try:
+                ort.preload_dlls()
+            except Exception:  # noqa: BLE001 - CPU still works without the GPU libraries
+                pass
+        self.ort = ort
         self.cache = cache
         self.tile = tile
         self.cache.mkdir(parents=True, exist_ok=True)
         self._lock = threading.Lock()
-        self._session: tuple[str, ort.InferenceSession] | None = None
-        preferred = ["CUDAExecutionProvider", "DmlExecutionProvider", "CoreMLExecutionProvider",
-                     "CPUExecutionProvider"]
-        available = ort.get_available_providers()
-        self.providers = [p for p in preferred if p in available] or available
+        self._session = None
+        self.providers = _pick_providers(ort.get_available_providers())
 
     def path(self, model_id: str, progress) -> Path:
         spec = MODELS[model_id]
@@ -115,7 +135,8 @@ class ModelStore:
         part.replace(dest)
         return dest
 
-    def session(self, model_id: str, progress) -> ort.InferenceSession:
+    def session(self, model_id: str, progress):
+        ort = self.ort
         with self._lock:
             if self._session and self._session[0] == model_id:
                 return self._session[1]
@@ -139,8 +160,10 @@ def _sha256(path: Path) -> str:
 # ---------------------------------------------------------------------------------------------------------- engine
 
 
-def _run(session: ort.InferenceSession, tile: np.ndarray, denoise: float) -> np.ndarray:
+def _run(session, tile, denoise: float):
     """tile: HxWx3 float32 0-1 -> model output HxWx3 float32."""
+    import numpy as np
+
     feeds = {}
     for inp in session.get_inputs():
         dtype = np.float16 if "float16" in inp.type else np.float32
@@ -152,9 +175,12 @@ def _run(session: ort.InferenceSession, tile: np.ndarray, denoise: float) -> np.
     return out.astype(np.float32).transpose(1, 2, 0)
 
 
-def _pass(session, spec, src: np.ndarray, dw: int, dh: int, denoise: float, tile: int, report) -> np.ndarray:
+def _pass(session, spec, src, dw: int, dh: int, denoise: float, tile: int, report):
     """One model pass over src (HxWx3 float32) straight to a dh x dw x 3 uint8 image (each tile's output is resampled
     to the destination size, so any scale up to the model's works in one pass)."""
+    import numpy as np
+    from PIL import Image
+
     sh, sw = src.shape[:2]
     m = spec["scale"]
     fixed = spec["fixed"]
@@ -195,7 +221,10 @@ def _pass(session, spec, src: np.ndarray, dw: int, dh: int, denoise: float, tile
     return out
 
 
-def upscale(store: ModelStore, model_id: str, image: Image.Image, dw: int, dh: int, denoise: float, report):
+def upscale(store: ModelStore, model_id: str, image, dw: int, dh: int, denoise: float, report):
+    import numpy as np
+    from PIL import Image
+
     spec = MODELS[model_id]
     session = store.session(model_id, report)
     alpha = image.getchannel("A") if image.mode in ("RGBA", "LA") else None
@@ -256,10 +285,88 @@ class Job:
         return data
 
 
+@dataclass
+class EngineConfig:
+    cache: Path
+    tile: int
+    providers: list[str] = field(default_factory=list)
+
+
+def _engine_main(config: EngineConfig, tasks, events, cancel):
+    store = ModelStore(config.cache, config.tile)
+    from PIL import Image
+
+    while True:
+        task = tasks.get()
+        if task is None:
+            return
+        job_id, model, width, height, denoise, source, result = task
+        cancel.clear()
+
+        def report(fraction, message, job_id=job_id):
+            if cancel.is_set():
+                raise Cancelled()
+            events.put(("progress", job_id, max(0.0, min(1.0, fraction)), message))
+
+        try:
+            with Image.open(source) as image:
+                image.load()
+                upscaled = upscale(store, model, image, width, height, denoise, report)
+            report(1.0, "Encoding the result…")
+            upscaled.save(result, format="PNG", compress_level=3)
+            events.put(("done", job_id, None, None))
+        except Cancelled:
+            events.put(("cancelled", job_id, None, None))
+        except Exception as error:  # noqa: BLE001 - reported to the phone
+            events.put(("failed", job_id, None, str(error) or error.__class__.__name__))
+
+
+class _Engine:
+    def __init__(self, config: EngineConfig):
+        context = multiprocessing.get_context("spawn")
+        self.tasks = context.Queue()
+        self.events = context.Queue()
+        self.cancel = context.Event()
+        self.process = context.Process(target=_engine_main, args=(config, self.tasks, self.events, self.cancel),
+                                       daemon=True)
+        self.process.start()
+
+    def alive(self) -> bool:
+        return self.process.is_alive()
+
+    def run(self, job: Job, result: Path) -> tuple[str, str | None]:
+        self.tasks.put((job.id, job.model, job.width, job.height, job.denoise, str(job.source), str(result)))
+        while True:
+            if job.cancel.is_set():
+                self.cancel.set()
+            try:
+                kind, job_id, fraction, detail = self.events.get(timeout=0.5)
+            except queue.Empty:
+                if not self.process.is_alive():
+                    return "crashed", None
+                continue
+            if job_id != job.id:
+                continue
+            if kind == "progress":
+                job.progress = fraction
+                job.message = detail
+                continue
+            return kind, detail
+
+    def stop(self):
+        if self.process.is_alive():
+            self.tasks.put(None)
+            self.process.join(timeout=10)
+        if self.process.is_alive():
+            self.process.terminate()
+            self.process.join(timeout=5)
+
+
 class Jobs:
-    def __init__(self, store: ModelStore, work_dir: Path):
+    def __init__(self, store: EngineConfig, work_dir: Path, idle: float = IDLE_SECONDS):
         self.store = store
         self.work_dir = work_dir
+        self.idle = idle
         self.jobs: dict[str, Job] = {}
         self.queue: queue.Queue[Job] = queue.Queue()
         self.lock = threading.Lock()
@@ -295,40 +402,44 @@ class Jobs:
                 path.unlink(missing_ok=True)
 
     def _worker(self):
+        engine: _Engine | None = None
         while True:
-            job = self.queue.get()
+            try:
+                job = self.queue.get(timeout=self.idle)
+            except queue.Empty:
+                if engine:
+                    engine.stop()
+                    engine = None
+                continue
             if job.cancel.is_set():
                 continue
+            if engine is None or not engine.alive():
+                engine = _Engine(self.store)
             job.state = "running"
-
-            def report(fraction, message, job=job):
-                if job.cancel.is_set():
-                    raise Cancelled()
-                job.progress = max(0.0, min(1.0, fraction))
-                job.message = message
-
+            result = self.work_dir / f"{job.id}-result.png"
             try:
-                with Image.open(job.source) as image:
-                    image.load()
-                    result = upscale(self.store, job.model, image, job.width, job.height, job.denoise, report)
-                report(1.0, "Encoding the result…")
-                path = self.work_dir / f"{job.id}-result.png"
-                result.save(path, format="PNG", compress_level=3)
-                job.result = path
+                outcome, detail = engine.run(job, result)
+            finally:
+                job.source.unlink(missing_ok=True)
+            if outcome == "done":
+                job.result = result
                 job.state = "done"
                 job.progress = 1.0
                 job.message = "Done"
-            except Cancelled:
+            elif outcome == "cancelled":
+                result.unlink(missing_ok=True)
                 job.state = "cancelled"
                 job.message = "Cancelled"
-            except Exception as error:  # noqa: BLE001 - reported to the phone
+            else:
+                result.unlink(missing_ok=True)
                 job.state = "failed"
-                job.error = str(error) or error.__class__.__name__
+                job.error = detail or "The upscale worker stopped"
                 job.message = "Failed"
                 print(f"[job {job.id}] failed: {job.error}", file=sys.stderr)
-            finally:
-                job.source.unlink(missing_ok=True)
-                job.finished_at = time.time()
+            if outcome == "crashed":
+                engine.stop()
+                engine = None
+            job.finished_at = time.time()
 
     def _janitor(self):
         # finished jobs the phone never fetched are dropped after an hour
@@ -464,6 +575,8 @@ def main():
     parser.add_argument("--data", default=str(Path.home() / ".immich-upscale"), help="models, token and work files")
     parser.add_argument("--tile", type=int, default=256, help="tile size for models that take any size")
     parser.add_argument("--token", help="use this token instead of the saved / generated one")
+    parser.add_argument("--idle", type=float, default=IDLE_SECONDS,
+                        help="seconds without jobs before the models are unloaded (default 120)")
     args = parser.parse_args()
 
     data = Path(args.data)
@@ -476,8 +589,8 @@ def main():
         os.chmod(token_file, 0o600)
     work = Path(tempfile.mkdtemp(prefix="immich-upscale-"))
 
-    store = ModelStore(data / "models", args.tile)
-    jobs = Jobs(store, work)
+    store = EngineConfig(data / "models", args.tile, _probe_providers())
+    jobs = Jobs(store, work, args.idle)
     server = ThreadingHTTPServer((args.host, args.port), make_handler(jobs, token))
     print(f"Immich upscale server {VERSION}")
     print(f"  ONNX Runtime providers: {', '.join(store.providers)}")
