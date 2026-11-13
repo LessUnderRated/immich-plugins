@@ -11,13 +11,11 @@ import app.alextran.immich.plugins.api.ImmichViewPlugin
 import io.flutter.plugin.common.StandardMessageCodec
 import io.flutter.plugin.platform.PlatformView
 import io.flutter.plugin.platform.PlatformViewFactory
-import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import app.alextran.immich.plugins.api.HostCallback
 import app.alextran.immich.plugins.api.ImmichPlugin
 import app.alextran.immich.plugins.api.PluginHost
-import dalvik.system.DexClassLoader
 import io.flutter.plugin.common.BinaryMessenger
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
@@ -41,6 +39,10 @@ class DexPluginHost(private val context: Context, messenger: BinaryMessenger) :
 
   init {
     channel.setMethodCallHandler(this)
+    PluginRuntime.ensureInit(context)
+    // Native capabilities (background work, notification actions, video overlays, plugin-to-plugin calls) use the
+    // real host, with Dart host functions, while this host runs.
+    PluginRuntime.setHostFactory { key -> hostFor(key) }
   }
 
   override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
@@ -50,15 +52,20 @@ class DexPluginHost(private val context: Context, messenger: BinaryMessenger) :
         val dexPath = call.argument<String>("dexPath")!!
         val entry = call.argument<String>("entry")!!
         runInBackground(result) {
-          plugins[key] = instantiate(key, File(dexPath), entry)
           pluginDirs[key] = File(File(dexPath).parentFile, "files").apply { mkdirs() }
+          // One instance per process, shared with native loads (background work, startup); runs onLoad.
+          plugins[key] = PluginRuntime.load(key, dexPath, entry)
           null
         }
       }
 
       "unload" -> {
-        plugins.remove(call.argument<String>("key")!!)
-        result.success(null)
+        val key = call.argument<String>("key")!!
+        plugins.remove(key)
+        runInBackground(result) {
+          PluginRuntime.unload(key)
+          null
+        }
       }
 
       "call" -> {
@@ -66,7 +73,7 @@ class DexPluginHost(private val context: Context, messenger: BinaryMessenger) :
         val method = call.argument<String>("method")!!
         val input = call.argument<String>("input") ?: "{}"
         runInBackground(result) {
-          val plugin = plugins[key] ?: throw IllegalStateException("Plugin $key is not loaded")
+          val plugin = plugins[key] ?: PluginRuntime.plugin(key) ?: throw IllegalStateException("Plugin $key is not loaded")
           plugin.call(method, input, hostFor(key))
         }
       }
@@ -75,53 +82,28 @@ class DexPluginHost(private val context: Context, messenger: BinaryMessenger) :
     }
   }
 
-  private fun instantiate(key: String, source: File, entry: String): ImmichPlugin {
-    val directory = File(context.codeCacheDir, "dex-plugins").apply { mkdirs() }
-    directory.listFiles { file -> file.name.startsWith("$key-") }?.forEach { stale ->
-      stale.setWritable(true)
-      stale.delete()
-    }
-    val target = File(directory, "$key-${source.lastModified()}-${source.length()}.dex")
-    source.copyTo(target, overwrite = true)
-    target.setReadOnly()
-
-    val optimized = File(directory, "oat").apply { mkdirs() }
-    val loader = DexClassLoader(target.path, optimized.path, copyNativeLibraries(key, source.parentFile!!), javaClass.classLoader)
-    val instance = loader.loadClass(entry).getDeclaredConstructor().newInstance()
-    return instance as? ImmichPlugin
-      ?: throw IllegalStateException("$entry does not implement ${ImmichPlugin::class.java.name}")
-  }
-
-  private fun copyNativeLibraries(key: String, pluginRoot: File): String? {
-    val libraries = File(pluginRoot, "files/lib")
-    val abi = Build.SUPPORTED_ABIS.firstOrNull { File(libraries, it).isDirectory } ?: return null
-    val target = File(context.codeCacheDir, "dex-plugins/$key-libs")
-    if (target.exists()) {
-      target.walkBottomUp().forEach { it.setWritable(true) }
-      target.deleteRecursively()
-    }
-    target.mkdirs()
-    File(libraries, abi).listFiles { file -> file.name.endsWith(".so") }?.forEach { library ->
-      val copy = File(target, library.name)
-      library.copyTo(copy, overwrite = true)
-      copy.setReadOnly()
-    }
-    return target.path
-  }
-
   private fun hostFor(key: String) = object : PluginHost {
     override val context: Context = this@DexPluginHost.context
     override val dataDir: File = File(context.filesDir, "dex-plugin-data/$key").apply { mkdirs() }
-    override val pluginDir: File = pluginDirs[key] ?: dataDir
+    override val pluginDir: File = pluginDirs[key]
+      ?: PluginRegistryStore.get(this@DexPluginHost.context, key)?.dexPath?.let { File(File(it).parentFile, "files") }
+      ?: dataDir
     override val pluginName: String = key
     override val activity: Activity? get() = this@DexPluginHost.activity
 
     override val hostApiVersion: Int = HOST_API_VERSION
 
+    // Natively implemented host functions answer in-process (fast path); the rest go to Dart.
     override fun callHost(name: String, argsJson: String): String =
-      invokeHost(key, name, hostInput(argsJson))
+      PluginHostFunctions.tryCall(key, name, argsJson) ?: invokeHost(key, name, hostInput(argsJson))
 
     override fun callHostAsync(name: String, argsJson: String, callback: HostCallback) {
+      if (PluginHostFunctions.has(name)) {
+        PluginHostFunctions.callAsync(key, name, argsJson) { response ->
+          executor.execute { PluginCrashGuard.run(key, "callHostAsync($name) callback") { callback.onResult(response) } }
+        }
+        return
+      }
       invokeHostAsync(key, name, hostInput(argsJson)) { response ->
         executor.execute {
           try {
@@ -140,7 +122,7 @@ class DexPluginHost(private val context: Context, messenger: BinaryMessenger) :
     }
 
     override fun runOnUi(block: Runnable) {
-      mainHandler.post(block)
+      mainHandler.post(PluginCrashGuard.wrap(key, "runOnUi", block))
     }
 
     override fun sendEvent(name: String, payloadJson: String) {
@@ -156,27 +138,37 @@ class DexPluginHost(private val context: Context, messenger: BinaryMessenger) :
     val viewType = params["view"] as? String ?: ""
     val rawJson = params["params"] as? String ?: "{}"
     // The plugin sees the platform view id (for frame capture and lifecycle) and how the view is composited.
+    // The app theme too (dark, colour scheme, font), unless the Dart side already passed one.
     val json = try {
-      JSONObject(rawJson)
+      val parsed = JSONObject(rawJson)
         .put("viewId", viewId)
         .put("composition", params["composition"] as? String ?: "texture")
-        .toString()
+      if (!parsed.has("theme")) {
+        parsed.put("theme", JSONObject(PluginViews.theme.json))
+      }
+      parsed.toString()
     } catch (error: Throwable) {
       rawJson
     }
-    val plugin = plugins[key]
+    val plugin = plugins[key] ?: PluginRuntime.plugin(key)
     val viewContext = activity ?: context
     val view = try {
       (plugin as? ImmichViewPlugin)?.createView(viewContext, viewType, json, hostFor(key))
         ?: message(viewContext, "Plugin $key has no view \"$viewType\"")
     } catch (error: Throwable) {
+      PluginCrashGuard.report(key, "createView $viewType", error)
       message(viewContext, "Plugin view failed: ${error.message ?: error}")
     }
+    // The container isolates measure/layout/draw/touch failures and identifies the view for content-height reports.
+    val container = PluginViews.wrap(viewContext, key, viewType, viewId, view)
     return object : PlatformView {
-      override fun getView(): View = view
+      override fun getView(): View = container
 
       override fun dispose() {
-        (plugin as? ImmichViewLifecycle)?.onViewDisposed(viewType, view)
+        PluginViews.unregister(viewId)
+        PluginCrashGuard.run(key, "onViewDisposed $viewType") {
+          (plugin as? ImmichViewLifecycle)?.onViewDisposed(viewType, view)
+        }
       }
     }
   }

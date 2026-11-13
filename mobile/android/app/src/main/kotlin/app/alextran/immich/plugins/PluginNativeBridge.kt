@@ -12,7 +12,7 @@ import io.flutter.plugin.common.MethodChannel
  * `setTheme {theme}`, `taskShow {...}`, `taskFinish {...}`, `taskCancel {id}`.
  * Native to Dart: `emit {event, data, plugin}`, `log {plugin, level, message, error, stack}`,
  * `command {plugin, name, payload}`, `perform {plugin, response}`, `subscriptions {patterns}`,
- * `contentHeight {viewId, height}`.
+ * `contentHeight {viewId, height}`, `videoSessions {wanted}`.
  * Native-to-Dart messages sent before Dart called `attach` are queued (up to [MAX_QUEUE]) and delivered after it.
  */
 internal object PluginNativeBridge : MethodChannel.MethodCallHandler {
@@ -70,6 +70,9 @@ internal object PluginNativeBridge : MethodChannel.MethodCallHandler {
   fun contentHeight(viewId: Int, height: Double) =
     send("contentHeight", mapOf("viewId" to viewId, "height" to height))
 
+  /** True while native code listens for video sessions: Dart then registers every player natively right away. */
+  fun videoSessionsWanted(wanted: Boolean) = send("videoSessions", mapOf("wanted" to wanted), queueable = false)
+
   private fun send(method: String, args: Map<String, Any?>, queueable: Boolean = true) {
     PluginRuntime.runOnMain {
       val target = channel
@@ -118,6 +121,7 @@ internal object PluginNativeBridge : MethodChannel.MethodCallHandler {
         PluginRuntime.mainHandler.post {
           flush()
           channel?.invokeMethod("subscriptions", mapOf("patterns" to PluginEvents.patterns()))
+          channel?.invokeMethod("videoSessions", mapOf("wanted" to PluginVideoSessions.wanted))
         }
       }
 

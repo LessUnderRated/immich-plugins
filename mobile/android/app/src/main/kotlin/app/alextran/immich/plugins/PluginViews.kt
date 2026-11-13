@@ -165,6 +165,9 @@ class PluginViewContainer internal constructor(
   @Volatile
   internal var disposed = false
 
+  /** False: touches pass through to the views below (non-interactive overlays). */
+  var touchable = true
+
   private var failed = false
 
   private fun fail(where: String, error: Throwable) {
@@ -217,7 +220,7 @@ class PluginViewContainer internal constructor(
   }
 
   override fun dispatchTouchEvent(event: MotionEvent): Boolean = try {
-    super.dispatchTouchEvent(event)
+    touchable && super.dispatchTouchEvent(event)
   } catch (error: Throwable) {
     fail("touch", error)
     true

@@ -2,6 +2,8 @@ package app.alextran.immich.plugins
 
 import android.graphics.Bitmap
 import android.graphics.Rect
+import android.media.MediaMetadataRetriever
+import android.os.Build
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.SystemClock
@@ -12,6 +14,7 @@ import android.view.TextureView
 import android.view.View
 import android.view.ViewGroup
 import android.widget.FrameLayout
+import app.alextran.immich.plugins.PluginJson.str
 import app.alextran.immich.plugins.api.FrameCallback
 import app.alextran.immich.plugins.api.ImmichVideoOverlayPlugin
 import app.alextran.immich.plugins.api.ImmichViewLifecycle
@@ -24,6 +27,7 @@ import app.alextran.immich.plugins.api.VideoSessionsListener
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
@@ -34,20 +38,19 @@ import java.util.concurrent.atomic.AtomicInteger
 import kotlin.math.roundToInt
 
 /**
- * Video sessions, native side. The app's video players register each playing video over the `immich/plugin_video`
- * channel with the Flutter platform view id of the player; the native side finds the player view through the engine's
- * platform views controller, captures frames from its SurfaceView (PixelCopy) or TextureView, and hosts a native
- * overlay layer exactly over the video surface.
+ * Video sessions, native side of `MethodChannel("immich/plugin_video")` (Dart client: `PluginVideoChannel` in
+ * `plugin_api/viewer/video_sessions.dart`, protocol in docs/plugins/viewer.md and native.md).
  *
- * Dart to native: `registerSession {sessionId, viewId, assetId?, durationMs?, videoWidth?, videoHeight?}`,
- * `unregisterSession {sessionId}`, `position {sessionId, positionMs, playing, speed?, durationMs?, videoWidth?,
- * videoHeight?}`, `captureFrame {sessionId, width?, height?, format?, quality?, path?}`,
- * `attachOverlay {sessionId, plugin, view, params?}`, `detachOverlay {sessionId, plugin, view}`, `sessions`.
- * Native to Dart: `control {sessionId, action: play|pause|seek|speed|volume, value?}`.
+ * Every call carries `{ sessionId, viewId, assetId, localId, remoteId, surface }`; the player view is found with the
+ * engine's platform views controller (native_video_player: FrameLayout > AspectRatioFrameLayout > SurfaceView).
+ * Methods: `registerSession` and `updateSession` (+ state fields `state, positionMs, durationMs, speed, volume,
+ * videoWidth, videoHeight, frameRect, devicePixelRatio`), `unregisterSession`, `captureFrame`, `extractFrame`,
+ * `attachOverlay`, `detachOverlay`, and `sessions` (diagnostics).
  */
 internal object PluginVideoSessions : MethodChannel.MethodCallHandler {
   const val CHANNEL = "immich/plugin_video"
   private const val MAX_FRAME_SIZE = 8192
+  private const val KEPT_EXTRACTED_FRAMES = 32
 
   @Volatile
   private var channel: MethodChannel? = null
@@ -106,27 +109,30 @@ internal object PluginVideoSessions : MethodChannel.MethodCallHandler {
 
   fun get(sessionId: String): VideoSessionCore? = sessions[sessionId]?.takeIf { it.isActive }
 
+  /** While any listener exists, Dart registers every player natively as soon as it exists. */
   fun addListener(plugin: String, listener: VideoSessionsListener): Registration {
     val entry = ListenerEntry(plugin, listener)
     listeners.add(entry)
-    return PluginRuntime.scope(plugin).track { listeners.remove(entry) }
+    PluginNativeBridge.videoSessionsWanted(true)
+    return PluginRuntime.scope(plugin).track {
+      listeners.remove(entry)
+      PluginNativeBridge.videoSessionsWanted(listeners.isNotEmpty())
+    }
   }
+
+  val wanted: Boolean get() = listeners.isNotEmpty()
 
   fun removePlugin(plugin: String) {
     sessions.values.forEach { it.removePlugin(plugin) }
   }
 
+  private fun safeName(text: String) = text.replace(Regex("[^A-Za-z0-9._-]"), "_")
+
+  fun frameDirectory(sessionId: String): File = File(frameRoot, safeName(sessionId))
+
   fun frameFile(sessionId: String, extension: String): File {
-    val directory = File(frameRoot, sessionId.replace(Regex("[^A-Za-z0-9._-]"), "_")).apply { mkdirs() }
+    val directory = frameDirectory(sessionId).apply { mkdirs() }
     return File(directory, "frame-${frameCounter.incrementAndGet()}.$extension")
-  }
-
-  fun frameDirectory(sessionId: String): File = File(frameRoot, sessionId.replace(Regex("[^A-Za-z0-9._-]"), "_"))
-
-  fun control(sessionId: String, action: String, value: Any?) {
-    PluginRuntime.runOnMain {
-      channel?.invokeMethod("control", mapOf("sessionId" to sessionId, "action" to action, "value" to value))
-    }
   }
 
   internal fun started(session: VideoSessionCore) {
@@ -152,6 +158,8 @@ internal object PluginVideoSessions : MethodChannel.MethodCallHandler {
     }
   }
 
+  // ---- channel --------------------------------------------------------------------------------------------------
+
   override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
     try {
       handle(call, result)
@@ -164,51 +172,74 @@ internal object PluginVideoSessions : MethodChannel.MethodCallHandler {
 
   private fun MethodCall.int(key: String): Int? = argument<Number>(key)?.toInt()
 
-  private fun MethodCall.sessionOrThrow(): VideoSessionCore {
-    val id = argument<String>("sessionId") ?: throw IllegalArgumentException("sessionId is required")
-    return get(id) ?: throw IllegalStateException("Video session $id does not exist")
+  private fun MethodCall.double(key: String): Double? = argument<Number>(key)?.toDouble()
+
+  private fun MethodCall.sessionId(): String = argument<String>("sessionId") ?: throw IllegalArgumentException("sessionId is required")
+
+  /** The session of this call; created (and bound to its player view) when it is not registered yet. */
+  private fun sessionFor(call: MethodCall): VideoSessionCore {
+    val sessionId = call.sessionId()
+    val viewId = call.int("viewId") ?: throw IllegalArgumentException("viewId is required")
+    val existing = get(sessionId)
+    if (existing != null && existing.viewId == viewId) {
+      existing.identify(call.argument("assetId"), call.argument("localId"), call.argument("remoteId"), call.argument("surface"))
+      return existing
+    }
+    existing?.let { end(it) }
+    val session = VideoSessionCore(sessionId, viewId)
+    session.identify(call.argument("assetId"), call.argument("localId"), call.argument("remoteId"), call.argument("surface"))
+    sessions[sessionId] = session
+    session.bind()
+    return session
+  }
+
+  private fun applyState(session: VideoSessionCore, call: MethodCall) {
+    val frame = call.argument<Map<String, Any?>>("frameRect")
+    session.update(
+      positionMs = call.long("positionMs"),
+      state = call.argument("state"),
+      speed = call.double("speed"),
+      volume = call.double("volume"),
+      durationMs = call.long("durationMs"),
+      videoWidth = call.int("videoWidth"),
+      videoHeight = call.int("videoHeight"),
+      logicalFrame = frame?.let {
+        val left = (it["left"] as? Number)?.toDouble() ?: 0.0
+        val top = (it["top"] as? Number)?.toDouble() ?: 0.0
+        val width = (it["width"] as? Number)?.toDouble() ?: 0.0
+        val height = (it["height"] as? Number)?.toDouble() ?: 0.0
+        doubleArrayOf(left, top, width, height)
+      },
+      devicePixelRatio = call.double("devicePixelRatio"),
+    )
   }
 
   private fun handle(call: MethodCall, result: MethodChannel.Result) {
     when (call.method) {
       "registerSession" -> {
-        val sessionId = call.argument<String>("sessionId") ?: throw IllegalArgumentException("sessionId is required")
-        val viewId = call.int("viewId") ?: throw IllegalArgumentException("viewId is required")
-        sessions[sessionId]?.let { end(it) }
-        val session = VideoSessionCore(sessionId, viewId, call.argument<String>("assetId"))
-        session.update(null, null, null, call.long("durationMs"), call.int("videoWidth"), call.int("videoHeight"))
-        sessions[sessionId] = session
-        session.bind()
-        result.success(session.describe())
-      }
-
-      "unregisterSession" -> {
-        val sessionId = call.argument<String>("sessionId") ?: throw IllegalArgumentException("sessionId is required")
-        sessions[sessionId]?.let { end(it) }
+        applyState(sessionFor(call), call)
         result.success(null)
       }
 
-      "position" -> {
-        val sessionId = call.argument<String>("sessionId") ?: throw IllegalArgumentException("sessionId is required")
-        get(sessionId)?.update(
-          call.long("positionMs"),
-          call.argument<Boolean>("playing"),
-          call.argument<Number>("speed")?.toDouble(),
-          call.long("durationMs"),
-          call.int("videoWidth"),
-          call.int("videoHeight"),
-        )
+      "updateSession" -> {
+        get(call.sessionId())?.let { applyState(it, call) }
+        result.success(null)
+      }
+
+      "unregisterSession" -> {
+        sessions[call.sessionId()]?.let { end(it) }
         result.success(null)
       }
 
       "captureFrame" -> {
-        val session = call.sessionOrThrow()
+        val session = sessionFor(call)
         session.captureToFile(
           call.int("width") ?: 0,
           call.int("height") ?: 0,
           call.argument<String>("format") ?: "rgba",
           call.int("quality") ?: 90,
-          call.argument<String>("path"),
+          null,
+          call.long("positionMs"),
         ) { json, error ->
           PluginRuntime.runOnMain {
             if (json != null) {
@@ -220,25 +251,50 @@ internal object PluginVideoSessions : MethodChannel.MethodCallHandler {
         }
       }
 
+      "extractFrame" -> {
+        val options = JSONObject()
+          .put("path", call.argument<String>("path"))
+          .put("url", call.argument<String>("url"))
+          .put("headers", PluginJson.toJson(call.argument<Map<String, Any?>>("headers") ?: emptyMap<String, Any?>()))
+          .put("localId", call.argument<String>("localId"))
+          .put("width", call.int("width") ?: 0)
+          .put("height", call.int("height") ?: 0)
+          .put("format", call.argument<String>("format") ?: "rgba")
+          .put("quality", call.int("quality") ?: 90)
+        extractFrame(call.long("timeMs") ?: 0, options) { json, error ->
+          PluginRuntime.runOnMain {
+            if (json != null) {
+              result.success(PluginJson.fromJson(json))
+            } else {
+              result.error("extract_failed", error ?: "Frame extraction failed", null)
+            }
+          }
+        }
+      }
+
       "attachOverlay" -> {
-        val session = call.sessionOrThrow()
+        val session = sessionFor(call)
+        applyState(session, call)
         val plugin = call.argument<String>("plugin") ?: throw IllegalArgumentException("plugin is required")
         val view = call.argument<String>("view") ?: throw IllegalArgumentException("view is required")
+        val id = call.argument<String>("id") ?: view
         val params = when (val value = call.argument<Any>("params")) {
-          is String -> value
-          null -> "{}"
-          else -> PluginJson.stringify(value)
+          null -> JSONObject()
+          is String -> PluginJson.obj(value)
+          else -> PluginJson.toJson(value) as? JSONObject ?: JSONObject()
         }
-        session.attachPluginOverlay(plugin, view, params)
-        result.success(null)
+        session.attachPluginOverlay(plugin, view, id, params, call.argument<Boolean>("interactive") ?: false) { overlayId, error ->
+          if (overlayId != null) {
+            result.success(mapOf("overlayId" to overlayId))
+          } else {
+            result.error("overlay_failed", error ?: "The overlay could not be attached", null)
+          }
+        }
       }
 
       "detachOverlay" -> {
-        val session = call.sessionOrThrow()
-        session.detachPluginOverlay(
-          call.argument<String>("plugin") ?: throw IllegalArgumentException("plugin is required"),
-          call.argument<String>("view") ?: throw IllegalArgumentException("view is required"),
-        )
+        val plugin = call.argument<String>("plugin") ?: throw IllegalArgumentException("plugin is required")
+        get(call.sessionId())?.detachPluginOverlays(plugin, call.argument<String>("id"))
         result.success(null)
       }
 
@@ -250,32 +306,48 @@ internal object PluginVideoSessions : MethodChannel.MethodCallHandler {
 
   // ---- frames ---------------------------------------------------------------------------------------------------
 
-  fun writeFrame(bitmap: Bitmap, format: String, quality: Int, file: File) {
+  fun normalizeFormat(format: String?): String = when (format?.lowercase()) {
+    "png" -> "png"
+    "jpg", "jpeg" -> "jpeg"
+    else -> "rgba"
+  }
+
+  fun extension(format: String): String = if (format == "jpeg") "jpg" else format
+
+  fun writeFrame(source: Bitmap, format: String, quality: Int, file: File) {
     file.parentFile?.mkdirs()
     when (format) {
-      "png" -> FileOutputStream(file).use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
-      "jpeg" -> FileOutputStream(file).use { bitmap.compress(Bitmap.CompressFormat.JPEG, quality.coerceIn(1, 100), it) }
+      "png" -> FileOutputStream(file).use { source.compress(Bitmap.CompressFormat.PNG, 100, it) }
+      "jpeg" -> FileOutputStream(file).use { source.compress(Bitmap.CompressFormat.JPEG, quality.coerceIn(1, 100), it) }
       else -> {
-        val rowBytes = bitmap.rowBytes
-        val packed = bitmap.width * 4
-        val buffer = ByteBuffer.allocate(rowBytes * bitmap.height)
-        bitmap.copyPixelsToBuffer(buffer)
-        FileOutputStream(file).use { output ->
-          if (rowBytes == packed) {
-            output.write(buffer.array(), 0, packed * bitmap.height)
-          } else {
-            for (row in 0 until bitmap.height) {
-              output.write(buffer.array(), row * rowBytes, packed)
+        val bitmap = if (source.config == Bitmap.Config.ARGB_8888) source else source.copy(Bitmap.Config.ARGB_8888, false)
+        try {
+          val rowBytes = bitmap.rowBytes
+          val packed = bitmap.width * 4
+          val buffer = ByteBuffer.allocate(rowBytes * bitmap.height)
+          bitmap.copyPixelsToBuffer(buffer)
+          FileOutputStream(file).use { output ->
+            if (rowBytes == packed) {
+              output.write(buffer.array(), 0, packed * bitmap.height)
+            } else {
+              for (row in 0 until bitmap.height) {
+                output.write(buffer.array(), row * rowBytes, packed)
+              }
             }
+          }
+        } finally {
+          if (bitmap !== source) {
+            bitmap.recycle()
           }
         }
       }
     }
   }
 
+  /** The output size for a request of [width] x [height] (0 = derive) from a source of the given size. */
   fun targetSize(width: Int, height: Int, sourceWidth: Int, sourceHeight: Int): Pair<Int, Int> {
     if (sourceWidth <= 0 || sourceHeight <= 0) {
-      return (width.coerceAtLeast(0)) to (height.coerceAtLeast(0))
+      return width.coerceAtLeast(0) to height.coerceAtLeast(0)
     }
     val (w, h) = when {
       width > 0 && height > 0 -> width to height
@@ -285,15 +357,89 @@ internal object PluginVideoSessions : MethodChannel.MethodCallHandler {
     }
     return w.coerceIn(1, MAX_FRAME_SIZE) to h.coerceIn(1, MAX_FRAME_SIZE)
   }
+
+  /**
+   * Decodes the frame at [timeMs] of a video file (`path`), URL (`url` + `headers`) or device video (`localId`)
+   * with MediaMetadataRetriever (closest frame). [callback] on a background thread.
+   */
+  fun extractFrame(timeMs: Long, options: JSONObject, callback: (JSONObject?, String?) -> Unit) {
+    PluginRuntime.executor.execute {
+      val retriever = MediaMetadataRetriever()
+      var frame: Bitmap? = null
+      try {
+        val path = options.str("path")
+        val url = options.str("url")
+        val localId = options.str("localId")
+        when {
+          path != null -> retriever.setDataSource(path)
+          url != null -> {
+            val headers = mutableMapOf<String, String>()
+            options.optJSONObject("headers")?.let { json ->
+              json.keys().forEach { key -> headers[key] = json.optString(key) }
+            }
+            retriever.setDataSource(url, headers)
+          }
+          localId != null -> retriever.setDataSource(PluginRuntime.context, PluginMedia.uri(localId, true))
+          else -> throw IllegalArgumentException("extractFrame needs path, url or localId")
+        }
+        val rotation = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)?.toIntOrNull() ?: 0
+        var videoWidth = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)?.toIntOrNull() ?: 0
+        var videoHeight = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)?.toIntOrNull() ?: 0
+        if (rotation == 90 || rotation == 270) {
+          videoWidth = videoHeight.also { videoHeight = videoWidth }
+        }
+        val requestedWidth = options.optInt("width", 0)
+        val requestedHeight = options.optInt("height", 0)
+        val timeUs = timeMs.coerceAtLeast(0) * 1000
+        val sized = requestedWidth > 0 || requestedHeight > 0
+        val (width, height) = targetSize(requestedWidth, requestedHeight, videoWidth, videoHeight)
+        frame = if (sized && width > 0 && height > 0 && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+          retriever.getScaledFrameAtTime(timeUs, MediaMetadataRetriever.OPTION_CLOSEST, width, height)
+        } else {
+          retriever.getFrameAtTime(timeUs, MediaMetadataRetriever.OPTION_CLOSEST)
+        }
+        val decoded = frame ?: throw IllegalStateException("No frame at $timeMs ms")
+        if (sized && width > 0 && height > 0 && (decoded.width != width || decoded.height != height)) {
+          frame = Bitmap.createScaledBitmap(decoded, width, height, true)
+          if (frame !== decoded) {
+            decoded.recycle()
+          }
+        }
+        val output = frame ?: decoded
+        val format = normalizeFormat(options.str("format"))
+        val directory = File(frameRoot, "extracted").apply { mkdirs() }
+        val file = File(directory, "frame-${frameCounter.incrementAndGet()}.${extension(format)}")
+        writeFrame(output, format, options.optInt("quality", 90), file)
+        directory.listFiles()?.sortedByDescending { it.lastModified() }?.drop(KEPT_EXTRACTED_FRAMES)?.forEach { it.delete() }
+        callback(
+          JSONObject()
+            .put("path", file.absolutePath)
+            .put("width", output.width)
+            .put("height", output.height)
+            .put("format", format)
+            .put("positionMs", timeMs),
+          null,
+        )
+      } catch (error: Throwable) {
+        callback(null, error.message ?: error.toString())
+      } finally {
+        frame?.recycle()
+        try {
+          retriever.release()
+        } catch (_: Throwable) {
+          // Already released.
+        }
+      }
+    }
+  }
 }
 
 /** One video session; plugins see it through [ScopedVideoSession]. */
 internal class VideoSessionCore(
   override val sessionId: String,
   override val viewId: Int,
-  override val assetId: String?,
 ) : VideoSession {
-  private class Overlay(val plugin: String, val view: View, val holder: View, val viewType: String?)
+  private class Overlay(val plugin: String, val id: String?, val view: View, val holder: PluginViewContainer, val viewType: String?)
 
   private class ListenerEntry(val plugin: String, val listener: VideoSessionListener)
 
@@ -307,7 +453,23 @@ internal class VideoSessionCore(
   private var root: View? = null
 
   @Volatile
-  private var surface: View? = null
+  private var surfaceView: View? = null
+
+  @Volatile
+  override var assetId: String? = null
+    private set
+
+  @Volatile
+  override var localId: String? = null
+    private set
+
+  @Volatile
+  override var remoteId: String? = null
+    private set
+
+  @Volatile
+  override var appSurface: String? = null
+    private set
 
   private var layer: FrameLayout? = null
   private var layerTracksSurface = false
@@ -316,17 +478,29 @@ internal class VideoSessionCore(
 
   private var lastPosition = 0L
   private var lastUpdate = SystemClock.elapsedRealtime()
-  private var playing = false
+  private var currentState = "loading"
   private var speed = 1.0
+  private var currentVolume = 1.0
   private var duration = -1L
   private var width = 0
   private var height = 0
+  private var logicalFrame: DoubleArray? = null
+  private var pixelRatio = 1.0
   private val frame = Rect()
   private val frameOnScreen = Rect()
 
   private val layoutListener = View.OnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> updateFrame() }
 
+  fun identify(assetId: String?, localId: String?, remoteId: String?, surface: String?) {
+    assetId?.let { this.assetId = it }
+    localId?.let { this.localId = it }
+    remoteId?.let { this.remoteId = it }
+    surface?.let { this.appSurface = it }
+  }
+
   override val isActive: Boolean get() = active
+
+  private val playing: Boolean get() = currentState == "playing"
 
   override val positionMs: Long
     get() = synchronized(this) { currentPosition() }
@@ -339,13 +513,30 @@ internal class VideoSessionCore(
     return if (duration > 0) position.coerceAtMost(duration) else position
   }
 
+  override val state: String get() = synchronized(this) { currentState }
+  override val volume: Double get() = synchronized(this) { currentVolume }
   override val durationMs: Long get() = synchronized(this) { duration }
   override val isPlaying: Boolean get() = synchronized(this) { playing }
   override val playbackSpeed: Double get() = synchronized(this) { speed }
   override val videoWidth: Int get() = synchronized(this) { width }
   override val videoHeight: Int get() = synchronized(this) { height }
   override val frameRect: Rect get() = synchronized(this) { Rect(frame) }
-  override val frameRectOnScreen: Rect get() = synchronized(this) { Rect(frameOnScreen) }
+
+  override val frameRectOnScreen: Rect
+    get() = synchronized(this) {
+      val logical = logicalFrame
+      if (frameOnScreen.isEmpty && logical != null) {
+        Rect(
+          (logical[0] * pixelRatio).roundToInt(),
+          (logical[1] * pixelRatio).roundToInt(),
+          ((logical[0] + logical[2]) * pixelRatio).roundToInt(),
+          ((logical[1] + logical[3]) * pixelRatio).roundToInt(),
+        )
+      } else {
+        Rect(frameOnScreen)
+      }
+    }
+
   override val playerView: View? get() = root
 
   override val overlayContainer: ViewGroup?
@@ -357,15 +548,19 @@ internal class VideoSessionCore(
       "sessionId" to sessionId,
       "viewId" to viewId,
       "assetId" to assetId,
+      "localId" to localId,
+      "remoteId" to remoteId,
+      "surface" to appSurface,
       "bound" to (root != null),
-      "surface" to when (surface) {
+      "videoSurface" to when (surfaceView) {
         is SurfaceView -> "surfaceView"
         is TextureView -> "textureView"
         else -> null
       },
       "frame" to mapOf("left" to rect.left, "top" to rect.top, "width" to rect.width(), "height" to rect.height()),
+      "state" to state,
       "positionMs" to positionMs,
-      "playing" to isPlaying,
+      "overlays" to overlays.map { "${it.plugin}/${it.id ?: "native"}" },
     )
   }
 
@@ -387,9 +582,9 @@ internal class VideoSessionCore(
         return@runOnMain
       }
       root = view
-      surface = findSurface(view)
+      surfaceView = findSurface(view)
       view.addOnLayoutChangeListener(layoutListener)
-      surface?.addOnLayoutChangeListener(layoutListener)
+      surfaceView?.addOnLayoutChangeListener(layoutListener)
       updateFrame()
       notifyStarted()
     }
@@ -425,10 +620,10 @@ internal class VideoSessionCore(
   }
 
   private fun updateFrame() {
-    val target = surface ?: return
+    val target = surfaceView ?: return
     val player = root ?: return
     if (target.parent == null) {
-      surface = findSurface(player)?.also { it.addOnLayoutChangeListener(layoutListener) }
+      surfaceView = findSurface(player)?.also { it.addOnLayoutChangeListener(layoutListener) }
       return
     }
     val surfaceLocation = IntArray(2)
@@ -458,13 +653,13 @@ internal class VideoSessionCore(
 
   // ---- overlay layer --------------------------------------------------------------------------------------------
 
-  /** Main thread. The layer above the video surface, sized to it. */
+  /** Main thread. The layer above the video surface, sized to it (inside the AspectRatioFrameLayout). */
   private fun ensureLayer(): FrameLayout? {
     layer?.let { return it }
     if (!active) {
       return null
     }
-    val target = surface ?: return null
+    val target = surfaceView ?: return null
     val parent = target.parent as? FrameLayout
     val params = target.layoutParams
     val margins = params as? ViewGroup.MarginLayoutParams
@@ -504,7 +699,7 @@ internal class VideoSessionCore(
     }
     val overlay = layer ?: return
     val host = overlay.parent as? View ?: return
-    val target = surface ?: return
+    val target = surfaceView ?: return
     val surfaceLocation = IntArray(2)
     val hostLocation = IntArray(2)
     target.getLocationInWindow(surfaceLocation)
@@ -521,18 +716,19 @@ internal class VideoSessionCore(
     }
   }
 
-  /** Main thread. */
-  fun addOverlay(plugin: String, view: View, viewType: String?): Boolean {
+  /** Main thread (posts itself otherwise). Adds [view] over the video frame for [plugin]. */
+  fun addOverlay(plugin: String, id: String?, view: View, viewType: String?, interactive: Boolean): Boolean {
     if (!PluginRuntime.isMainThread) {
-      PluginRuntime.mainHandler.post { addOverlay(plugin, view, viewType) }
+      PluginRuntime.mainHandler.post { addOverlay(plugin, id, view, viewType, interactive) }
       return root != null
     }
     val overlay = ensureLayer() ?: return false
     (view.parent as? ViewGroup)?.removeView(view)
     val holder = PluginViewContainer(overlay.context, plugin, viewType ?: "overlay", -1)
+    holder.touchable = interactive
     holder.addView(view, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
     overlay.addView(holder, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
-    overlays.add(Overlay(plugin, view, holder, viewType))
+    overlays.add(Overlay(plugin, id, view, holder, viewType))
     return true
   }
 
@@ -560,29 +756,84 @@ internal class VideoSessionCore(
     }
   }
 
-  /** Creates plugin view [viewType] (ImmichVideoOverlayPlugin or ImmichViewPlugin) and places it over the video. */
-  fun attachPluginOverlay(plugin: String, viewType: String, paramsJson: String) {
-    val instance = PluginRuntime.plugin(plugin) ?: throw IllegalStateException("Plugin $plugin is not loaded")
-    val player = root ?: throw IllegalStateException("The video player view is not available yet")
-    val params = PluginJson.obj(paramsJson)
-      .put("session", JSONObject().put("id", sessionId).put("assetId", assetId).put("viewId", viewId))
-      .toString()
-    val context = PluginLifecycle.currentActivity ?: player.context
-    val host = PluginRuntime.host(plugin)
-    val scoped = ScopedVideoSession(plugin, this)
-    val view = when (instance) {
-      is ImmichVideoOverlayPlugin -> instance.createVideoOverlay(context, viewType, params, scoped, host)
-      is ImmichViewPlugin -> instance.createView(context, viewType, params, host)
-      else -> throw IllegalStateException("Plugin $plugin has no views")
-    }
-    detachPluginOverlay(plugin, viewType)
-    if (!addOverlay(plugin, view, viewType)) {
-      throw IllegalStateException("The video has no surface to place an overlay on")
+  /**
+   * Creates view [viewType] of [plugin] and places it over the video as overlay [id] (replacing one with that id).
+   * [callback] gets `<plugin>/<id>` or an error, on the main thread.
+   */
+  fun attachPluginOverlay(
+    plugin: String,
+    viewType: String,
+    id: String,
+    params: JSONObject,
+    interactive: Boolean,
+    callback: (String?, String?) -> Unit,
+  ) {
+    PluginRuntime.runOnMain {
+      attachWhenBound(plugin, viewType, id, params, interactive, callback, attempts = 0)
     }
   }
 
-  fun detachPluginOverlay(plugin: String, viewType: String) {
-    overlays.filter { it.plugin == plugin && it.viewType == viewType }.forEach { removeEntry(it) }
+  private fun attachWhenBound(
+    plugin: String,
+    viewType: String,
+    id: String,
+    params: JSONObject,
+    interactive: Boolean,
+    callback: (String?, String?) -> Unit,
+    attempts: Int,
+  ) {
+    if (!active) {
+      callback(null, "The video session ended")
+      return
+    }
+    if (surfaceView == null) {
+      if (attempts < 20) {
+        PluginRuntime.mainHandler.postDelayed({ attachWhenBound(plugin, viewType, id, params, interactive, callback, attempts + 1) }, 100)
+      } else {
+        callback(null, "The video player has no surface to place an overlay on")
+      }
+      return
+    }
+    val instance = PluginRuntime.plugin(plugin)
+    if (instance == null) {
+      callback(null, "Plugin $plugin is not loaded")
+      return
+    }
+    val overlayId = "$plugin/$id"
+    val fullParams = JSONObject(params.toString())
+      .put("sessionId", sessionId)
+      .put("assetId", assetId)
+      .put("viewId", viewId)
+      .put("overlayId", overlayId)
+      .toString()
+    val context = root?.context ?: PluginRuntime.context
+    val view = try {
+      when (instance) {
+        is ImmichVideoOverlayPlugin ->
+          instance.createVideoOverlay(context, viewType, fullParams, ScopedVideoSession(plugin, this), PluginRuntime.host(plugin))
+        is ImmichViewPlugin -> instance.createView(context, viewType, fullParams, PluginRuntime.host(plugin))
+        else -> null
+      }
+    } catch (error: Throwable) {
+      PluginCrashGuard.report(plugin, "video overlay $viewType", error)
+      callback(null, "The plugin view failed: ${error.message ?: error}")
+      return
+    }
+    if (view == null) {
+      callback(null, "Plugin $plugin has no native views")
+      return
+    }
+    detachPluginOverlays(plugin, id)
+    if (addOverlay(plugin, id, view, viewType, interactive)) {
+      callback(overlayId, null)
+    } else {
+      callback(null, "The video player has no surface to place an overlay on")
+    }
+  }
+
+  /** Removes overlay [id] of [plugin], or all of the plugin's overlays when [id] is null. */
+  fun detachPluginOverlays(plugin: String, id: String?) {
+    overlays.filter { it.plugin == plugin && (id == null || it.id == id) }.forEach { removeEntry(it) }
   }
 
   fun removePlugin(plugin: String) {
@@ -592,7 +843,17 @@ internal class VideoSessionCore(
 
   // ---- state ----------------------------------------------------------------------------------------------------
 
-  fun update(positionMs: Long?, playing: Boolean?, speed: Double?, durationMs: Long?, videoWidth: Int?, videoHeight: Int?) {
+  fun update(
+    positionMs: Long?,
+    state: String?,
+    speed: Double?,
+    volume: Double?,
+    durationMs: Long?,
+    videoWidth: Int?,
+    videoHeight: Int?,
+    logicalFrame: DoubleArray?,
+    devicePixelRatio: Double?,
+  ) {
     val now = SystemClock.elapsedRealtime()
     val position: Long
     val isPlaying: Boolean
@@ -600,22 +861,28 @@ internal class VideoSessionCore(
       if (positionMs != null) {
         lastPosition = positionMs
         lastUpdate = now
-      } else if ((playing != null && playing != this.playing) || (speed != null && speed != this.speed)) {
+      } else if ((state != null && state != currentState) || (speed != null && speed != this.speed)) {
         lastPosition = currentPosition()
         lastUpdate = now
       }
-      playing?.let { this.playing = it }
+      state?.let { currentState = it }
       speed?.let { this.speed = it }
+      volume?.let { currentVolume = it }
       durationMs?.let { duration = it }
       videoWidth?.let { width = it }
       videoHeight?.let { height = it }
+      logicalFrame?.let { this.logicalFrame = it }
+      devicePixelRatio?.let { pixelRatio = it }
       position = currentPosition()
-      isPlaying = this.playing
+      isPlaying = playing
     }
-    if (listeners.isEmpty() || (positionMs == null && playing == null)) {
+    if (positionMs == null && state == null) {
       return
     }
     PluginRuntime.runOnMain {
+      if (root != null) {
+        updateFrame()
+      }
       for (entry in listeners) {
         PluginCrashGuard.run(entry.plugin, "video position listener") {
           entry.listener.onPosition(ScopedVideoSession(entry.plugin, this), position, isPlaying)
@@ -638,7 +905,7 @@ internal class VideoSessionCore(
     val directory = PluginVideoSessions.frameDirectory(sessionId)
     PluginRuntime.runOnMain {
       root?.removeOnLayoutChangeListener(layoutListener)
-      surface?.removeOnLayoutChangeListener(layoutListener)
+      surfaceView?.removeOnLayoutChangeListener(layoutListener)
       overlays.toList().forEach { removeEntry(it) }
       layer?.let { (it.parent as? ViewGroup)?.removeView(it) }
       layer = null
@@ -649,9 +916,23 @@ internal class VideoSessionCore(
       }
       listeners.clear()
       root = null
-      surface = null
+      surfaceView = null
     }
     PluginRuntime.executor.execute { directory.deleteRecursively() }
+  }
+
+  /** Asks the app's player to [action] through the viewer's `video.*` host functions, as [plugin]. */
+  fun control(plugin: String, function: String, value: Any?) {
+    PluginRuntime.executor.execute {
+      val args = JSONArray().put(sessionId)
+      if (value != null) {
+        args.put(value)
+      }
+      val response = PluginRuntime.host(plugin).callHost(function, args.toString())
+      if (PluginJson.obj(response).optBoolean("success", false).not()) {
+        PluginRuntime.log(android.util.Log.WARN, "Video control $function for $sessionId failed: $response")
+      }
+    }
   }
 
   // ---- frame capture --------------------------------------------------------------------------------------------
@@ -660,75 +941,92 @@ internal class VideoSessionCore(
   fun capture(width: Int, height: Int, callback: (Bitmap?, String?) -> Unit) {
     val fail = { message: String -> PluginRuntime.executor.execute { callback(null, message) } }
     PluginRuntime.runOnMain {
-      val target = surface
-      if (!active || target == null) {
-        fail("The video has no surface")
-        return@runOnMain
-      }
-      val (sourceWidth, sourceHeight) = synchronized(this) {
-        if (this.width > 0 && this.height > 0) this.width to this.height else target.width to target.height
-      }
-      val (w, h) = PluginVideoSessions.targetSize(width, height, sourceWidth, sourceHeight)
-      if (w <= 0 || h <= 0) {
-        fail("The video has no size yet")
-        return@runOnMain
-      }
-      when (target) {
-        is TextureView -> {
-          val bitmap = try {
-            target.getBitmap(w, h)
-          } catch (error: Throwable) {
-            null
-          }
-          PluginRuntime.executor.execute { callback(bitmap, if (bitmap == null) "The video frame is not available" else null) }
-        }
+      captureWhenBound(width, height, callback, fail, attempts = 0)
+    }
+  }
 
-        is SurfaceView -> {
-          val holderSurface = target.holder.surface
-          if (holderSurface == null || !holderSurface.isValid) {
-            fail("The video surface is not ready")
-            return@runOnMain
-          }
-          val bitmap = try {
-            Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
-          } catch (error: Throwable) {
-            fail("Unable to allocate a ${w}x$h frame: ${error.message}")
-            return@runOnMain
-          }
-          try {
-            PixelCopy.request(target, bitmap, { copyResult ->
-              if (copyResult == PixelCopy.SUCCESS) {
-                PluginRuntime.executor.execute { callback(bitmap, null) }
-              } else {
-                bitmap.recycle()
-                fail("PixelCopy failed ($copyResult)")
-              }
-            }, PluginVideoSessions.copyHandler)
-          } catch (error: Throwable) {
-            bitmap.recycle()
-            fail("PixelCopy failed: ${error.message}")
-          }
-        }
-
-        else -> fail("Unsupported video surface")
+  private fun captureWhenBound(width: Int, height: Int, callback: (Bitmap?, String?) -> Unit, fail: (String) -> Unit, attempts: Int) {
+    val target = surfaceView
+    if (!active) {
+      fail("The video session ended")
+      return
+    }
+    if (target == null) {
+      if (attempts < 20) {
+        PluginRuntime.mainHandler.postDelayed({ captureWhenBound(width, height, callback, fail, attempts + 1) }, 100)
+      } else {
+        fail("The video player has no surface")
       }
+      return
+    }
+    val (sourceWidth, sourceHeight) = synchronized(this) {
+      if (this.width > 0 && this.height > 0) this.width to this.height else target.width to target.height
+    }
+    val (w, h) = PluginVideoSessions.targetSize(width, height, sourceWidth, sourceHeight)
+    if (w <= 0 || h <= 0) {
+      fail("The video has no size yet")
+      return
+    }
+    when (target) {
+      is TextureView -> {
+        val bitmap = try {
+          target.getBitmap(w, h)
+        } catch (_: Throwable) {
+          null
+        }
+        PluginRuntime.executor.execute { callback(bitmap, if (bitmap == null) "The video frame is not available" else null) }
+      }
+
+      is SurfaceView -> {
+        val holderSurface = target.holder.surface
+        if (holderSurface == null || !holderSurface.isValid) {
+          fail("The video surface is not ready")
+          return
+        }
+        val bitmap = try {
+          Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        } catch (error: Throwable) {
+          fail("Unable to allocate a ${w}x$h frame: ${error.message}")
+          return
+        }
+        try {
+          PixelCopy.request(target, bitmap, { copyResult ->
+            if (copyResult == PixelCopy.SUCCESS) {
+              PluginRuntime.executor.execute { callback(bitmap, null) }
+            } else {
+              bitmap.recycle()
+              fail("PixelCopy failed ($copyResult)")
+            }
+          }, PluginVideoSessions.copyHandler)
+        } catch (error: Throwable) {
+          bitmap.recycle()
+          fail("PixelCopy failed: ${error.message}")
+        }
+      }
+
+      else -> fail("Unsupported video surface")
     }
   }
 
   /** [callback] gets `{ path, width, height, format, positionMs }` or an error, on a background thread. */
-  fun captureToFile(width: Int, height: Int, format: String, quality: Int, path: String?, callback: (JSONObject?, String?) -> Unit) {
-    val normalized = when (format.lowercase()) {
-      "png" -> "png"
-      "jpg", "jpeg" -> "jpeg"
-      else -> "rgba"
-    }
+  fun captureToFile(
+    width: Int,
+    height: Int,
+    format: String,
+    quality: Int,
+    path: String?,
+    positionOverride: Long?,
+    callback: (JSONObject?, String?) -> Unit,
+  ) {
+    val normalized = PluginVideoSessions.normalizeFormat(format)
+    val position = positionOverride ?: positionMs
     capture(width, height) { bitmap, error ->
       if (bitmap == null) {
         callback(null, error ?: "Frame capture failed")
         return@capture
       }
       try {
-        val file = path?.let(::File) ?: PluginVideoSessions.frameFile(sessionId, if (normalized == "jpeg") "jpg" else normalized)
+        val file = path?.let(::File) ?: PluginVideoSessions.frameFile(sessionId, PluginVideoSessions.extension(normalized))
         PluginVideoSessions.writeFrame(bitmap, normalized, quality, file)
         callback(
           JSONObject()
@@ -736,7 +1034,7 @@ internal class VideoSessionCore(
             .put("width", bitmap.width)
             .put("height", bitmap.height)
             .put("format", normalized)
-            .put("positionMs", positionMs),
+            .put("positionMs", position),
           null,
         )
       } catch (failure: Throwable) {
@@ -749,7 +1047,7 @@ internal class VideoSessionCore(
 
   // ---- VideoSession (owner-less use; plugins get ScopedVideoSession) ---------------------------------------------
 
-  override fun addOverlay(view: View): Boolean = addOverlay("app", view, null)
+  override fun addOverlay(view: View): Boolean = addOverlay("app", null, view, null, false)
 
   override fun removeOverlay(view: View) = removeOverlay(null, view)
 
@@ -757,29 +1055,29 @@ internal class VideoSessionCore(
     capture(width, height) { bitmap, error -> callback.onFrame(bitmap, error) }
 
   override fun captureFrameToFile(width: Int, height: Int, format: String, callback: ResultCallback) =
-    captureToFile(width, height, format, 90, null) { json, error ->
+    captureToFile(width, height, format, 90, null, null) { json, error ->
       callback.onResult(if (json != null) PluginJson.ok(json.toString()) else PluginJson.error(500, error ?: "Frame capture failed"))
     }
 
   override fun addListener(listener: VideoSessionListener): Registration = addListener("app", listener)
 
-  override fun play() = PluginVideoSessions.control(sessionId, "play", null)
+  override fun play() = control("app", "video.play", null)
 
-  override fun pause() = PluginVideoSessions.control(sessionId, "pause", null)
+  override fun pause() = control("app", "video.pause", null)
 
-  override fun seekTo(positionMs: Long) = PluginVideoSessions.control(sessionId, "seek", positionMs)
+  override fun seekTo(positionMs: Long) = control("app", "video.seek", positionMs)
 
-  override fun setSpeed(speed: Double) = PluginVideoSessions.control(sessionId, "speed", speed)
+  override fun setSpeed(speed: Double) = control("app", "video.setSpeed", speed)
 
-  override fun setVolume(volume: Double) = PluginVideoSessions.control(sessionId, "volume", volume)
+  override fun setVolume(volume: Double) = control("app", "video.setVolume", volume)
 }
 
-/** The view of a session one plugin gets: overlays and listeners it adds are owned by it. */
+/** The view of a session one plugin gets: overlays, listeners and control calls are made as that plugin. */
 internal class ScopedVideoSession(
   private val plugin: String,
   private val core: VideoSessionCore,
 ) : VideoSession by core {
-  override fun addOverlay(view: View): Boolean = core.addOverlay(plugin, view, null)
+  override fun addOverlay(view: View): Boolean = core.addOverlay(plugin, null, view, null, false)
 
   override fun removeOverlay(view: View) = core.removeOverlay(plugin, view)
 
@@ -791,10 +1089,20 @@ internal class ScopedVideoSession(
     }
 
   override fun captureFrameToFile(width: Int, height: Int, format: String, callback: ResultCallback) =
-    core.captureToFile(width, height, format, 90, null) { json, error ->
+    core.captureToFile(width, height, format, 90, null, null) { json, error ->
       val envelope = if (json != null) PluginJson.ok(json.toString()) else PluginJson.error(500, error ?: "Frame capture failed")
       PluginCrashGuard.run(plugin, "frame callback") { callback.onResult(envelope) }
     }
+
+  override fun play() = core.control(plugin, "video.play", null)
+
+  override fun pause() = core.control(plugin, "video.pause", null)
+
+  override fun seekTo(positionMs: Long) = core.control(plugin, "video.seek", positionMs)
+
+  override fun setSpeed(speed: Double) = core.control(plugin, "video.setSpeed", speed)
+
+  override fun setVolume(volume: Double) = core.control(plugin, "video.setVolume", volume)
 
   override fun equals(other: Any?): Boolean = other is ScopedVideoSession && other.core === core && other.plugin == plugin
 

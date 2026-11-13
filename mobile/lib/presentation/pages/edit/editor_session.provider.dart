@@ -17,6 +17,7 @@ import 'package:immich_mobile/presentation/pages/edit/editor.provider.dart';
 import 'package:immich_mobile/presentation/pages/edit/editor_edits.dart';
 import 'package:immich_mobile/presentation/pages/edit/editor_tools.provider.dart';
 import 'package:immich_mobile/providers/device_plugins.provider.dart';
+import 'package:immich_mobile/providers/infrastructure/media_writer.provider.dart';
 import 'package:immich_mobile/utils/asset_edit_renderer.utils.dart';
 
 final editorImagePipelineProvider = Provider<EditorImagePipeline>(
@@ -27,7 +28,7 @@ final editorImagePipelineProvider = Provider<EditorImagePipeline>(
 );
 
 final editorMediaWriterProvider = Provider<EditorMediaWriter>(
-  (ref) => DeviceEditMediaWriter(ref.watch(deviceEditRepositoryProvider)),
+  (ref) => SharedEditorMediaWriter(ref.watch(mediaWriterProvider), ref.watch(deviceEditRepositoryProvider)),
 );
 
 final editorToolRunnerProvider = Provider<EditorToolRunner>(

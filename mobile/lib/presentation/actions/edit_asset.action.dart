@@ -11,6 +11,7 @@ import 'package:immich_mobile/domain/models/exif.model.dart';
 import 'package:immich_mobile/domain/models/server_capability.model.dart';
 import 'package:immich_mobile/generated/translations.g.dart';
 import 'package:immich_mobile/presentation/actions/action.dart';
+import 'package:immich_mobile/presentation/actions/action_ids.dart';
 import 'package:immich_mobile/presentation/pages/edit/editor.provider.dart';
 import 'package:immich_mobile/presentation/pages/edit/editor_session.provider.dart';
 import 'package:immich_mobile/presentation/widgets/images/image_provider.dart';
@@ -57,6 +58,9 @@ bool isDeviceEditable(LocalAsset asset) {
 
 class EditAssetAction extends AssetActionBuilder {
   const EditAssetAction({required super.source});
+
+  @override
+  String get id => ActionIds.edit;
 
   @override
   ActionItem? create(BuildContext context, WidgetRef ref) {

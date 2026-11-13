@@ -1,4 +1,5 @@
 import 'package:immich_mobile/domain/models/asset/base_asset.model.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/data/media_writer.dart';
 import 'package:immich_mobile/infrastructure/plugins/plugin_api/editor/editor_workspace.dart';
 import 'package:immich_mobile/infrastructure/repositories/device_edit.repository.dart';
 import 'package:immich_mobile/utils/asset_edit_renderer.utils.dart';
@@ -68,5 +69,34 @@ class DeviceEditMediaWriter implements EditorMediaWriter {
         await _repository.replaceBase(asset, image.file, width: image.width, height: image.height);
         return EditorSaveResult(target: target, assetId: asset.id);
     }
+  }
+}
+
+/// [EditorMediaWriter] on the app's shared media writer (`media.saveImage`): new copies are announced on
+/// [MediaWriter.created] so device workflows skip them; replacements go through [DeviceEditRepository.replaceBase]
+/// like [DeviceEditMediaWriter], keeping the original backed up and making the result the base for later edits.
+class SharedEditorMediaWriter implements EditorMediaWriter {
+  final MediaWriter _writer;
+  final DeviceEditMediaWriter _device;
+
+  SharedEditorMediaWriter(this._writer, DeviceEditRepository repository) : _device = DeviceEditMediaWriter(repository);
+
+  @override
+  RenderFormat? formatFor(BaseAsset? asset, EditorSaveTarget target, EditorWorkingImage image) =>
+      _device.formatFor(asset, target, image);
+
+  @override
+  Future<EditorSaveResult> save(BaseAsset? asset, EditorSaveTarget target, EditorWorkingImage image) async {
+    if (asset == null || target != EditorSaveTarget.copy) {
+      return _device.save(asset, target, image);
+    }
+    final dot = asset.name.lastIndexOf('.');
+    final stem = dot > 0 ? asset.name.substring(0, dot) : asset.name;
+    final createdId = await _writer.saveCopy(
+      path: image.file.path,
+      name: '${stem}_edited.${image.extension}',
+      source: asset,
+    );
+    return EditorSaveResult(target: target, assetId: asset.id, createdId: createdId);
   }
 }
