@@ -78,6 +78,7 @@ import 'package:immich_mobile/presentation/pages/trash.page.dart';
 import 'package:immich_mobile/presentation/pages/trash/device_trash.page.dart';
 import 'package:immich_mobile/presentation/pages/user_selection.page.dart';
 import 'package:immich_mobile/presentation/pages/video.page.dart';
+import 'package:immich_mobile/presentation/plugins/plugin_page_frame.dart';
 import 'package:immich_mobile/presentation/plugins/plugin_ui.dart';
 import 'package:immich_mobile/presentation/widgets/asset_viewer/asset_viewer.page.dart';
 import 'package:immich_mobile/providers/api.provider.dart';
@@ -120,8 +121,16 @@ class AppRouter extends RootStackRouter {
     _lockedGuard = LockedGuard(apiService, secureStorageService, localAuthService);
   }
 
+  /// Material routes, each page wrapped in [PluginPageFrame] (the generic `<page>.header/footer/fab/body` slots).
   @override
-  RouteType get defaultRouteType => const RouteType.material();
+  RouteType get defaultRouteType => RouteType.custom(
+    customRouteBuilder: <T>(context, child, page) => MaterialPageRoute<T>(
+      settings: page,
+      fullscreenDialog: page.fullscreenDialog,
+      maintainState: page.maintainState,
+      builder: (_) => PluginPageFrame(routeName: page.routeData.name, child: child),
+    ),
+  );
 
   @override
   List<AutoRouteGuard> get guards => const [PluginNavGuard(), PluginRouteGuard()];

@@ -16,6 +16,7 @@ import 'package:immich_mobile/infrastructure/repositories/app_album.repository.d
 import 'package:immich_mobile/infrastructure/repositories/duplicate_finder.repository.dart';
 import 'package:immich_mobile/pages/common/large_leading_tile.dart';
 import 'package:immich_mobile/presentation/actions/device_album.actions.dart';
+import 'package:immich_mobile/presentation/widgets/asset_viewer/viewer_slots.dart';
 import 'package:immich_mobile/presentation/widgets/downloads_rule_dialog.widget.dart';
 import 'package:immich_mobile/presentation/widgets/images/local_album_thumbnail.widget.dart';
 import 'package:immich_mobile/presentation/widgets/images/thumbnail.widget.dart';
@@ -145,11 +146,14 @@ class _AppAlbumList extends ConsumerWidget {
     final albums = ref.watch(appAlbumsProvider).valueOrNull ?? const <AppAlbum>[];
     if (albums.isEmpty) {
       return SliverToBoxAdapter(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(18, 12, 18, 0),
-          child: Text(
-            'Your albums appear here. Select photos and tap "Add to album" to make one.',
-            style: context.textTheme.bodySmall,
+        child: SlotContentOr(
+          slot: LibrarySlots.localAlbumsAppAlbumsEmpty,
+          fallback: Padding(
+            padding: const EdgeInsets.fromLTRB(18, 12, 18, 0),
+            child: Text(
+              'Your albums appear here. Select photos and tap "Add to album" to make one.',
+              style: context.textTheme.bodySmall,
+            ),
           ),
         ),
       );
@@ -169,20 +173,25 @@ class _AppAlbumList extends ConsumerWidget {
             final album = sorted[index];
             return Padding(
               padding: const EdgeInsets.only(bottom: 8.0),
-              child: LargeLeadingTile(
-                leadingPadding: const EdgeInsets.only(right: 16),
-                leading: SizedBox(width: 80, height: 80, child: _AppAlbumCover(album: album)),
-                title: Text(album.name, style: context.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w600)),
-                subtitle: Text(
-                  context.t.items_count(count: album.assetIds.length),
-                  style: context.textTheme.bodyMedium?.copyWith(color: context.colorScheme.onSurfaceSecondary),
-                ),
-                onTap: () => libraryTap(
-                  context,
-                  _page,
-                  'openAppAlbum',
-                  () => context.pushRoute(AppAlbumRoute(albumId: album.id)),
-                  args: () => {'album': LibraryJson.appAlbum(album)},
+              child: LibraryTileDecoration(
+                key: ValueKey(album.id),
+                slot: LibrarySlots.localAlbumsAppAlbum,
+                slotContext: () => {'album': LibraryJson.appAlbum(album)},
+                child: LargeLeadingTile(
+                  leadingPadding: const EdgeInsets.only(right: 16),
+                  leading: SizedBox(width: 80, height: 80, child: _AppAlbumCover(album: album)),
+                  title: Text(album.name, style: context.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w600)),
+                  subtitle: Text(
+                    context.t.items_count(count: album.assetIds.length),
+                    style: context.textTheme.bodyMedium?.copyWith(color: context.colorScheme.onSurfaceSecondary),
+                  ),
+                  onTap: () => libraryTap(
+                    context,
+                    _page,
+                    'openAppAlbum',
+                    () => context.pushRoute(AppAlbumRoute(albumId: album.id)),
+                    args: () => {'album': LibraryJson.appAlbum(album)},
+                  ),
                 ),
               ),
             );
@@ -255,8 +264,11 @@ class _AlbumList extends ConsumerWidget {
       data: (albums) {
         if (albums.isEmpty) {
           return SliverToBoxAdapter(
-            child: Center(
-              child: Padding(padding: const EdgeInsets.all(20.0), child: Text(context.t.no_albums_yet)),
+            child: SlotContentOr(
+              slot: LibrarySlots.localAlbumsDeviceAlbumsEmpty,
+              fallback: Center(
+                child: Padding(padding: const EdgeInsets.all(20.0), child: Text(context.t.no_albums_yet)),
+              ),
             ),
           );
         }
@@ -275,20 +287,28 @@ class _AlbumList extends ConsumerWidget {
 
                 return Padding(
                   padding: const EdgeInsets.only(bottom: 8.0),
-                  child: LargeLeadingTile(
-                    leadingPadding: const EdgeInsets.only(right: 16),
-                    leading: SizedBox(width: 80, height: 80, child: LocalAlbumThumbnail(albumId: album.id)),
-                    title: Text(album.name, style: context.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w600)),
-                    subtitle: Text(
-                      context.t.items_count(count: album.assetCount),
-                      style: context.textTheme.bodyMedium?.copyWith(color: context.colorScheme.onSurfaceSecondary),
-                    ),
-                    onTap: () => libraryTap(
-                      context,
-                      _page,
-                      'openDeviceAlbum',
-                      () => context.pushRoute(LocalTimelineRoute(album: album)),
-                      args: () => {'album': LibraryJson.deviceAlbum(album)},
+                  child: LibraryTileDecoration(
+                    key: ValueKey(album.id),
+                    slot: LibrarySlots.localAlbumsDeviceAlbum,
+                    slotContext: () => {'album': LibraryJson.deviceAlbum(album)},
+                    child: LargeLeadingTile(
+                      leadingPadding: const EdgeInsets.only(right: 16),
+                      leading: SizedBox(width: 80, height: 80, child: LocalAlbumThumbnail(albumId: album.id)),
+                      title: Text(
+                        album.name,
+                        style: context.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w600),
+                      ),
+                      subtitle: Text(
+                        context.t.items_count(count: album.assetCount),
+                        style: context.textTheme.bodyMedium?.copyWith(color: context.colorScheme.onSurfaceSecondary),
+                      ),
+                      onTap: () => libraryTap(
+                        context,
+                        _page,
+                        'openDeviceAlbum',
+                        () => context.pushRoute(LocalTimelineRoute(album: album)),
+                        args: () => {'album': LibraryJson.deviceAlbum(album)},
+                      ),
                     ),
                   ),
                 );

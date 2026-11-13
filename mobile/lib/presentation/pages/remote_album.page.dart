@@ -13,6 +13,7 @@ import 'package:immich_mobile/infrastructure/plugins/plugin_api/library/library_
 import 'package:immich_mobile/infrastructure/plugins/plugin_api/library/library_ids.dart';
 import 'package:immich_mobile/infrastructure/plugins/plugin_api/library/library_json.dart';
 import 'package:immich_mobile/presentation/widgets/album/pending_uploads_banner.widget.dart';
+import 'package:immich_mobile/presentation/widgets/asset_viewer/viewer_slots.dart';
 import 'package:immich_mobile/presentation/widgets/bottom_sheet/remote_album_bottom_sheet.widget.dart';
 import 'package:immich_mobile/presentation/widgets/library/library_plugins.widget.dart';
 import 'package:immich_mobile/presentation/widgets/remote_album/album_option.widget.dart';
@@ -381,6 +382,10 @@ class _EditAlbumDialogState extends ConsumerState<_EditAlbumDialog> {
                     filled: true,
                     fillColor: context.colorScheme.surface,
                   ),
+                ),
+                ViewerSlotContentView(
+                  slot: LibrarySlots.remoteAlbumEditDialog,
+                  extra: {'album': LibraryJson.remoteAlbum(widget.album)},
                 ),
                 const SizedBox(height: 24),
 

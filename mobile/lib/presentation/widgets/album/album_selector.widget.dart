@@ -15,6 +15,7 @@ import 'package:immich_mobile/infrastructure/plugins/plugin_api/library/library_
 import 'package:immich_mobile/models/albums/album_search.model.dart';
 import 'package:immich_mobile/presentation/widgets/album/album_tile.dart';
 import 'package:immich_mobile/presentation/widgets/album/new_album_name_modal.widget.dart';
+import 'package:immich_mobile/presentation/widgets/asset_viewer/viewer_slots.dart';
 import 'package:immich_mobile/presentation/widgets/images/thumbnail.widget.dart';
 import 'package:immich_mobile/presentation/widgets/library/library_plugins.widget.dart';
 import 'package:immich_mobile/providers/album/album_sort_by_options.provider.dart';
@@ -243,50 +244,54 @@ class _AlbumSelectorState extends ConsumerState<AlbumSelector> {
         menuController.close();
       },
       child: MultiSliver(
-        children: LibraryPluginHooks.arrange(LibrarySlots.albumSelectorSections, [
-          (
-            id: 'search',
-            item: _SearchBar(
-              searchController: searchController,
-              searchFocusNode: searchFocusNode,
-              onSearch: onSearch,
-              filterMode: filter.mode,
-              onClearSearch: clearSearch,
-            ),
-          ),
-          (
-            id: 'filters',
-            item: _QuickFilterButtonRow(
-              filterMode: filter.mode,
-              onChangeFilter: (mode) => libraryTap(
-                context,
-                _selectorPage,
-                mode.name,
-                () => changeFilter(mode),
-                args: () => {..._hookArgs(), 'mode': mode.name},
+        children: [
+          const SliverToBoxAdapter(child: ViewerSlotContentView(slot: LibrarySlots.albumSelectorHeader)),
+          ...LibraryPluginHooks.arrange(LibrarySlots.albumSelectorSections, [
+            (
+              id: 'search',
+              item: _SearchBar(
+                searchController: searchController,
+                searchFocusNode: searchFocusNode,
+                onSearch: onSearch,
+                filterMode: filter.mode,
+                onClearSearch: clearSearch,
               ),
-              onSearch: onSearch,
-              searchController: searchController,
             ),
-          ),
-          (
-            id: 'toolbar',
-            item: _QuickSortAndViewMode(
-              isGrid: isGrid,
-              onToggleViewMode: toggleViewMode,
-              onSortChanged: changeSort,
-              controller: menuController,
-              currentSortMode: sort.mode,
-              currentIsReverse: sort.isReverse,
+            (
+              id: 'filters',
+              item: _QuickFilterButtonRow(
+                filterMode: filter.mode,
+                onChangeFilter: (mode) => libraryTap(
+                  context,
+                  _selectorPage,
+                  mode.name,
+                  () => changeFilter(mode),
+                  args: () => {..._hookArgs(), 'mode': mode.name},
+                ),
+                onSearch: onSearch,
+                searchController: searchController,
+              ),
             ),
-          ),
-          (
-            id: 'list',
-            item: isGrid
-                ? _AlbumGrid(albums: shownAlbums, userId: userId, onAlbumSelected: openAlbum)
-                : _AlbumList(albums: shownAlbums, userId: userId, onAlbumSelected: openAlbum, onDelete: deleteAlbum),
-          ),
-        ]),
+            (
+              id: 'toolbar',
+              item: _QuickSortAndViewMode(
+                isGrid: isGrid,
+                onToggleViewMode: toggleViewMode,
+                onSortChanged: changeSort,
+                controller: menuController,
+                currentSortMode: sort.mode,
+                currentIsReverse: sort.isReverse,
+              ),
+            ),
+            (
+              id: 'list',
+              item: isGrid
+                  ? _AlbumGrid(albums: shownAlbums, userId: userId, onAlbumSelected: openAlbum)
+                  : _AlbumList(albums: shownAlbums, userId: userId, onAlbumSelected: openAlbum, onDelete: deleteAlbum),
+            ),
+          ]),
+          const SliverToBoxAdapter(child: ViewerSlotContentView(slot: LibrarySlots.albumSelectorFooter)),
+        ],
       ),
     );
   }
@@ -660,8 +665,11 @@ class _AlbumList extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     if (albums.isEmpty) {
       return SliverToBoxAdapter(
-        child: Center(
-          child: Padding(padding: const EdgeInsets.all(20.0), child: Text(context.t.album_search_not_found)),
+        child: SlotContentOr(
+          slot: LibrarySlots.albumSelectorEmpty,
+          fallback: Center(
+            child: Padding(padding: const EdgeInsets.all(20.0), child: Text(context.t.album_search_not_found)),
+          ),
         ),
       );
     }
@@ -743,8 +751,11 @@ class _AlbumGrid extends StatelessWidget {
   Widget build(BuildContext context) {
     if (albums.isEmpty) {
       return SliverToBoxAdapter(
-        child: Center(
-          child: Padding(padding: const EdgeInsets.all(20.0), child: Text(context.t.album_search_not_found)),
+        child: SlotContentOr(
+          slot: LibrarySlots.albumSelectorEmpty,
+          fallback: Center(
+            child: Padding(padding: const EdgeInsets.all(20.0), child: Text(context.t.album_search_not_found)),
+          ),
         ),
       );
     }

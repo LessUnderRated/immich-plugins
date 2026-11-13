@@ -17,6 +17,7 @@ import 'package:immich_mobile/presentation/actions/delete.action.dart';
 import 'package:immich_mobile/presentation/actions/device_album.actions.dart';
 import 'package:immich_mobile/presentation/actions/move_to_private.action.dart';
 import 'package:immich_mobile/presentation/actions/share.action.dart';
+import 'package:immich_mobile/presentation/widgets/asset_viewer/viewer_slots.dart';
 import 'package:immich_mobile/presentation/widgets/bottom_sheet/base_bottom_sheet.widget.dart';
 import 'package:immich_mobile/presentation/widgets/timeline/timeline.widget.dart';
 import 'package:immich_mobile/providers/infrastructure/timeline.provider.dart';
@@ -160,10 +161,14 @@ class _PrivateGalleryPageState extends ConsumerState<PrivateGalleryPage> {
         title: const Text('Private'),
         actions: LibraryPluginHooks.arrange(LibrarySlots.appBarActions(_page), [privateAppMenuItem()]),
       ),
-      body: _LockedView(
-        busy: _authenticating,
-        message: _message,
-        onUnlock: () => libraryTap(context, _page, 'unlock', _unlock),
+      body: SlotContentOr(
+        slot: LibrarySlots.privateGalleryLocked,
+        slotContext: {'message': _message},
+        fallback: _LockedView(
+          busy: _authenticating,
+          message: _message,
+          onUnlock: () => libraryTap(context, _page, 'unlock', _unlock),
+        ),
       ),
     );
   }

@@ -12,6 +12,7 @@ import 'package:immich_mobile/generated/translations.g.dart';
 import 'package:immich_mobile/infrastructure/plugins/plugin_api/library/library_hooks.dart';
 import 'package:immich_mobile/infrastructure/plugins/plugin_api/library/library_ids.dart';
 import 'package:immich_mobile/infrastructure/plugins/plugin_api/library/library_json.dart';
+import 'package:immich_mobile/presentation/plugins/plugin_slot.dart';
 import 'package:immich_mobile/presentation/widgets/library/library_plugins.widget.dart';
 import 'package:immich_mobile/providers/infrastructure/db.provider.dart';
 import 'package:immich_mobile/providers/infrastructure/remote_album.provider.dart';
@@ -90,9 +91,19 @@ class UserSelectionPage extends HookConsumerWidget {
         usersChip.add(
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 8.0),
-            child: Chip(
-              backgroundColor: context.primaryColor.withValues(alpha: 0.15),
-              label: Text(user.name, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Chip(
+                  backgroundColor: context.primaryColor.withValues(alpha: 0.15),
+                  label: Text(user.name, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                ),
+                // `userSelection.selected`: plugin chips for this selected user.
+                PluginSlot.chips(
+                  slot: LibrarySlots.userSelectionSelected,
+                  slotContext: {'album': LibraryJson.remoteAlbum(album), 'user': LibraryJson.user(user)},
+                ),
+              ],
             ),
           ),
         );
@@ -111,20 +122,29 @@ class UserSelectionPage extends HookConsumerWidget {
             primary: false,
             shrinkWrap: true,
             itemBuilder: (context, index) {
-              return ListTile(
-                leading: buildTileIcon(users[index]),
-                dense: true,
-                title: Text(users[index].name, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
-                subtitle: Text(users[index].email, style: const TextStyle(fontSize: 12)),
-                onTap: () {
-                  if (sharedUsersList.value.contains(users[index])) {
-                    sharedUsersList.value = sharedUsersList.value
-                        .where((selectedUser) => selectedUser.id != users[index].id)
-                        .toSet();
-                  } else {
-                    sharedUsersList.value = {...sharedUsersList.value, users[index]};
-                  }
+              return LibraryTileDecoration(
+                key: ValueKey(users[index].id),
+                slot: LibrarySlots.userSelectionUser,
+                slotContext: () => {
+                  'album': LibraryJson.remoteAlbum(album),
+                  'user': LibraryJson.user(users[index]),
+                  'selected': sharedUsersList.value.contains(users[index]),
                 },
+                child: ListTile(
+                  leading: buildTileIcon(users[index]),
+                  dense: true,
+                  title: Text(users[index].name, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
+                  subtitle: Text(users[index].email, style: const TextStyle(fontSize: 12)),
+                  onTap: () {
+                    if (sharedUsersList.value.contains(users[index])) {
+                      sharedUsersList.value = sharedUsersList.value
+                          .where((selectedUser) => selectedUser.id != users[index].id)
+                          .toSet();
+                    } else {
+                      sharedUsersList.value = {...sharedUsersList.value, users[index]};
+                    }
+                  },
+                ),
               );
             },
             itemCount: users.length,

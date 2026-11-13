@@ -219,9 +219,11 @@ as a filter chip). Replaceable widgets take `replace` (renders instead of the bu
 `badge` (a small decoration in a corner).
 
 **Slot names**: `<surface>.<part>`; pages use their route name in lower camel case without `Route`
-(`MainTimelineRoute` → `mainTimeline`). Every page gets `<page>.appBar.actions`, `<page>.appBar.menu`, `<page>.header`,
-`<page>.footer`, `<page>.empty`, `<page>.fab`, `<page>.body` (`replace` / `wrap`); page-specific slots are in the
-catalog. Overlays use `global` (every screen), `route:<RouteName>` and `viewer.overlay` / `viewer`.
+(`MainTimelineRoute` → `mainTimeline`). Every page gets `<page>.header` and `<page>.footer` (content above / below
+the page), `<page>.fab` (content and buttons floating bottom right) and `<page>.body` (`replace` / `wrap`): the router
+wraps every route in them. Pages with their own app bar buttons, overflow menu or empty state serve
+`<page>.appBar.actions`, `<page>.appBar.menu` and `<page>.empty` (listed per area in the catalog); page-specific slots
+are in the catalog. Overlays use `global` (every screen), `route:<RouteName>` and `viewer.overlay` / `viewer`.
 
 **v1 slot ids keep working where they render today**: `viewer.topBar`, `main.appBar`, `album.appBar`, `selection`
 (selection sheet), `plugins.page`, overlay slots `viewer`, `global`, `route:<RouteName>`. They are **not** aliases of

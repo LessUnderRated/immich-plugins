@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:immich_mobile/extensions/build_context_extensions.dart';
 import 'package:immich_mobile/generated/translations.g.dart';
+import 'package:immich_mobile/infrastructure/plugins/plugin_api/library/library_ids.dart';
+import 'package:immich_mobile/presentation/widgets/asset_viewer/viewer_slots.dart';
 
 class FilterBottomSheetScaffold extends StatelessWidget {
   const FilterBottomSheetScaffold({
@@ -10,8 +12,11 @@ class FilterBottomSheetScaffold extends StatelessWidget {
     required this.onClear,
     required this.title,
     this.expanded,
+    this.sheet,
   });
 
+  /// The `search.filters` id of this sheet, for plugin content of `search.filterSheet`.
+  final String? sheet;
   final bool? expanded;
   final String title;
   final Widget child;
@@ -36,6 +41,7 @@ class FilterBottomSheetScaffold extends StatelessWidget {
             child: Text(title, style: context.textTheme.headlineSmall),
           ),
           buildChildWidget(),
+          ViewerSlotContentView(slot: LibrarySlots.searchFilterSheet, extra: {'sheet': ?sheet}),
           Padding(
             padding: const EdgeInsets.all(8.0),
             child: Row(

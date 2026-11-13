@@ -12,6 +12,7 @@ import 'package:immich_mobile/infrastructure/plugins/plugin_api/library/library_
 import 'package:immich_mobile/infrastructure/plugins/plugin_api/library/library_ids.dart';
 import 'package:immich_mobile/infrastructure/plugins/plugin_api/library/library_json.dart';
 import 'package:immich_mobile/models/activities/activity.model.dart';
+import 'package:immich_mobile/presentation/plugins/plugin_slot.dart';
 import 'package:immich_mobile/presentation/widgets/action_buttons/like_activity_action_button.widget.dart';
 import 'package:immich_mobile/presentation/widgets/album/activity_text_field.dart';
 import 'package:immich_mobile/presentation/widgets/library/library_plugins.widget.dart';
@@ -90,7 +91,12 @@ class ActivitiesPage extends HookConsumerWidget {
                 activityWidgets.add(
                   Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-                    child: CommentBubble(activity: activity, isAssetActivity: assetId != null),
+                    child: LibraryTileDecoration(
+                      key: ValueKey(activity.id),
+                      slot: LibrarySlots.activitiesItem,
+                      slotContext: () => {'activity': LibraryJson.activity(activity)},
+                      child: CommentBubble(activity: activity, isAssetActivity: assetId != null),
+                    ),
                   ),
                 );
               }
@@ -116,7 +122,11 @@ class ActivitiesPage extends HookConsumerWidget {
                           children: LibraryPluginHooks.arrange(LibrarySlots.footer(LibraryPages.activities), [
                             (
                               id: 'input',
-                              item: ActivityTextField(isEnabled: album.isActivityEnabled, onSubmit: onAddComment),
+                              item: PluginReplaceable(
+                                slot: LibrarySlots.activitiesInput,
+                                slotContext: {'album': LibraryJson.remoteAlbum(album), 'assetId': assetId},
+                                child: ActivityTextField(isEnabled: album.isActivityEnabled, onSubmit: onAddComment),
+                              ),
                             ),
                           ]),
                         ),

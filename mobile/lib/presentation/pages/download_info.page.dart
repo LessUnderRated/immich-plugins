@@ -35,16 +35,26 @@ class DownloadInfoPage extends ConsumerWidget {
           final task = tasks[index];
           return Padding(
             padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 4.0),
-            child: DownloadTaskTile(
-              progress: task.value.progress,
-              fileName: task.value.fileName,
-              status: task.value.status,
-              onCancelDownload: () => libraryTap(
-                context,
-                page,
-                'cancel',
-                () => onCancelDownload(task.key),
-                args: () => {'taskId': task.key, 'fileName': task.value.fileName, 'progress': task.value.progress},
+            child: LibraryTileDecoration(
+              key: ValueKey(task.key),
+              slot: LibrarySlots.downloadInfoTask,
+              slotContext: () => {
+                'taskId': task.key,
+                'fileName': task.value.fileName,
+                'progress': task.value.progress,
+                'status': task.value.status.name,
+              },
+              child: DownloadTaskTile(
+                progress: task.value.progress,
+                fileName: task.value.fileName,
+                status: task.value.status,
+                onCancelDownload: () => libraryTap(
+                  context,
+                  page,
+                  'cancel',
+                  () => onCancelDownload(task.key),
+                  args: () => {'taskId': task.key, 'fileName': task.value.fileName, 'progress': task.value.progress},
+                ),
               ),
             ),
           );

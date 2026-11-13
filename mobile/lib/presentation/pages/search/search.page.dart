@@ -18,9 +18,11 @@ import 'package:immich_mobile/infrastructure/plugins/plugin_api/library/library_
 import 'package:immich_mobile/infrastructure/plugins/plugin_api/library/library_json.dart';
 import 'package:immich_mobile/models/search/search_filter.model.dart';
 import 'package:immich_mobile/presentation/pages/search/paginated_search.provider.dart';
+import 'package:immich_mobile/presentation/widgets/asset_viewer/viewer_slots.dart';
 import 'package:immich_mobile/presentation/widgets/bottom_sheet/general_bottom_sheet.widget.dart';
 import 'package:immich_mobile/presentation/widgets/library/library_plugins.widget.dart';
 import 'package:immich_mobile/presentation/widgets/search/quick_date_picker.dart';
+import 'package:immich_mobile/presentation/widgets/shell/shell_list.widget.dart';
 import 'package:immich_mobile/presentation/widgets/timeline/timeline.widget.dart';
 import 'package:immich_mobile/providers/infrastructure/timeline.provider.dart';
 import 'package:immich_mobile/providers/search/search_input_focus.provider.dart';
@@ -195,6 +197,7 @@ class SearchPage extends HookConsumerWidget {
           child: FractionallySizedBox(
             heightFactor: 0.8,
             child: FilterBottomSheetScaffold(
+              sheet: 'people',
               title: context.t.search_filter_people_title,
               expanded: true,
               onSearch: handleApply,
@@ -231,6 +234,7 @@ class SearchPage extends HookConsumerWidget {
           child: FractionallySizedBox(
             heightFactor: 0.8,
             child: FilterBottomSheetScaffold(
+              sheet: 'tags',
               title: context.t.search_filter_tags_title,
               expanded: true,
               onSearch: handleApply,
@@ -275,6 +279,7 @@ class SearchPage extends HookConsumerWidget {
           isScrollControlled: true,
           isDismissible: true,
           child: FilterBottomSheetScaffold(
+            sheet: 'location',
             title: context.t.search_filter_location_title,
             onSearch: handleApply,
             onClear: handleClear,
@@ -320,6 +325,7 @@ class SearchPage extends HookConsumerWidget {
           isScrollControlled: true,
           isDismissible: true,
           child: FilterBottomSheetScaffold(
+            sheet: 'camera',
             title: context.t.search_filter_camera_title,
             onSearch: handleApply,
             onClear: handleClear,
@@ -400,6 +406,7 @@ class SearchPage extends HookConsumerWidget {
         showFilterBottomSheet(
           context: context,
           child: FilterBottomSheetScaffold(
+            sheet: 'date',
             title: context.t.pick_date_range,
             expanded: true,
             onClear: () => datePicked(null),
@@ -446,6 +453,7 @@ class SearchPage extends HookConsumerWidget {
         showFilterBottomSheet(
           context: context,
           child: FilterBottomSheetScaffold(
+            sheet: 'mediaType',
             title: context.t.search_filter_media_type_title,
             onSearch: handleApply,
             onClear: handleClear,
@@ -480,6 +488,7 @@ class SearchPage extends HookConsumerWidget {
           context: context,
           isScrollControlled: true,
           child: FilterBottomSheetScaffold(
+            sheet: 'rating',
             title: context.t.rating,
             onSearch: handleApply,
             onClear: handleClear,
@@ -526,6 +535,7 @@ class SearchPage extends HookConsumerWidget {
         showFilterBottomSheet(
           context: context,
           child: FilterBottomSheetScaffold(
+            sheet: 'display',
             title: context.t.display_options,
             onSearch: handleApply,
             onClear: handleClear,
@@ -782,8 +792,22 @@ class SearchPage extends HookConsumerWidget {
           ),
           if (filter.value.isEmpty)
             const _SearchSuggestions()
-          else
+          else ...[
+            // `search.results.header`: result provider sections (a plugin renders its own results here).
+            SliverToBoxAdapter(
+              child: Consumer(
+                builder: (context, ref, _) {
+                  final count = ref.watch(paginatedSearchProvider.select((s) => s.assets.length));
+                  final nextPage = ref.watch(paginatedSearchProvider.select((s) => s.nextPage));
+                  return ViewerSlotContentView(
+                    slot: LibrarySlots.searchResultsHeader,
+                    extra: {'filter': LibraryJson.searchFilter(filter.value), 'count': count, 'nextPage': nextPage},
+                  );
+                },
+              ),
+            ),
             _SearchResultGrid(onScrollEnd: () => loadMoreSearchResults()),
+          ],
         ],
       ),
     );
@@ -828,14 +852,28 @@ class _SearchResultGrid extends ConsumerWidget {
     }
 
     return SliverToBoxAdapter(
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 32),
-        child: Center(
-          child: Text(
-            context.t.search_no_more_result,
-            style: context.textTheme.bodyMedium?.copyWith(color: context.colorScheme.onSurfaceVariant),
+      child: Column(
+        children: [
+          // `search.results.footer`: built-in `noMoreResults` plus plugin sections.
+          ShellList(
+            slot: LibrarySlots.searchResultsFooter,
+            items: [
+              ShellItem(
+                'noMoreResults',
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 32),
+                  child: Center(
+                    child: Text(
+                      context.t.search_no_more_result,
+                      style: context.textTheme.bodyMedium?.copyWith(color: context.colorScheme.onSurfaceVariant),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+            builder: (context, items) => Column(children: items),
           ),
-        ),
+        ],
       ),
     );
   }

@@ -185,7 +185,7 @@ class LibraryTileDecoration extends ConsumerWidget {
   final Map<String, dynamic> Function() slotContext;
   final Widget child;
 
-  /// The slot of the tile's long-press menu (default `<slot>.menu`); plugin entries open on long press.
+  /// The slot of the tile's long-press menu (default `<slot>.menu`; `<slot>.actions` entries join it).
   final String? menuSlot;
 
   const LibraryTileDecoration({
@@ -199,9 +199,10 @@ class LibraryTileDecoration extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final bridge = ref.watch(timelinePluginBridgeProvider);
-    final menu = menuSlot ?? '$slot.menu';
+    // Long-press entries: `<slot>.menu` (or [menuSlot]) and `<slot>.actions`.
+    final menus = {menuSlot ?? '$slot.menu', '$slot.actions'};
     final hasDecorations = bridge.hasDecorations(slot);
-    final entries = bridge.menuItems(menu, const {});
+    final entries = [for (final menu in menus) ...bridge.menuItems(menu, const {})];
     if (!hasDecorations && entries.isEmpty) {
       return child;
     }
@@ -210,7 +211,7 @@ class LibraryTileDecoration extends ConsumerWidget {
     if (entries.isEmpty) {
       return decorated;
     }
-    final items = bridge.menuItems(menu, context0);
+    final items = [for (final menu in menus) ...bridge.menuItems(menu, context0)];
     return MenuAnchor(
       consumeOutsideTap: true,
       menuChildren: [for (final item in items) item.item],
