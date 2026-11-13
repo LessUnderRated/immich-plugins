@@ -559,14 +559,14 @@ def _addresses(port: int) -> list[str]:
     return found
 
 
-def _discovery(host: str, port: int):
-    """Answers the plugin's discovery broadcast ("IMMICH-UPSCALE?") on UDP [port]."""
+def _discovery(host: str, port: int, listen_port: int):
+    """Answers the plugin's discovery broadcast ("IMMICH-UPSCALE?") on UDP [listen_port] with HTTP [port]."""
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        sock.bind((host, port))
+        sock.bind((host, listen_port))
     except OSError as error:
-        print(f"  Discovery is off (UDP {port}: {error}); the phone needs the address once.", file=sys.stderr)
+        print(f"  Discovery is off (UDP {listen_port}: {error}); the phone needs the address once.", file=sys.stderr)
         return
     while True:
         try:
@@ -583,6 +583,7 @@ def main():
     parser = argparse.ArgumentParser(description="Upscale server for the Immich Upscaler plugin")
     parser.add_argument("--host", default="0.0.0.0", help="address to listen on (default: all; e.g. your Tailscale IP)")
     parser.add_argument("--port", type=int, default=8765)
+    parser.add_argument("--discovery-port", type=int, help="UDP port for discovery (default: --port)")
     parser.add_argument("--data", default=str(Path.home() / ".immich-upscale"), help="models and work files")
     parser.add_argument("--tile", type=int, default=256, help="tile size for models that take any size")
     parser.add_argument("--idle", type=float, default=IDLE_SECONDS,
@@ -596,7 +597,8 @@ def main():
     store = EngineConfig(data / "models", args.tile, _probe_providers())
     jobs = Jobs(store, work, args.idle)
     server = ThreadingHTTPServer((args.host, args.port), make_handler(jobs, args.port))
-    threading.Thread(target=_discovery, args=(args.host, args.port), daemon=True).start()
+    threading.Thread(target=_discovery, args=(args.host, args.port, args.discovery_port or args.port),
+                     daemon=True).start()
     print(f"Immich upscale server {VERSION} on {socket.gethostname()}")
     print(f"  ONNX Runtime providers: {', '.join(store.providers)}")
     print(f"  Addresses: {', '.join(_addresses(args.port)) or f'port {args.port}'}")
