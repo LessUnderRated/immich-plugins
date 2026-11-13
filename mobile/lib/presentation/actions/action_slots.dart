@@ -96,7 +96,14 @@ List<Widget> arrangeActionWidgets(
     for (final item in extraActions) SlotExtraItem<Widget>(id: item.id, item: presenter(item.item), order: item.order),
     ...extraButtons,
   ];
-  final arranged = arrangeSlotItems<Widget>(widgets, slotItemId, rules: rules, extra: extra);
+  final seen = <String>{};
+  final arranged = <Widget>[];
+  for (final widget in arrangeSlotItems<Widget>(widgets, slotItemId, rules: rules, extra: extra)) {
+    final id = slotItemId(widget);
+    if (id == null || seen.add(id)) {
+      arranged.add(widget);
+    }
+  }
   return rules.rename.isEmpty ? arranged : [for (final widget in arranged) _rename(widget, rules)];
 }
 

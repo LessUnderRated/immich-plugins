@@ -4,7 +4,6 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:immich_mobile/constants/enums.dart';
 import 'package:immich_mobile/domain/models/asset/base_asset.model.dart';
 import 'package:immich_mobile/infrastructure/repositories/app_album.repository.dart';
-import 'package:immich_mobile/infrastructure/repositories/device_album.repository.dart';
 import 'package:immich_mobile/infrastructure/repositories/private_files.repository.dart';
 import 'package:immich_mobile/presentation/actions/action.dart';
 import 'package:immich_mobile/presentation/actions/action_ids.dart';
@@ -13,8 +12,6 @@ import 'package:immich_mobile/providers/asset_viewer/asset_viewer.provider.dart'
 import 'package:immich_mobile/providers/background_sync.provider.dart';
 import 'package:immich_mobile/providers/private_vault.provider.dart';
 import 'package:immich_mobile/utils/error_handler.dart';
-
-const _folders = DeviceAlbumRepository();
 
 final _localAssetsProvider = Provider.family.autoDispose<List<LocalAsset>?, ActionSource>((ref, source) {
   final local = ref.watch(assetsActionProvider(source)).whereType<LocalAsset>().toList(growable: false);
@@ -228,18 +225,6 @@ class DeviceFavoriteAction extends AssetActionBuilder {
     if (privateAssets != null) {
       return _privateFavorite(context, ref, privateAssets);
     }
-    final assets = ref.watch(_localAssetsProvider(source));
-    if (assets == null) {
-      return null;
-    }
-    final favorite = assets.any((asset) => !asset.isFavorite);
-    return .new(
-      icon: favorite ? Icons.favorite_border_rounded : Icons.favorite_rounded,
-      label: favorite ? 'Favorite' : 'Unfavorite',
-      onAction: () => _run(context, ref, source, () async {
-        await _folders.setFavorite(assets, favorite);
-        return favorite ? 'Added ${_count(assets.length)} to favorites' : 'Removed from favorites';
-      }),
-    );
+    return null;
   }
 }
