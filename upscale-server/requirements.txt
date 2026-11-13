@@ -1,0 +1,4 @@
+numpy>=1.26
+Pillow>=10
+# CPU everywhere. For an NVIDIA GPU install onnxruntime-gpu instead; on Windows with any GPU, onnxruntime-directml.
+onnxruntime>=1.18
