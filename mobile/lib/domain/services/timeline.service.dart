@@ -234,7 +234,14 @@ class TimelineService {
     _buffer = await _assetSource(start, len);
     _bufferOffset = start;
 
-    return getAssets(index, count);
+    if (hasRange(index, count)) {
+      return getAssets(index, count);
+    }
+    // The source returned fewer assets than the timeline's total (the library changed between the count and this
+    // load, or a filter shrank it): hand back what exists instead of failing; the next bucket update fixes the total.
+    final from = (index - _bufferOffset).clamp(0, _buffer.length);
+    final to = (index - _bufferOffset + count).clamp(from, _buffer.length);
+    return _buffer.sublist(from, to);
   }
 
   bool hasRange(int index, int count) =>

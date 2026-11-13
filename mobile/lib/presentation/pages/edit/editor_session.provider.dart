@@ -157,7 +157,44 @@ class EditorSessionNotifier extends Notifier<EditorSession> {
   int _previews = 0;
 
   @override
-  EditorSession build() => EditorSession.closed;
+  EditorSession build() {
+    listenSelf(_emitEvents);
+    return EditorSession.closed;
+  }
+
+  /// `editor.opened`, `editor.imageChanged` and `editor.closed` for plugins.
+  void _emitEvents(EditorSession? previous, EditorSession next) {
+    final kernel = PluginKernel.current;
+    if (kernel == null) {
+      return;
+    }
+    final before = previous ?? EditorSession.closed;
+    if (!before.isOpen && next.isOpen) {
+      kernel.emit(EditorPluginIds.openedEvent, {
+        'session': next.id,
+        if (next.asset != null) 'asset': {'id': next.asset!.id},
+      });
+    } else if (before.isOpen && !next.isOpen) {
+      kernel.emit(EditorPluginIds.closedEvent, {'session': before.id, 'saved': EditorPluginEvents.saved(before.id)});
+    } else if (next.isOpen && before.id == next.id && before.generation != next.generation) {
+      final working = next.working;
+      final reason = next.history.length > before.history.length
+          ? 'apply'
+          : next.history.isEmpty && before.history.isNotEmpty
+          ? 'reset'
+          : next.history.length < before.history.length
+          ? 'undo'
+          : 'external';
+      kernel.emit(EditorPluginIds.imageChangedEvent, {
+        'session': next.id,
+        'generation': next.generation,
+        if (next.history.isNotEmpty) 'tool': next.history.last.toolId,
+        if (working != null) 'width': working.width,
+        if (working != null) 'height': working.height,
+        'reason': reason,
+      });
+    }
+  }
 
   /// Opens a session for [asset]. The editor's base image is the original's [bytes] (device assets, with their
   /// decoded [width] and [height]) or an image [provider] (server assets).
@@ -768,4 +805,13 @@ Future<ui.Image> _resolve(ImageProvider provider) {
   );
   stream.addListener(listener);
   return completer.future;
+}
+
+/// Remembers which editor sessions saved, for `editor.closed`.
+abstract final class EditorPluginEvents {
+  static final _saved = <String>{};
+
+  static void markSaved(String session) => _saved.add(session);
+
+  static bool saved(String session) => _saved.remove(session);
 }

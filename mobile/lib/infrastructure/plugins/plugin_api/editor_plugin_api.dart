@@ -140,52 +140,6 @@ void registerEditorPluginApi(PluginKernel kernel, Ref ref) {
     return page.save(target: options(args)['target'] as String?);
   }, '[{ target? }] -> { target, assetId, createdId? }');
 
-  // ---- events ---------------------------------------------------------------------------------------------------
-
-  ref.listen<EditorSession>(editorSessionProvider, (previous, next) {
-    final before = previous ?? EditorSession.closed;
-    if (!before.isOpen && next.isOpen) {
-      kernel.emit(EditorPluginIds.openedEvent, {
-        'session': next.id,
-        if (next.asset != null) 'asset': {'id': next.asset!.id},
-        'tool': ref.read(editorActiveToolProvider),
-        'tools': [for (final tool in ref.read(editorToolsProvider)) tool.id],
-      });
-    } else if (before.isOpen && !next.isOpen) {
-      kernel.emit(EditorPluginIds.closedEvent, {'session': before.id, 'saved': EditorPluginEvents.saved(before.id)});
-    } else if (next.isOpen && before.id == next.id && before.generation != next.generation) {
-      final working = next.working;
-      final reason = next.history.length > before.history.length
-          ? 'apply'
-          : next.history.isEmpty && before.history.isNotEmpty
-          ? 'reset'
-          : next.history.length < before.history.length
-          ? 'undo'
-          : 'external';
-      kernel.emit(EditorPluginIds.imageChangedEvent, {
-        'session': next.id,
-        'generation': next.generation,
-        if (next.history.isNotEmpty) 'tool': next.history.last.toolId,
-        if (working != null) 'width': working.width,
-        if (working != null) 'height': working.height,
-        'reason': reason,
-      });
-    }
-  });
-
-  ref.listen<String>(editorActiveToolProvider, (previous, next) {
-    final open = ref.read(editorSessionProvider);
-    if (open.isOpen && previous != next) {
-      kernel.emit(EditorPluginIds.toolChangedEvent, {'session': open.id, 'tool': next, 'previous': previous});
-    }
-  });
-}
-
-/// Remembers which editor sessions saved, for `editor.closed`.
-abstract final class EditorPluginEvents {
-  static final _saved = <String>{};
-
-  static void markSaved(String session) => _saved.add(session);
-
-  static bool saved(String session) => _saved.remove(session);
+  // Events (`editor.opened`, `editor.toolChanged`, `editor.imageChanged`, `editor.closed`) are emitted by the editor's
+  // own providers: listening to them here would create them while the kernel itself is still being created.
 }

@@ -108,8 +108,34 @@ class AppLogDetailPage extends HookWidget {
       );
     }
 
+    // The whole entry as one string: time, level, logger, message, details and stack trace.
+    String fullText() {
+      final logger = logMessage.logger != null ? ' ${logMessage.logger}' : '';
+      return [
+        '${logMessage.createdAt.toIso8601String()} ${logMessage.level.name.toUpperCase()}$logger',
+        logMessage.message,
+        if (logMessage.error != null) 'Details: ${logMessage.error}',
+        if (logMessage.stack != null) 'Stack trace:\n${logMessage.stack}',
+      ].join('\n');
+    }
+
     return Scaffold(
-      appBar: AppBar(title: Text(context.t.log_detail_title)),
+      appBar: AppBar(
+        title: Text(context.t.log_detail_title),
+        actions: [
+          IconButton(
+            tooltip: 'Copy all',
+            icon: const Icon(Icons.copy_all_rounded),
+            onPressed: () => unawaited(
+              Clipboard.setData(ClipboardData(text: fullText())).then((_) {
+                if (context.mounted) {
+                  context.scaffoldMessenger.showSnackBar(SnackBar(content: Text(context.t.copied_to_clipboard)));
+                }
+              }),
+            ),
+          ),
+        ],
+      ),
       body: SafeArea(
         child: ShellList(
           slot: ShellSlots.appLogDetailSections,

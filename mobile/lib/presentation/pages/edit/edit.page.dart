@@ -20,7 +20,6 @@ import 'package:immich_mobile/infrastructure/plugins/plugin_api/editor/editor_me
 import 'package:immich_mobile/infrastructure/plugins/plugin_api/editor/editor_tool.dart';
 import 'package:immich_mobile/infrastructure/plugins/plugin_api/editor/editor_tool_protocol.dart';
 import 'package:immich_mobile/infrastructure/plugins/plugin_api/editor/editor_workspace.dart';
-import 'package:immich_mobile/infrastructure/plugins/plugin_api/editor_plugin_api.dart';
 import 'package:immich_mobile/infrastructure/plugins/plugin_kernel.dart';
 import 'package:immich_mobile/presentation/actions/action_slots.dart';
 import 'package:immich_mobile/presentation/pages/edit/editor.provider.dart';

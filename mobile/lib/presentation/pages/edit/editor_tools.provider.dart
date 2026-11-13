@@ -59,7 +59,19 @@ final editorActiveToolEntryProvider = Provider<EditorTool>((ref) {
 
 class EditorActiveToolNotifier extends Notifier<String> {
   @override
-  String build() => ref.read(editorToolsProvider).first.id;
+  String build() {
+    listenSelf((previous, next) {
+      final session = ref.read(editorSessionProvider);
+      if (session.isOpen && previous != null && previous != next) {
+        PluginKernel.current?.emit(EditorPluginIds.toolChangedEvent, {
+          'session': session.id,
+          'tool': next,
+          'previous': previous,
+        });
+      }
+    });
+    return ref.read(editorToolsProvider).first.id;
+  }
 
   EditorTool? find(String id) => ref.read(editorToolsProvider).firstWhereOrNull((tool) => tool.id == id);
 
