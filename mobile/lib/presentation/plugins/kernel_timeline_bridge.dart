@@ -90,7 +90,7 @@ class KernelTimelinePluginBridge extends TimelinePluginBridge {
     }
     return [
       for (final item in _kernel.slot(slot))
-        if (_menuKinds.contains(item.kind))
+        if (_menuKinds.contains(item.kind) && item.kind != PluginSlotKind.toggle)
           SlotExtraItem(id: itemId(item), item: _PluginSlotAction(_kernel, slot, item, source), order: _order(item)),
     ];
   }

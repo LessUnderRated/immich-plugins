@@ -81,12 +81,20 @@ List<Widget> arrangeActionWidgets(
   final bridge = ref.watch(timelinePluginBridgeProvider);
   final rules = bridge.rules(slots);
   final extraActions = [for (final slot in slots) ...bridge.actions(slot, source: source)];
-  if (rules.isEmpty && extraActions.isEmpty) {
+  // Toggles (and other buttons that are not actions) keep their own presentation, e.g. on/off icons.
+  final actionIds = {for (final item in extraActions) item.id};
+  final extraButtons = [
+    for (final slot in slots)
+      for (final item in bridge.buttons(slot, const {}))
+        if (!actionIds.contains(item.id)) item,
+  ];
+  if (rules.isEmpty && extraActions.isEmpty && extraButtons.isEmpty) {
     return widgets;
   }
   final presenter = present ?? (action) => ActionColumnButton(action: action);
   final extra = [
     for (final item in extraActions) SlotExtraItem<Widget>(id: item.id, item: presenter(item.item), order: item.order),
+    ...extraButtons,
   ];
   final arranged = arrangeSlotItems<Widget>(widgets, slotItemId, rules: rules, extra: extra);
   return rules.rename.isEmpty ? arranged : [for (final widget in arranged) _rename(widget, rules)];

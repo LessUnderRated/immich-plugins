@@ -241,7 +241,7 @@ Wired: ids, rules and plugin actions in every viewer bar and menu, `action.<id>`
 `viewer.gesture`, `video.source`, `video.control`, the image pipeline in every image provider, video sessions and the
 declarative overlay layer, `image.load`, every host function (registered with the kernel), `ViewerPlugins` and
 `ImagePipeline` bound to the kernel (cache invalidated when image hooks change).
-Not yet: content and decoration slots `viewer.info.sections`, `viewer.bottomPanels`, `viewer.title` and the memory
-and slideshow slots render nothing yet; the built-in censor shield still uses its own setting (not the generic
-`toggle`); `ViewerFilterV1` video results are not yet turned into overlay items; plugin `toggle` and JSON UI buttons
-are not merged into `viewer.topBar` (actions are).
+Also wired: `viewer.info.sections` (below the built-in details) and `viewer.bottomPanels` content, the censor shield as
+the generic toggle `app/viewer.shield`, plugin toggles and buttons merged into every action bar next to actions.
+Not yet: `viewer.title` and the memory and slideshow slots render nothing; `ViewerFilterV1` video results are not yet
+turned into overlay items.

@@ -1,7 +1,9 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:immich_mobile/infrastructure/plugins/plugin_api/library/library_hooks.dart';
+import 'package:immich_mobile/providers/timeline/timeline_plugins.provider.dart';
 
 /// Runs built-in action [item] of library page [page] through its plugin hook (`action.<page>.<item>`).
 ///
@@ -173,5 +175,21 @@ class _LibraryQueryBuilderState<T> extends State<LibraryQueryBuilder<T>> {
       return widget.placeholder?.call(context) ?? const SizedBox.shrink();
     }
     return widget.builder(context, result);
+  }
+}
+
+/// A library tile (album, person, place, partner, ...) decorated by the plugins of its tile [slot]: badges, wraps or
+/// a full replacement. [slotContext] describes the tile (e.g. `{"album": {...}}`). Free when no plugin decorates it.
+class LibraryTileDecoration extends ConsumerWidget {
+  final String slot;
+  final Map<String, dynamic> Function() slotContext;
+  final Widget child;
+
+  const LibraryTileDecoration({super.key, required this.slot, required this.slotContext, required this.child});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final bridge = ref.watch(timelinePluginBridgeProvider);
+    return bridge.hasDecorations(slot) ? bridge.decorate(slot, slotContext(), child) : child;
   }
 }

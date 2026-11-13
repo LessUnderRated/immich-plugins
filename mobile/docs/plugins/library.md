@@ -378,5 +378,6 @@ host functions (`data.md`).
 Wired: ids and built-in lists, every hook and event above, page-view queries, map layers (rendering, taps through the
 plugin that drew the feature, camera), every host function (registered with the kernel), hide and order rules from
 `contributes.builtins` on every arranged list.
-Not yet: plugin items, tile decorations, long-press menus and `<page>.appBar.menu` overflow menus on library pages
-(pages using the shared app bars get `<page>.appBar.actions` through them).
+Also wired: plugin buttons, menu entries, tiles and sections merged into every arranged widget list (by slot suffix:
+`.actions` buttons, `.menu` entries, else tiles), badge/wrap/replace decorations on album, place and people tiles.
+Not yet: decorations on the remaining tiles (partner, folder, shared link), long-press menus.

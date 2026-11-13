@@ -706,13 +706,21 @@ class _AlbumList extends ConsumerWidget {
                     await ref.read(remoteAlbumProvider.notifier).deleteAlbum(album.id);
                   }
                 },
-                child: AlbumTile(album: album, isOwner: isOwner, onAlbumSelected: onAlbumSelected),
+                child: LibraryTileDecoration(
+                  slot: LibrarySlots.albumSelectorTile,
+                  slotContext: () => {'album': LibraryJson.remoteAlbum(album)},
+                  child: AlbumTile(album: album, isOwner: isOwner, onAlbumSelected: onAlbumSelected),
+                ),
               ),
             );
           } else {
             return Padding(
               padding: const EdgeInsets.only(bottom: 8.0),
-              child: AlbumTile(album: album, isOwner: isOwner, onAlbumSelected: onAlbumSelected),
+              child: LibraryTileDecoration(
+                slot: LibrarySlots.albumSelectorTile,
+                slotContext: () => {'album': LibraryJson.remoteAlbum(album)},
+                child: AlbumTile(album: album, isOwner: isOwner, onAlbumSelected: onAlbumSelected),
+              ),
             );
           }
         },

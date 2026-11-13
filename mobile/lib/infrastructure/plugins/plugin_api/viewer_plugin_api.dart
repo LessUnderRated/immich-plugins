@@ -6,6 +6,7 @@ import 'package:immich_mobile/infrastructure/plugins/plugin_api/viewer/image_pip
 import 'package:immich_mobile/infrastructure/plugins/plugin_api/viewer/viewer_bridge.dart';
 import 'package:immich_mobile/infrastructure/plugins/plugin_api/viewer/viewer_host_api.dart';
 import 'package:immich_mobile/infrastructure/plugins/plugin_kernel.dart';
+import 'package:immich_mobile/providers/viewer_censor.provider.dart';
 
 /// Plugin API of the **viewer** area: viewer, video sessions and overlays, image pipeline (`viewer.*`, `video.*`,
 /// `image.load`, `image.invalidate` host functions; `image.*`, `video.*` and `viewer.gesture` hooks run through
@@ -14,6 +15,17 @@ void registerViewerPluginApi(PluginKernel kernel, Ref ref) {
   for (final MapEntry(key: name, value: function) in ViewerHostApi(ref).functions.entries) {
     kernel.registerHost(name, function, area: 'viewer');
   }
+
+  // The viewer censor shield is a generic toggle: plugins read and set it like their own.
+  kernel.toggles.define(
+    PluginToggleDefinition(
+      key: viewerShieldToggle,
+      defaultValue: true,
+      title: 'Censor while viewing',
+      read: () => ref.read(viewerCensorEnabledProvider),
+      write: (value) => ref.read(viewerCensorEnabledProvider.notifier).set(value),
+    ),
+  );
 
   ViewerPlugins.bind(_KernelViewerBridge(kernel));
   ImagePipeline.subjectJson = (subject) async {

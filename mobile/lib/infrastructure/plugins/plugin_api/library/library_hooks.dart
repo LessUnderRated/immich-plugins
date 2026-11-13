@@ -1,9 +1,11 @@
 import 'dart:async';
 
+import 'package:flutter/widgets.dart';
 import 'package:immich_mobile/domain/utils/plugin_hooks.dart';
 import 'package:immich_mobile/infrastructure/plugins/plugin_api/library/library_ids.dart';
 import 'package:immich_mobile/infrastructure/plugins/plugin_api/timeline/builtin_rules.dart';
 import 'package:immich_mobile/infrastructure/plugins/plugin_kernel.dart';
+import 'package:immich_mobile/presentation/plugins/plugin_slot.dart';
 
 /// A built-in item of a library slot with its catalog id (`libraryBuiltins`).
 typedef LibrarySlotItem<T> = ({String id, T item});
@@ -116,7 +118,8 @@ abstract final class LibraryPluginHooks {
       return builtins;
     }
     final rules = kernel.builtins(slot);
-    if (rules.hide.isEmpty && rules.order.isEmpty) {
+    final extra = _pluginItems<T>(kernel, slot);
+    if (rules.hide.isEmpty && rules.order.isEmpty && extra.isEmpty) {
       return builtins;
     }
     final ids = {for (final entry in items) identityHashCode(entry.item): entry.id};
@@ -124,6 +127,39 @@ abstract final class LibraryPluginHooks {
       builtins,
       (item) => ids[identityHashCode(item)],
       rules: BuiltinItemRules(hide: rules.hide, order: rules.order),
+      extra: extra,
     );
+  }
+
+  /// Plugin contributions of [slot] as widgets of the list's own type: buttons in `.actions` slots, menu entries in
+  /// `.menu` slots (MenuAnchor menus), tiles and sections elsewhere. Lists of non-widget items (or popup menu
+  /// entries) get none.
+  static List<SlotExtraItem<T>> _pluginItems<T>(PluginKernel kernel, String slot) {
+    if (<T>[] is! List<Widget> || !kernel.hasSlot(slot)) {
+      return const [];
+    }
+    final presentation = slot.endsWith('menu')
+        ? PluginSlotPresentation.menu
+        : slot.endsWith('actions')
+        ? PluginSlotPresentation.buttons
+        : PluginSlotPresentation.tiles;
+    final out = <SlotExtraItem<T>>[];
+    for (final item in kernel.slot(slot)) {
+      final Widget widget = switch (item.kind) {
+        PluginSlotKind.section || PluginSlotKind.panel || PluginSlotKind.view => PluginSlotContent(item: item),
+        PluginSlotKind.badge || PluginSlotKind.wrap || PluginSlotKind.replace => const SizedBox.shrink(),
+        _ => PluginSlotItemView(item: item, presentation: presentation),
+      };
+      if (widget is T && widget is! SizedBox) {
+        out.add(
+          SlotExtraItem<T>(
+            id: '$builtinRulesPluginPrefix${item.plugin}/${item.id}',
+            item: widget as T,
+            order: item.order == SlotContribution.defaultOrder ? builtinRulesLast : item.order.toDouble(),
+          ),
+        );
+      }
+    }
+    return out;
   }
 }

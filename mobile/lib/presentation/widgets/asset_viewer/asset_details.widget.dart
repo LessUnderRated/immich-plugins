@@ -59,6 +59,7 @@ class AssetDetails extends ConsumerWidget {
               ViewerSlotItem('appearsIn', AppearsInDetails(asset: asset)),
               ViewerSlotItem('tags', TagDetails(asset: asset)),
             ]),
+            ?viewerSlotContent(ref, ViewerSlotIds.infoSections, assets: [asset]),
             SizedBox(height: context.padding.bottom + 48),
           ],
         ),

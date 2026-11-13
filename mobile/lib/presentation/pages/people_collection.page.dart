@@ -103,56 +103,60 @@ class _PeopleCollectionPageState extends ConsumerState<PeopleCollectionPage> {
                     itemBuilder: (context, index) {
                       final person = filtered[index];
 
-                      return Column(
+                      return LibraryTileDecoration(
                         key: ValueKey(person.id),
-                        children: [
-                          GestureDetector(
-                            onTap: () => libraryTap(
-                              context,
-                              _page,
-                              'open',
-                              () => unawaited(context.pushRoute(PersonRoute(person: person))),
-                              args: () => {'person': LibraryJson.person(person)},
-                            ),
-                            child: Material(
-                              shape: const CircleBorder(side: BorderSide.none),
-                              elevation: 3,
-                              child: CircleAvatar(
-                                key: ValueKey(person.id),
-                                maxRadius: isTablet ? 100 / 2 : 96 / 2,
-                                backgroundImage: RemoteImageProvider(
-                                  url: getFaceThumbnailUrl(person.id, updatedAt: person.updatedAt),
+                        slot: LibrarySlots.peopleCollectionTile,
+                        slotContext: () => {'person': LibraryJson.person(person)},
+                        child: Column(
+                          children: [
+                            GestureDetector(
+                              onTap: () => libraryTap(
+                                context,
+                                _page,
+                                'open',
+                                () => unawaited(context.pushRoute(PersonRoute(person: person))),
+                                args: () => {'person': LibraryJson.person(person)},
+                              ),
+                              child: Material(
+                                shape: const CircleBorder(side: BorderSide.none),
+                                elevation: 3,
+                                child: CircleAvatar(
+                                  key: ValueKey(person.id),
+                                  maxRadius: isTablet ? 100 / 2 : 96 / 2,
+                                  backgroundImage: RemoteImageProvider(
+                                    url: getFaceThumbnailUrl(person.id, updatedAt: person.updatedAt),
+                                  ),
                                 ),
                               ),
                             ),
-                          ),
-                          const SizedBox(height: 12),
-                          GestureDetector(
-                            onTap: () => libraryTap(
-                              context,
-                              _page,
-                              'editName',
-                              () => showNameEditModal(context, person),
-                              args: () => {'person': LibraryJson.person(person)},
+                            const SizedBox(height: 12),
+                            GestureDetector(
+                              onTap: () => libraryTap(
+                                context,
+                                _page,
+                                'editName',
+                                () => showNameEditModal(context, person),
+                                args: () => {'person': LibraryJson.person(person)},
+                              ),
+                              child: person.name.isEmpty
+                                  ? Text(
+                                      context.t.add_a_name,
+                                      style: context.textTheme.titleSmall?.copyWith(
+                                        fontWeight: FontWeight.w500,
+                                        color: context.colorScheme.primary,
+                                      ),
+                                    )
+                                  : Padding(
+                                      padding: const EdgeInsets.symmetric(horizontal: 16.0),
+                                      child: Text(
+                                        person.name,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: context.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w500),
+                                      ),
+                                    ),
                             ),
-                            child: person.name.isEmpty
-                                ? Text(
-                                    context.t.add_a_name,
-                                    style: context.textTheme.titleSmall?.copyWith(
-                                      fontWeight: FontWeight.w500,
-                                      color: context.colorScheme.primary,
-                                    ),
-                                  )
-                                : Padding(
-                                    padding: const EdgeInsets.symmetric(horizontal: 16.0),
-                                    child: Text(
-                                      person.name,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: context.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w500),
-                                    ),
-                                  ),
-                          ),
-                        ],
+                          ],
+                        ),
                       );
                     },
                   ),

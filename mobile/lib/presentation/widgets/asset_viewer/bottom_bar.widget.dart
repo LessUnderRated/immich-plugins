@@ -105,6 +105,8 @@ class ViewerBottomBar extends ConsumerWidget {
       if (asset.isImage) ViewerSlotItem('ocr', OcrToggleButton(asset: asset)),
       if (asset.isVideo) ViewerSlotItem('videoControls', VideoControls(videoPlayerName: asset.id)),
       const ViewerSlotItem('carousel', Padding(padding: EdgeInsets.symmetric(vertical: 6), child: ViewerCarousel())),
+      if (viewerSlotContent(ref, ViewerSlotIds.bottomPanels, assets: [asset]) case final Widget panel)
+        ViewerSlotItem('plugins', panel),
       if (!isReadonlyModeEnabled)
         ViewerSlotItem(
           'actions',
