@@ -2,14 +2,16 @@
 """Upscale server for the Immich Upscaler plugin.
 
 Runs the plugin's upscaling models on this computer (GPU when available) so the phone only uploads the photo and
-downloads the result. Reach it from the phone over Tailscale (or your LAN).
+downloads the result. The phone finds it by itself: on the same Wi-Fi it answers a discovery broadcast (UDP port 8765)
+with its LAN and Tailscale addresses, which the phone remembers and uses from anywhere on your tailnet.
 
     pip install -r requirements.txt
-    python upscale_server.py                 # listens on 0.0.0.0:8765, prints the token and addresses
+    python upscale_server.py                 # listens on 0.0.0.0:8765 (HTTP and discovery)
 
-Protocol (every request needs the header `X-Token: <token>`):
+Protocol (no authentication: only reachable from your LAN and tailnet):
 
-    GET    /health                     -> {"ok", "version", "providers", "models": [ids], "busy"}
+    UDP    "IMMICH-UPSCALE?" to port 8765 -> {"service": "immich-upscale", "name", "port", "addresses", "version"}
+    GET    /health                     -> {"ok", "version", "name", "addresses", "providers", "models": [ids], "busy"}
     POST   /jobs?model=&width=&height=&denoise=   body: the photo (PNG / JPEG / WebP)
                                        -> {"id"}          (width/height: output size in pixels)
     GET    /jobs/<id>                  -> {"state": "queued|running|done|failed|cancelled", "progress", "message",
@@ -25,9 +27,7 @@ import hashlib
 import io
 import json
 import math
-import os
 import queue
-import secrets
 import shutil
 import socket
 import subprocess
@@ -38,7 +38,6 @@ import time
 import urllib.request
 import uuid
 from dataclasses import dataclass, field
-from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -47,7 +46,7 @@ import numpy as np
 import onnxruntime as ort
 from PIL import Image
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 HF = "https://huggingface.co/"
 
 # Same models (and pins) as the phone plugin.
@@ -344,7 +343,7 @@ class Jobs:
 # ---------------------------------------------------------------------------------------------------------- http
 
 
-def make_handler(jobs: Jobs, token: str):
+def make_handler(jobs: Jobs, port: int):
     class Handler(BaseHTTPRequestHandler):
         server_version = f"ImmichUpscale/{VERSION}"
 
@@ -360,19 +359,12 @@ def make_handler(jobs: Jobs, token: str):
             self.end_headers()
             self.wfile.write(body)
 
-        def _authorized(self) -> bool:
-            if secrets.compare_digest(self.headers.get("X-Token", ""), token):
-                return True
-            self._json(HTTPStatus.UNAUTHORIZED, {"error": "wrong or missing token"})
-            return False
-
         def do_GET(self):
-            if not self._authorized():
-                return
             url = urlparse(self.path)
             parts = [p for p in url.path.split("/") if p]
             if parts == ["health"]:
-                return self._json(200, {"ok": True, "version": VERSION, "providers": jobs.store.providers,
+                return self._json(200, {"ok": True, "version": VERSION, "name": socket.gethostname(),
+                                        "addresses": _addresses(port), "providers": jobs.store.providers,
                                         "models": list(MODELS), "busy": jobs.busy})
             if len(parts) >= 2 and parts[0] == "jobs":
                 job = jobs.get(parts[1])
@@ -394,8 +386,6 @@ def make_handler(jobs: Jobs, token: str):
             self._json(404, {"error": "not found"})
 
         def do_POST(self):
-            if not self._authorized():
-                return
             url = urlparse(self.path)
             if url.path.rstrip("/") != "/jobs":
                 return self._json(404, {"error": "not found"})
@@ -430,8 +420,6 @@ def make_handler(jobs: Jobs, token: str):
             self._json(200, {"id": job_id})
 
         def do_DELETE(self):
-            if not self._authorized():
-                return
             parts = [p for p in urlparse(self.path).path.split("/") if p]
             if len(parts) == 2 and parts[0] == "jobs":
                 jobs.remove(parts[1])
@@ -442,49 +430,64 @@ def make_handler(jobs: Jobs, token: str):
 
 
 def _addresses(port: int) -> list[str]:
+    """This computer's reachable addresses as host:port, Tailscale first."""
     found = []
     try:
-        ip = subprocess.run(["tailscale", "ip", "-4"], capture_output=True, text=True, timeout=5).stdout.split()
-        found += [f"{a}:{port}  (Tailscale)" for a in ip]
+        ips = subprocess.run(["tailscale", "ip", "-4"], capture_output=True, text=True, timeout=5).stdout.split()
+        found += [f"{ip}:{port}" for ip in ips]
     except (OSError, subprocess.SubprocessError):
         pass
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
             s.connect(("10.255.255.255", 1))
-            found.append(f"{s.getsockname()[0]}:{port}  (LAN)")
+            lan = s.getsockname()[0]
+            if not lan.startswith("127.") and f"{lan}:{port}" not in found:
+                found.append(f"{lan}:{port}")
     except OSError:
         pass
     return found
+
+
+def _discovery(host: str, port: int):
+    """Answers the plugin's discovery broadcast ("IMMICH-UPSCALE?") on UDP [port]."""
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        sock.bind((host, port))
+    except OSError as error:
+        print(f"  Discovery is off (UDP {port}: {error}); the phone needs the address once.", file=sys.stderr)
+        return
+    while True:
+        try:
+            data, sender = sock.recvfrom(1024)
+            if data.strip().startswith(b"IMMICH-UPSCALE?"):
+                reply = {"service": "immich-upscale", "name": socket.gethostname(), "port": port,
+                         "addresses": _addresses(port), "version": VERSION}
+                sock.sendto(json.dumps(reply).encode(), sender)
+        except OSError:
+            time.sleep(1)
 
 
 def main():
     parser = argparse.ArgumentParser(description="Upscale server for the Immich Upscaler plugin")
     parser.add_argument("--host", default="0.0.0.0", help="address to listen on (default: all; e.g. your Tailscale IP)")
     parser.add_argument("--port", type=int, default=8765)
-    parser.add_argument("--data", default=str(Path.home() / ".immich-upscale"), help="models, token and work files")
+    parser.add_argument("--data", default=str(Path.home() / ".immich-upscale"), help="models and work files")
     parser.add_argument("--tile", type=int, default=256, help="tile size for models that take any size")
-    parser.add_argument("--token", help="use this token instead of the saved / generated one")
     args = parser.parse_args()
 
     data = Path(args.data)
     data.mkdir(parents=True, exist_ok=True)
-    token_file = data / "token"
-    token = args.token or (token_file.read_text().strip() if token_file.is_file() else "")
-    if not token:
-        token = secrets.token_urlsafe(18)
-        token_file.write_text(token)
-        os.chmod(token_file, 0o600)
     work = Path(tempfile.mkdtemp(prefix="immich-upscale-"))
 
     store = ModelStore(data / "models", args.tile)
     jobs = Jobs(store, work)
-    server = ThreadingHTTPServer((args.host, args.port), make_handler(jobs, token))
-    print(f"Immich upscale server {VERSION}")
+    server = ThreadingHTTPServer((args.host, args.port), make_handler(jobs, args.port))
+    threading.Thread(target=_discovery, args=(args.host, args.port), daemon=True).start()
+    print(f"Immich upscale server {VERSION} on {socket.gethostname()}")
     print(f"  ONNX Runtime providers: {', '.join(store.providers)}")
-    print("  Enter one of these in the Upscale panel (Run on: My PC):")
-    for address in _addresses(args.port) or [f"<this PC's address>:{args.port}"]:
-        print(f"    {address}")
-    print(f"  Token: {token}")
+    print(f"  Addresses: {', '.join(_addresses(args.port)) or f'port {args.port}'}")
+    print("  In the editor pick Upscale > Run on: My PC; the phone finds this PC by itself (first time on the same Wi-Fi).")
     try:
         server.serve_forever()
     except KeyboardInterrupt:
