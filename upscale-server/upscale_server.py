@@ -28,6 +28,7 @@ import io
 import json
 import math
 import multiprocessing
+import os
 import queue
 import shutil
 import socket
@@ -78,18 +79,34 @@ class Cancelled(Exception):
 # ---------------------------------------------------------------------------------------------------------- models
 
 
-PREFERRED_PROVIDERS = ["CUDAExecutionProvider", "DmlExecutionProvider", "CoreMLExecutionProvider",
+PREFERRED_PROVIDERS = ["TensorrtExecutionProvider", "CUDAExecutionProvider", "DmlExecutionProvider", "CoreMLExecutionProvider",
                        "CPUExecutionProvider"]
 
 
+def _load_tensorrt() -> bool:
+    try:
+        import tensorrt_libs
+    except ImportError:
+        return False
+    folder = os.path.dirname(tensorrt_libs.__file__)
+    if hasattr(os, "add_dll_directory"):
+        os.add_dll_directory(folder)
+    os.environ["PATH"] = folder + os.pathsep + os.environ.get("PATH", "")
+    return True
+
+
 def _pick_providers(available: list[str]) -> list[str]:
+    if "TensorrtExecutionProvider" in available and not _load_tensorrt():
+        available = [p for p in available if p != "TensorrtExecutionProvider"]
     return [p for p in PREFERRED_PROVIDERS if p in available] or available
 
 
 def _probe_providers() -> list[str]:
-    code = "import onnxruntime as o; print(','.join(o.get_available_providers()))"
+    code = ("import onnxruntime as o, upscale_server as u; "
+            "print(','.join(u._pick_providers(o.get_available_providers())))")
     try:
-        out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=120).stdout
+        out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=120,
+                             cwd=os.path.dirname(os.path.abspath(__file__))).stdout
     except (OSError, subprocess.SubprocessError):
         return []
     return _pick_providers([p for p in out.strip().split(",") if p])
@@ -142,7 +159,23 @@ class ModelStore:
             progress(0.0, "Loading the model…")
             options = ort.SessionOptions()
             options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
-            session = ort.InferenceSession(str(path), options, providers=self.providers)
+            engines = self.cache.parent / "trt-cache"
+            engines.mkdir(parents=True, exist_ok=True)
+            tensorrt = {"trt_fp16_enable": True, "trt_engine_cache_enable": True,
+                        "trt_engine_cache_path": str(engines), "trt_timing_cache_enable": True,
+                        "trt_timing_cache_path": str(engines)}
+            options_by_provider = {"TensorrtExecutionProvider": tensorrt,
+                                   "CUDAExecutionProvider": {"cudnn_conv_algo_search": "HEURISTIC"}}
+            providers = [(p, options_by_provider[p]) if p in options_by_provider else p for p in self.providers]
+            self._session = None
+            session = ort.InferenceSession(str(path), options, providers=providers)
+            if "TensorrtExecutionProvider" in session.get_providers():
+                progress(0.0, "Preparing the model for this GPU (the first time can take about 2 minutes)…")
+            import numpy as np
+
+            spec = MODELS[model_id]
+            size = spec["fixed"] or self.tile + 2 * PAD
+            _run(session, np.zeros((size, size, 3), dtype=np.float32), 0.5)
             self._session = (model_id, session)
             return session
 
@@ -183,6 +216,7 @@ def _pass(session, spec, src, dw: int, dh: int, denoise: float, tile: int, repor
     m = spec["scale"]
     fixed = spec["fixed"]
     core = fixed - 2 * PAD if fixed else tile
+    size = fixed or core + 2 * PAD
     out = np.zeros((dh, dw, 3), dtype=np.uint8)
     tiles_x = math.ceil(sw / core)
     tiles_y = math.ceil(sh / core)
@@ -196,8 +230,7 @@ def _pass(session, spec, src, dw: int, dh: int, denoise: float, tile: int, repor
             px0, py0 = max(0, x0 - PAD), max(0, y0 - PAD)
             px1, py1 = min(sw, x1 + PAD), min(sh, y1 + PAD)
             patch = src[py0:py1, px0:px1]
-            if fixed:
-                patch = np.pad(patch, ((0, fixed - patch.shape[0]), (0, fixed - patch.shape[1]), (0, 0)), mode="edge")
+            patch = np.pad(patch, ((0, size - patch.shape[0]), (0, size - patch.shape[1]), (0, 0)), mode="edge")
             result = _run(session, patch, denoise)
             # the core of this tile, at the model's scale
             cx0, cy0 = (x0 - px0) * m, (y0 - py0) * m
