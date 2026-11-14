@@ -29,12 +29,13 @@ import hashlib
 import io
 import json
 import math
+import multiprocessing
+import os
 import queue
 import shutil
 import socket
 import subprocess
 import sys
-import tempfile
 import threading
 import time
 import urllib.request
@@ -43,10 +44,6 @@ from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
-
-import numpy as np
-import onnxruntime as ort
-from PIL import Image, ImageOps
 
 VERSION = "1.1.0"
 HF = "https://huggingface.co/"
@@ -71,6 +68,7 @@ MODELS = {
                        sha256="27c01a32e1d8f2c35141890577a873a13b38ed1fffa4393e8f990f16e893847e", scale=4, fixed=0),
 }
 
+IDLE_SECONDS = 120
 MAX_UPLOAD = 512 * 1024 * 1024
 MAX_OUTPUT_PIXELS = 256 * 1024 * 1024
 PAD = 16
@@ -83,17 +81,55 @@ class Cancelled(Exception):
 # ---------------------------------------------------------------------------------------------------------- models
 
 
+PREFERRED_PROVIDERS = ["TensorrtExecutionProvider", "CUDAExecutionProvider", "DmlExecutionProvider", "CoreMLExecutionProvider",
+                       "CPUExecutionProvider"]
+
+
+def _load_tensorrt() -> bool:
+    try:
+        import tensorrt_libs
+    except ImportError:
+        return False
+    folder = os.path.dirname(tensorrt_libs.__file__)
+    if hasattr(os, "add_dll_directory"):
+        os.add_dll_directory(folder)
+    os.environ["PATH"] = folder + os.pathsep + os.environ.get("PATH", "")
+    return True
+
+
+def _pick_providers(available: list[str]) -> list[str]:
+    if "TensorrtExecutionProvider" in available and not _load_tensorrt():
+        available = [p for p in available if p != "TensorrtExecutionProvider"]
+    return [p for p in PREFERRED_PROVIDERS if p in available] or available
+
+
+def _probe_providers() -> list[str]:
+    code = ("import onnxruntime as o, upscale_server as u; "
+            "print(','.join(u._pick_providers(o.get_available_providers())))")
+    try:
+        out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=120,
+                             cwd=os.path.dirname(os.path.abspath(__file__))).stdout
+    except (OSError, subprocess.SubprocessError):
+        return []
+    return _pick_providers([p for p in out.strip().split(",") if p])
+
+
 class ModelStore:
     def __init__(self, cache: Path, tile: int):
+        import onnxruntime as ort
+
+        if hasattr(ort, "preload_dlls"):
+            try:
+                ort.preload_dlls()
+            except Exception:  # noqa: BLE001 - CPU still works without the GPU libraries
+                pass
+        self.ort = ort
         self.cache = cache
         self.tile = tile
         self.cache.mkdir(parents=True, exist_ok=True)
         self._lock = threading.Lock()
-        self._session: tuple[str, ort.InferenceSession] | None = None
-        preferred = ["CUDAExecutionProvider", "DmlExecutionProvider", "CoreMLExecutionProvider",
-                     "CPUExecutionProvider"]
-        available = ort.get_available_providers()
-        self.providers = [p for p in preferred if p in available] or available
+        self._session = None
+        self.providers = _pick_providers(ort.get_available_providers())
 
     def path(self, model_id: str, progress) -> Path:
         spec = MODELS[model_id]
@@ -116,7 +152,8 @@ class ModelStore:
         part.replace(dest)
         return dest
 
-    def session(self, model_id: str, progress) -> ort.InferenceSession:
+    def session(self, model_id: str, progress):
+        ort = self.ort
         with self._lock:
             if self._session and self._session[0] == model_id:
                 return self._session[1]
@@ -124,7 +161,23 @@ class ModelStore:
             progress(0.0, "Loading the model…")
             options = ort.SessionOptions()
             options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
-            session = ort.InferenceSession(str(path), options, providers=self.providers)
+            engines = self.cache.parent / "trt-cache"
+            engines.mkdir(parents=True, exist_ok=True)
+            tensorrt = {"trt_fp16_enable": True, "trt_engine_cache_enable": True,
+                        "trt_engine_cache_path": str(engines), "trt_timing_cache_enable": True,
+                        "trt_timing_cache_path": str(engines)}
+            options_by_provider = {"TensorrtExecutionProvider": tensorrt,
+                                   "CUDAExecutionProvider": {"cudnn_conv_algo_search": "HEURISTIC"}}
+            providers = [(p, options_by_provider[p]) if p in options_by_provider else p for p in self.providers]
+            self._session = None
+            session = ort.InferenceSession(str(path), options, providers=providers)
+            if "TensorrtExecutionProvider" in session.get_providers():
+                progress(0.0, "Preparing the model for this GPU (the first time can take about 2 minutes)…")
+            import numpy as np
+
+            spec = MODELS[model_id]
+            size = spec["fixed"] or self.tile + 2 * PAD
+            _run(session, np.zeros((size, size, 3), dtype=np.float32), 0.5)
             self._session = (model_id, session)
             return session
 
@@ -140,8 +193,10 @@ def _sha256(path: Path) -> str:
 # ---------------------------------------------------------------------------------------------------------- engine
 
 
-def _run(session: ort.InferenceSession, tile: np.ndarray, denoise: float) -> np.ndarray:
+def _run(session, tile, denoise: float):
     """tile: HxWx3 float32 0-1 -> model output HxWx3 float32."""
+    import numpy as np
+
     feeds = {}
     for inp in session.get_inputs():
         dtype = np.float16 if "float16" in inp.type else np.float32
@@ -153,13 +208,17 @@ def _run(session: ort.InferenceSession, tile: np.ndarray, denoise: float) -> np.
     return out.astype(np.float32).transpose(1, 2, 0)
 
 
-def _pass(session, spec, src: np.ndarray, dw: int, dh: int, denoise: float, tile: int, report) -> np.ndarray:
+def _pass(session, spec, src, dw: int, dh: int, denoise: float, tile: int, report):
     """One model pass over src (HxWx3 float32) straight to a dh x dw x 3 uint8 image (each tile's output is resampled
     to the destination size, so any scale up to the model's works in one pass)."""
+    import numpy as np
+    from PIL import Image
+
     sh, sw = src.shape[:2]
     m = spec["scale"]
     fixed = spec["fixed"]
     core = fixed - 2 * PAD if fixed else tile
+    size = fixed or core + 2 * PAD
     out = np.zeros((dh, dw, 3), dtype=np.uint8)
     tiles_x = math.ceil(sw / core)
     tiles_y = math.ceil(sh / core)
@@ -173,8 +232,7 @@ def _pass(session, spec, src: np.ndarray, dw: int, dh: int, denoise: float, tile
             px0, py0 = max(0, x0 - PAD), max(0, y0 - PAD)
             px1, py1 = min(sw, x1 + PAD), min(sh, y1 + PAD)
             patch = src[py0:py1, px0:px1]
-            if fixed:
-                patch = np.pad(patch, ((0, fixed - patch.shape[0]), (0, fixed - patch.shape[1]), (0, 0)), mode="edge")
+            patch = np.pad(patch, ((0, size - patch.shape[0]), (0, size - patch.shape[1]), (0, 0)), mode="edge")
             result = _run(session, patch, denoise)
             # the core of this tile, at the model's scale
             cx0, cy0 = (x0 - px0) * m, (y0 - py0) * m
@@ -196,7 +254,10 @@ def _pass(session, spec, src: np.ndarray, dw: int, dh: int, denoise: float, tile
     return out
 
 
-def upscale(store: ModelStore, model_id: str, image: Image.Image, dw: int, dh: int, denoise: float, report):
+def upscale(store: ModelStore, model_id: str, image, dw: int, dh: int, denoise: float, report):
+    import numpy as np
+    from PIL import Image
+
     spec = MODELS[model_id]
     session = store.session(model_id, report)
     alpha = image.getchannel("A") if image.mode in ("RGBA", "LA") else None
@@ -258,10 +319,93 @@ class Job:
         return data
 
 
+@dataclass
+class EngineConfig:
+    cache: Path
+    tile: int
+    providers: list[str] = field(default_factory=list)
+
+
+def _engine_main(config: EngineConfig, tasks, events, cancel):
+    store = ModelStore(config.cache, config.tile)
+    from PIL import Image, ImageOps
+
+    while True:
+        task = tasks.get()
+        if task is None:
+            return
+        job_id, model, width, height, denoise, source, result, out_format = task
+        cancel.clear()
+
+        def report(fraction, message, job_id=job_id):
+            if cancel.is_set():
+                raise Cancelled()
+            events.put(("progress", job_id, max(0.0, min(1.0, fraction)), message))
+
+        try:
+            with Image.open(source) as opened:
+                image = ImageOps.exif_transpose(opened)
+                image.load()
+                upscaled = upscale(store, model, image, width, height, denoise, report)
+            report(1.0, "Encoding the result…")
+            if out_format == "jpeg":
+                upscaled.convert("RGB").save(result, format="JPEG", quality=95, subsampling=0)
+            else:
+                upscaled.save(result, format="PNG", compress_level=3)
+            events.put(("done", job_id, None, None))
+        except Cancelled:
+            events.put(("cancelled", job_id, None, None))
+        except Exception as error:  # noqa: BLE001 - reported to the phone
+            events.put(("failed", job_id, None, str(error) or error.__class__.__name__))
+
+
+class _Engine:
+    def __init__(self, config: EngineConfig):
+        context = multiprocessing.get_context("spawn")
+        self.tasks = context.Queue()
+        self.events = context.Queue()
+        self.cancel = context.Event()
+        self.process = context.Process(target=_engine_main, args=(config, self.tasks, self.events, self.cancel),
+                                       daemon=True)
+        self.process.start()
+
+    def alive(self) -> bool:
+        return self.process.is_alive()
+
+    def run(self, job: Job, result: Path) -> tuple[str, str | None]:
+        self.tasks.put((job.id, job.model, job.width, job.height, job.denoise, str(job.source), str(result),
+                        job.format))
+        while True:
+            if job.cancel.is_set():
+                self.cancel.set()
+            try:
+                kind, job_id, fraction, detail = self.events.get(timeout=0.5)
+            except queue.Empty:
+                if not self.process.is_alive():
+                    return "crashed", None
+                continue
+            if job_id != job.id:
+                continue
+            if kind == "progress":
+                job.progress = fraction
+                job.message = detail
+                continue
+            return kind, detail
+
+    def stop(self):
+        if self.process.is_alive():
+            self.tasks.put(None)
+            self.process.join(timeout=10)
+        if self.process.is_alive():
+            self.process.terminate()
+            self.process.join(timeout=5)
+
+
 class Jobs:
-    def __init__(self, store: ModelStore, work_dir: Path):
+    def __init__(self, store: EngineConfig, work_dir: Path, idle: float = IDLE_SECONDS):
         self.store = store
         self.work_dir = work_dir
+        self.idle = idle
         self.jobs: dict[str, Job] = {}
         self.queue: queue.Queue[Job] = queue.Queue()
         self.lock = threading.Lock()
@@ -297,45 +441,46 @@ class Jobs:
                 path.unlink(missing_ok=True)
 
     def _worker(self):
+        engine: _Engine | None = None
         while True:
-            job = self.queue.get()
+            try:
+                job = self.queue.get(timeout=self.idle)
+            except queue.Empty:
+                if engine:
+                    engine.stop()
+                    engine = None
+                continue
             if job.cancel.is_set():
                 continue
+            if engine is None or not engine.alive():
+                engine = _Engine(self.store)
             job.state = "running"
-
-            def report(fraction, message, job=job):
-                if job.cancel.is_set():
-                    raise Cancelled()
-                job.progress = max(0.0, min(1.0, fraction))
-                job.message = message
-
+            self.work_dir.mkdir(parents=True, exist_ok=True)
+            extension = "jpg" if job.format == "jpeg" else "png"
+            result = self.work_dir / f"{job.id}-result.{extension}"
             try:
-                with Image.open(job.source) as opened:
-                    image = ImageOps.exif_transpose(opened)
-                    image.load()
-                    result = upscale(self.store, job.model, image, job.width, job.height, job.denoise, report)
-                report(1.0, "Encoding the result…")
-                if job.format == "jpeg":
-                    path = self.work_dir / f"{job.id}-result.jpg"
-                    result.convert("RGB").save(path, format="JPEG", quality=95, subsampling=0)
-                else:
-                    path = self.work_dir / f"{job.id}-result.png"
-                    result.save(path, format="PNG", compress_level=3)
-                job.result = path
+                outcome, detail = engine.run(job, result)
+            finally:
+                job.source.unlink(missing_ok=True)
+            if outcome == "done":
+                job.result = result
                 job.state = "done"
                 job.progress = 1.0
                 job.message = "Done"
-            except Cancelled:
+            elif outcome == "cancelled":
+                result.unlink(missing_ok=True)
                 job.state = "cancelled"
                 job.message = "Cancelled"
-            except Exception as error:  # noqa: BLE001 - reported to the phone
+            else:
+                result.unlink(missing_ok=True)
                 job.state = "failed"
-                job.error = str(error) or error.__class__.__name__
+                job.error = detail or "The upscale worker stopped"
                 job.message = "Failed"
                 print(f"[job {job.id}] failed: {job.error}", file=sys.stderr)
-            finally:
-                job.source.unlink(missing_ok=True)
-                job.finished_at = time.time()
+            if outcome == "crashed":
+                engine.stop()
+                engine = None
+            job.finished_at = time.time()
 
     def _janitor(self):
         # finished jobs the phone never fetched are dropped after a day
@@ -413,6 +558,7 @@ def make_handler(jobs: Jobs, port: int):
             if length <= 0 or length > MAX_UPLOAD:
                 return self._json(400, {"error": "missing or too large upload"})
             job_id = uuid.uuid4().hex
+            jobs.work_dir.mkdir(parents=True, exist_ok=True)
             source = jobs.work_dir / f"{job_id}-source"
             with open(source, "wb") as out:
                 left = length
@@ -457,14 +603,14 @@ def _addresses(port: int) -> list[str]:
     return found
 
 
-def _discovery(host: str, port: int):
-    """Answers the plugin's discovery broadcast ("IMMICH-UPSCALE?") on UDP [port]."""
+def _discovery(host: str, port: int, listen_port: int):
+    """Answers the plugin's discovery broadcast ("IMMICH-UPSCALE?") on UDP [listen_port] with HTTP [port]."""
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        sock.bind((host, port))
+        sock.bind((host, listen_port))
     except OSError as error:
-        print(f"  Discovery is off (UDP {port}: {error}); the phone needs the address once.", file=sys.stderr)
+        print(f"  Discovery is off (UDP {listen_port}: {error}); the phone needs the address once.", file=sys.stderr)
         return
     while True:
         try:
@@ -481,18 +627,24 @@ def main():
     parser = argparse.ArgumentParser(description="Upscale server for the Immich Upscaler plugin")
     parser.add_argument("--host", default="0.0.0.0", help="address to listen on (default: all; e.g. your Tailscale IP)")
     parser.add_argument("--port", type=int, default=8765)
+    parser.add_argument("--discovery-port", type=int, help="UDP port for discovery (default: --port)")
     parser.add_argument("--data", default=str(Path.home() / ".immich-upscale"), help="models and work files")
     parser.add_argument("--tile", type=int, default=256, help="tile size for models that take any size")
+    parser.add_argument("--idle", type=float, default=IDLE_SECONDS,
+                        help="seconds without jobs before the models are unloaded (default 120)")
     args = parser.parse_args()
 
     data = Path(args.data)
     data.mkdir(parents=True, exist_ok=True)
-    work = Path(tempfile.mkdtemp(prefix="immich-upscale-"))
+    work = data / "work"
+    shutil.rmtree(work, ignore_errors=True)
+    work.mkdir(parents=True, exist_ok=True)
 
-    store = ModelStore(data / "models", args.tile)
-    jobs = Jobs(store, work)
+    store = EngineConfig(data / "models", args.tile, _probe_providers())
+    jobs = Jobs(store, work, args.idle)
     server = ThreadingHTTPServer((args.host, args.port), make_handler(jobs, args.port))
-    threading.Thread(target=_discovery, args=(args.host, args.port), daemon=True).start()
+    threading.Thread(target=_discovery, args=(args.host, args.port, args.discovery_port or args.port),
+                     daemon=True).start()
     print(f"Immich upscale server {VERSION} on {socket.gethostname()}")
     print(f"  ONNX Runtime providers: {', '.join(store.providers)}")
     print(f"  Addresses: {', '.join(_addresses(args.port)) or f'port {args.port}'}")
