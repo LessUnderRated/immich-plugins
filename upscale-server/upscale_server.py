@@ -12,11 +12,13 @@ Protocol (no authentication: only reachable from your LAN and tailnet):
 
     UDP    "IMMICH-UPSCALE?" to port 8765 -> {"service": "immich-upscale", "name", "port", "addresses", "version"}
     GET    /health                     -> {"ok", "version", "name", "addresses", "providers", "models": [ids], "busy"}
-    POST   /jobs?model=&width=&height=&denoise=   body: the photo (PNG / JPEG / WebP)
-                                       -> {"id"}          (width/height: output size in pixels)
+    POST   /jobs?model=&width=&height=&denoise=&format=   body: the photo (PNG / JPEG / WebP; EXIF orientation is
+                                       applied) -> {"id"}  (width/height: output size in pixels; format: png | jpeg)
     GET    /jobs/<id>                  -> {"state": "queued|running|done|failed|cancelled", "progress", "message",
                                            "error"?, "width"?, "height"?}
-    GET    /jobs/<id>/result           -> the upscaled photo (PNG)
+    GET    /jobs/<id>/result           -> the upscaled photo (PNG, or JPEG with format=jpeg)
+
+Finished results are kept for a day, so a phone that was locked or closed can still collect them.
     DELETE /jobs/<id>                  -> cancels the job / deletes its result
 """
 
@@ -299,6 +301,7 @@ class Job:
     height: int
     denoise: float
     source: Path
+    format: str = "png"
     state: str = "queued"
     progress: float = 0.0
     message: str = "Waiting on the PC…"
@@ -325,13 +328,13 @@ class EngineConfig:
 
 def _engine_main(config: EngineConfig, tasks, events, cancel):
     store = ModelStore(config.cache, config.tile)
-    from PIL import Image
+    from PIL import Image, ImageOps
 
     while True:
         task = tasks.get()
         if task is None:
             return
-        job_id, model, width, height, denoise, source, result = task
+        job_id, model, width, height, denoise, source, result, out_format = task
         cancel.clear()
 
         def report(fraction, message, job_id=job_id):
@@ -340,11 +343,15 @@ def _engine_main(config: EngineConfig, tasks, events, cancel):
             events.put(("progress", job_id, max(0.0, min(1.0, fraction)), message))
 
         try:
-            with Image.open(source) as image:
+            with Image.open(source) as opened:
+                image = ImageOps.exif_transpose(opened)
                 image.load()
                 upscaled = upscale(store, model, image, width, height, denoise, report)
             report(1.0, "Encoding the result…")
-            upscaled.save(result, format="PNG", compress_level=3)
+            if out_format == "jpeg":
+                upscaled.convert("RGB").save(result, format="JPEG", quality=95, subsampling=0)
+            else:
+                upscaled.save(result, format="PNG", compress_level=3)
             events.put(("done", job_id, None, None))
         except Cancelled:
             events.put(("cancelled", job_id, None, None))
@@ -366,7 +373,8 @@ class _Engine:
         return self.process.is_alive()
 
     def run(self, job: Job, result: Path) -> tuple[str, str | None]:
-        self.tasks.put((job.id, job.model, job.width, job.height, job.denoise, str(job.source), str(result)))
+        self.tasks.put((job.id, job.model, job.width, job.height, job.denoise, str(job.source), str(result),
+                        job.format))
         while True:
             if job.cancel.is_set():
                 self.cancel.set()
@@ -448,7 +456,8 @@ class Jobs:
                 engine = _Engine(self.store)
             job.state = "running"
             self.work_dir.mkdir(parents=True, exist_ok=True)
-            result = self.work_dir / f"{job.id}-result.png"
+            extension = "jpg" if job.format == "jpeg" else "png"
+            result = self.work_dir / f"{job.id}-result.{extension}"
             try:
                 outcome, detail = engine.run(job, result)
             finally:
@@ -474,12 +483,12 @@ class Jobs:
             job.finished_at = time.time()
 
     def _janitor(self):
-        # finished jobs the phone never fetched are dropped after an hour
+        # finished jobs the phone never fetched are dropped after a day
         while True:
-            time.sleep(300)
+            time.sleep(600)
             now = time.time()
             with self.lock:
-                stale = [j for j in self.jobs.values() if j.finished_at and now - j.finished_at > 3600]
+                stale = [j for j in self.jobs.values() if j.finished_at and now - j.finished_at > 86400]
             for job in stale:
                 self.remove(job.id)
 
@@ -521,7 +530,7 @@ def make_handler(jobs: Jobs, port: int):
                         return self._json(409, {"error": f"job is {job.state}"})
                     size = job.result.stat().st_size
                     self.send_response(200)
-                    self.send_header("Content-Type", "image/png")
+                    self.send_header("Content-Type", "image/jpeg" if job.format == "jpeg" else "image/png")
                     self.send_header("Content-Length", str(size))
                     self.end_headers()
                     with open(job.result, "rb") as f:
@@ -542,6 +551,7 @@ def make_handler(jobs: Jobs, port: int):
                 denoise = float(q.get("denoise", 0.5))
             except (KeyError, ValueError):
                 return self._json(400, {"error": "width and height are required"})
+            out_format = "jpeg" if q.get("format", "png").lower() in ("jpeg", "jpg") else "png"
             if width <= 0 or height <= 0 or width * height > MAX_OUTPUT_PIXELS:
                 return self._json(400, {"error": "output size out of range"})
             length = int(self.headers.get("Content-Length") or 0)
@@ -561,7 +571,7 @@ def make_handler(jobs: Jobs, port: int):
             if left > 0:
                 source.unlink(missing_ok=True)
                 return self._json(400, {"error": "upload cut short"})
-            jobs.add(Job(job_id, model, width, height, denoise, source))
+            jobs.add(Job(job_id, model, width, height, denoise, source, out_format))
             self._json(200, {"id": job_id})
 
         def do_DELETE(self):
