@@ -33,7 +33,6 @@ import shutil
 import socket
 import subprocess
 import sys
-import tempfile
 import threading
 import time
 import urllib.request
@@ -415,6 +414,7 @@ class Jobs:
             if engine is None or not engine.alive():
                 engine = _Engine(self.store)
             job.state = "running"
+            self.work_dir.mkdir(parents=True, exist_ok=True)
             result = self.work_dir / f"{job.id}-result.png"
             try:
                 outcome, detail = engine.run(job, result)
@@ -515,6 +515,7 @@ def make_handler(jobs: Jobs, port: int):
             if length <= 0 or length > MAX_UPLOAD:
                 return self._json(400, {"error": "missing or too large upload"})
             job_id = uuid.uuid4().hex
+            jobs.work_dir.mkdir(parents=True, exist_ok=True)
             source = jobs.work_dir / f"{job_id}-source"
             with open(source, "wb") as out:
                 left = length
@@ -592,7 +593,9 @@ def main():
 
     data = Path(args.data)
     data.mkdir(parents=True, exist_ok=True)
-    work = Path(tempfile.mkdtemp(prefix="immich-upscale-"))
+    work = data / "work"
+    shutil.rmtree(work, ignore_errors=True)
+    work.mkdir(parents=True, exist_ok=True)
 
     store = EngineConfig(data / "models", args.tile, _probe_providers())
     jobs = Jobs(store, work, args.idle)
