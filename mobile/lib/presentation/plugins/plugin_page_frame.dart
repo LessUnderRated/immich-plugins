@@ -1,45 +1,99 @@
 import 'package:flutter/material.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:immich_mobile/domain/plugins/plugin_ids.dart';
-import 'package:immich_mobile/infrastructure/plugins/plugin_api/timeline/timeline_plugin_ids.dart';
 import 'package:immich_mobile/providers/timeline/timeline_plugins.provider.dart';
 
 /// The generic slots every page gets (`PLUGINS.md`, "Slots"): `<page>.header` and `<page>.footer` (content above /
 /// below the page), `<page>.fab` (content and buttons floating bottom right) and `<page>.body` (`replace` / `wrap` of
 /// the whole page). Wrapped around every route by the router; costs nothing for pages no plugin targets.
 ///
-/// Pages that serve some of these slots themselves (every timeline page, a few library pages) are skipped for those
-/// slots so nothing shows twice. `<page>.empty` is served by the pages that have an empty state.
-class PluginPageFrame extends ConsumerWidget {
+/// A page that renders these slots itself (every timeline, through [PluginPageFrame.claim]) takes them over, so nothing
+/// shows twice. The frame draws its slots from the second frame on, after such claims are in. Lock screens and the
+/// private pages ([_protected]) get no frame slots: plugin content must never show over them. `<page>.empty` is served
+/// by the pages that have an empty state.
+class PluginPageFrame extends ConsumerStatefulWidget {
   final String routeName;
   final Widget child;
 
   const PluginPageFrame({super.key, required this.routeName, required this.child});
 
-  /// Generic slots a page already renders itself, by page prefix.
+  /// Page prefixes whose generic slots are rendered by the page itself, besides timelines (which claim theirs).
   static const _servedByPage = <String, Set<String>>{
     'folder': {PluginSlotSuffix.header},
     'downloadInfo': {PluginSlotSuffix.footer},
     'activities': {PluginSlotSuffix.footer},
   };
 
-  static const _timelineSuffixes = {
-    PluginSlotSuffix.header,
-    PluginSlotSuffix.footer,
-    PluginSlotSuffix.fab,
-    PluginSlotSuffix.body,
+  /// Lock screens and private content: no generic slots from the frame.
+  static const _protected = {
+    'privateGallery',
+    'privateViewer',
+    'privateLegacy',
+    'privateFileViewer',
+    'lockedFolder',
+    'pinAuth',
   };
 
-  bool _served(String prefix, String suffix) =>
-      (TimelinePages.all.contains(prefix) && _timelineSuffixes.contains(suffix)) ||
-      (_servedByPage[prefix]?.contains(suffix) ?? false);
+  /// Called by a widget that renders `<page>.header/footer/fab/body` for [page] itself (the timeline does): the
+  /// enclosing frame then leaves those slots to it.
+  static void claim(BuildContext context, String page) {
+    final scope = context.getInheritedWidgetOfExactType<_PageSlotScope>();
+    if (scope != null && !scope.claims.value.contains(page)) {
+      scope.claims.value = {...scope.claims.value, page};
+    }
+  }
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<PluginPageFrame> createState() => _PluginPageFrameState();
+}
+
+class _PluginPageFrameState extends ConsumerState<PluginPageFrame> {
+  final _claims = ValueNotifier<Set<String>>(const {});
+  // keeps the page's state when the frame wraps it after the first frame
+  final _pageKey = GlobalKey();
+  bool _ready = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _claims.addListener(_changed);
+    // draw the frame's slots after the first frame, once the page's own widgets have claimed theirs
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        setState(() => _ready = true);
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _claims
+      ..removeListener(_changed)
+      ..dispose();
+    super.dispose();
+  }
+
+  void _changed() {
+    if (mounted) {
+      setState(() {});
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final page = KeyedSubtree(key: _pageKey, child: widget.child);
+    return _PageSlotScope(claims: _claims, child: _ready ? _framed(context, page) : page);
+  }
+
+  Widget _framed(BuildContext context, Widget child) {
+    final prefix = routeSlotPrefix(widget.routeName);
+    if (PluginPageFrame._protected.contains(prefix) || _claims.value.contains(prefix)) {
+      return child;
+    }
     final bridge = ref.watch(timelinePluginBridgeProvider);
-    final prefix = routeSlotPrefix(routeName);
-    String? slotFor(String suffix) => _served(prefix, suffix) ? null : '$prefix$suffix';
-    final slotContext = {'route': routeName, 'page': prefix};
+    String? slotFor(String suffix) =>
+        (PluginPageFrame._servedByPage[prefix]?.contains(suffix) ?? false) ? null : '$prefix$suffix';
+    final slotContext = {'route': widget.routeName, 'page': prefix};
 
     final headerSlot = slotFor(PluginSlotSuffix.header);
     final footerSlot = slotFor(PluginSlotSuffix.footer);
@@ -101,4 +155,13 @@ class PluginPageFrame extends ConsumerWidget {
     }
     return page;
   }
+}
+
+class _PageSlotScope extends InheritedWidget {
+  final ValueNotifier<Set<String>> claims;
+
+  const _PageSlotScope({required this.claims, required super.child});
+
+  @override
+  bool updateShouldNotify(_PageSlotScope oldWidget) => !identical(claims, oldWidget.claims);
 }

@@ -16,6 +16,7 @@ import 'package:immich_mobile/extensions/asyncvalue_extensions.dart';
 import 'package:immich_mobile/extensions/build_context_extensions.dart';
 import 'package:immich_mobile/infrastructure/plugins/plugin_api/timeline/timeline_plugin_ids.dart';
 import 'package:immich_mobile/infrastructure/plugins/plugin_api/timeline/timeline_registry.dart';
+import 'package:immich_mobile/presentation/plugins/plugin_page_frame.dart';
 import 'package:immich_mobile/presentation/widgets/action_buttons/download_status_floating_button.widget.dart';
 import 'package:immich_mobile/presentation/widgets/bottom_sheet/general_bottom_sheet.widget.dart';
 import 'package:immich_mobile/presentation/widgets/timeline/constants.dart';
@@ -178,6 +179,12 @@ class _SliverTimelineState extends ConsumerState<_SliverTimeline>
     ref.listenManual(multiSelectProvider.select((s) => s.isEnabled), _onMultiSelectionToggled);
     ref.listenManual(multiSelectProvider, _onSelectionChanged);
     TimelineRegistry.registerTimeline(this);
+    // this timeline renders its page's header / footer / fab / body slots: the page frame leaves them to it
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        PluginPageFrame.claim(context, widget.page);
+      }
+    });
   }
 
   @override
